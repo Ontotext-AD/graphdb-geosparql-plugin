@@ -3,6 +3,7 @@ package com.ontotext.trree.geosparql;
 import org.apache.lucene.spatial.query.SpatialOperation;
 import org.locationtech.jts.geom.Geometry;
 
+import java.nio.file.Path;
 import java.util.List;
 import java.util.function.Function;
 
@@ -52,4 +53,6 @@ public interface GeoSparqlIndexer {
 	void indexGeometry(long subject, Function<Long, String> subjectMapper, Geometry geometry);
 
 	void freshIndex() throws Exception;
+
+	Path getIndexDir();
 }

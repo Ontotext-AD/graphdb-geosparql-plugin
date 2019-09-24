@@ -254,4 +254,9 @@ public class LuceneGeoIndexer implements GeoSparqlIndexer {
 			throw new PluginException("Unable to create geometry from field value.", e);
 		}
 	}
+
+	@Override
+	public Path getIndexDir() {
+		return indexDir;
+	}
 }

@@ -8,6 +8,8 @@ import com.ontotext.trree.sdk.*;
 import com.useekm.indexing.GeoConstants;
 import com.useekm.types.GeoConvert;
 import com.useekm.types.exception.InvalidGeometryException;
+import org.apache.commons.io.FileUtils;
+import org.apache.lucene.index.IndexFormatTooOldException;
 import org.locationtech.jts.geom.Geometry;
 import gnu.trove.TLongObjectHashMap;
 import org.eclipse.rdf4j.model.IRI;
@@ -16,6 +18,7 @@ import org.eclipse.rdf4j.model.datatypes.XMLDatatypeUtil;
 import org.eclipse.rdf4j.model.impl.SimpleValueFactory;
 
 import javax.xml.bind.JAXBException;
+import java.io.IOException;
 
 /**
  * GeoSPARQL index/query plugin.
@@ -87,6 +90,26 @@ public class GeoSparqlPlugin extends PluginBase implements PatternInterpreter, U
         initControlPredicates(pluginConnection.getEntities());
 
         initPluginFeatures(pluginConnection.getEntities());
+
+        if (getConfig().isEnabled()) {
+            try {
+                indexer.begin();
+                indexer.commit();
+            } catch (Exception e) {
+                // If created index is older version on indexer
+                // begin is thrown IndexFormatTooOldException and we delete
+                // directory and recreate index
+                if (e instanceof IndexFormatTooOldException) {
+                    try {
+                        FileUtils.deleteDirectory(indexer.getIndexDir().toFile());
+                        getLogger().warn("Upgrade detected! Should rebuild existing index!");
+                        indexAllData(false, pluginConnection);
+                    } catch (IOException ex) {
+                        getLogger().error("Could not delete existing lucene directory!");
+                    }
+                }
+            }
+        }
 
         updateListener = new GeoSparqlUpdateListener(this, asWKT, asGML, hasDefaultGeometry);
     }
