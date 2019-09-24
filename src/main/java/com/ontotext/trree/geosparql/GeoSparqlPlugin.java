@@ -102,7 +102,7 @@ public class GeoSparqlPlugin extends PluginBase implements PatternInterpreter, U
                 if (e instanceof IndexFormatTooOldException) {
                     try {
                         FileUtils.deleteDirectory(indexer.getIndexDir().toFile());
-                        getLogger().warn("Upgrade detected! Should rebuild existing index!");
+                        getLogger().info("Upgrade detected. Index is created with previous GraphDB version. Rebuilding existing index!");
                         indexAllData(false, pluginConnection);
                     } catch (IOException ex) {
                         getLogger().error("Could not delete existing lucene directory!");
