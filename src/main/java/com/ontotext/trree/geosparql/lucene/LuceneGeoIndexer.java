@@ -14,6 +14,7 @@ import org.apache.lucene.spatial.prefix.RecursivePrefixTreeStrategy;
 import org.apache.lucene.spatial.prefix.tree.GeohashPrefixTree;
 import org.apache.lucene.spatial.prefix.tree.QuadPrefixTree;
 import org.apache.lucene.spatial.prefix.tree.SpatialPrefixTree;
+import org.apache.lucene.spatial.prefix.tree.S2PrefixTree;
 import org.apache.lucene.spatial.query.SpatialArgs;
 import org.apache.lucene.spatial.query.SpatialOperation;
 import org.apache.lucene.spatial.serialized.SerializedDVStrategy;
@@ -100,6 +101,8 @@ public class LuceneGeoIndexer implements GeoSparqlIndexer {
 			grid = new QuadPrefixTree(ctx, precision);
 		} else if (prefixTree == GeoSparqlConfig.PrefixTree.GEOHASH) {
 			grid = new GeohashPrefixTree(ctx, precision);
+		} else if (prefixTree == GeoSparqlConfig.PrefixTree.S2) {
+			grid = new S2PrefixTree(ctx, precision);
 		} else {
 			throw new PluginException("Unexpected prefix tree type: " + prefixTree);
 		}

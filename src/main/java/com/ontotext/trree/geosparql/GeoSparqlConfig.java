@@ -16,7 +16,8 @@ import java.util.Properties;
 public class GeoSparqlConfig {
     public enum PrefixTree {
         GEOHASH(SimpleValueFactory.getInstance().createLiteral("geohash")),
-        QUAD(SimpleValueFactory.getInstance().createLiteral("quad"));
+        QUAD(SimpleValueFactory.getInstance().createLiteral("quad")),
+        S2(SimpleValueFactory.getInstance().createLiteral("s2"));
 
         private Literal literal;
 

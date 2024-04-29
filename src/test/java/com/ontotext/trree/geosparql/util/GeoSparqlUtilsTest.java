@@ -25,6 +25,11 @@ public class GeoSparqlUtilsTest {
         test(false, GeoSparqlConfig.PrefixTree.GEOHASH, 7, GeoSparqlConfig.PrefixTree.QUAD, 12, false);
     }
 
+    @Test
+    public void testCanSaveAndRead3() {
+        test(false, GeoSparqlConfig.PrefixTree.S2, 7, GeoSparqlConfig.PrefixTree.S2, 12, false);
+    }
+
     private void test(boolean enabled, GeoSparqlConfig.PrefixTree prefixTree, int precision,
                       GeoSparqlConfig.PrefixTree currentPrefixTree, int currentPrecision, boolean ignoreErrors) {
         GeoSparqlConfig config1 = new GeoSparqlConfig();

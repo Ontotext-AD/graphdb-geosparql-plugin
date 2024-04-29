@@ -89,6 +89,10 @@ public class GeoSparqlUtils {
                 if (precision <= 0 || precision > QuadPrefixTree.MAX_LEVELS_POSSIBLE) {
                     throw new PluginException(constructExceptionMessage(prefixTree));
                 }
+            case S2:
+                if (precision <= 0) {
+                    throw new PluginException(constructExceptionMessage(prefixTree));
+                }
         }
     }
 
