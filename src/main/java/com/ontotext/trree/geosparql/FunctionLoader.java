@@ -27,6 +27,6 @@ public class FunctionLoader {
             }
         }
 
-        LOGGER.info("Registered {} functions from package {}.", count, pkg);
+        LOGGER.debug("Registered {} functions from package {}.", count, pkg);
     }
 }

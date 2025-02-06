@@ -284,10 +284,10 @@ public class GeoSparqlPlugin extends PluginBase implements PatternInterpreter, U
     private void initializeGeoIndexer() {
         if (config.isEnabled() && indexer == null) {
             try {
-                getLogger().info(">>>>>>>> GeoSPARQL: Initializing Lucene indexer...");
+                getLogger().debug(">>>>>>>> GeoSPARQL: Initializing Lucene indexer...");
                 indexer = new LuceneGeoIndexer(this);
                 indexer.initialize();
-                getLogger().info(">>>>>>>> GeoSPARQL: Lucene indexer initialized!");
+                getLogger().debug(">>>>>>>> GeoSPARQL: Lucene indexer initialized!");
             } catch (Exception e) {
                 throw new PluginException("Cannot initialize GeoSPARQL indexer!");
             }
