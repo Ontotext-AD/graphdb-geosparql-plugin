@@ -67,7 +67,7 @@ public class TestGeosparql extends SingleRepositoryFunctionalTest {
 		return connection.getValueFactory();
 	}
 
-	public static <T extends Exception> int count(CloseableIteration<?, T> statements) throws T {
+	public static int count(CloseableIteration<?> statements) {
 		int result = 0;
 		try {
 			while (statements.hasNext()) {

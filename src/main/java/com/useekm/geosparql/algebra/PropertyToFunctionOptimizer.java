@@ -20,7 +20,7 @@ import org.eclipse.rdf4j.query.BindingSet;
 import org.eclipse.rdf4j.query.Dataset;
 import org.eclipse.rdf4j.query.algebra.*;
 import org.eclipse.rdf4j.query.algebra.evaluation.QueryOptimizer;
-import org.eclipse.rdf4j.query.algebra.helpers.QueryModelVisitorBase;
+import org.eclipse.rdf4j.query.algebra.helpers.AbstractQueryModelVisitor;
 
 import java.util.*;
 
@@ -120,7 +120,7 @@ public class PropertyToFunctionOptimizer implements QueryOptimizer {
         return val;
     }
 
-    private static final class PatternVisitor extends QueryModelVisitorBase<RuntimeException> {
+    private static final class PatternVisitor extends AbstractQueryModelVisitor<RuntimeException> {
         private BindingSet bindings;
         private List<StatementPattern> patterns = new ArrayList<StatementPattern>();
 
