@@ -184,9 +184,14 @@
 		</dependency>
 
 		<dependency>
-			<groupId>io.github.soc</groupId>
+			<groupId>org.ogc-schemas</groupId>
 			<artifactId>ogc-tools-gml-jts</artifactId>
-			<version>1.1.90</version>
+			<version>4.0.2</version>
+		</dependency>
+		<dependency>
+			<groupId>org.glassfish.jaxb</groupId>
+			<artifactId>jaxb-runtime</artifactId>
+			<version>4.0.5</version>
 		</dependency>
 
 		<!-- For Geotoolkit's cache. We need to have it outside the plugin classloader so it must be packaged in the dist -->

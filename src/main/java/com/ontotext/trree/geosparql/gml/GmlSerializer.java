@@ -8,7 +8,7 @@ import com.useekm.types.exception.InvalidGeometryException;
 import org.eclipse.rdf4j.model.IRI;
 import org.locationtech.jts.geom.Geometry;
 
-import javax.xml.bind.JAXBException;
+import jakarta.xml.bind.JAXBException;
 
 /**
  * GML serializer according to what Useekm expects.
