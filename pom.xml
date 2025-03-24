@@ -7,7 +7,7 @@
 	<version>3.0-SNAPSHOT</version>
 
 	<properties>
-		<graphdb.version>11.0.0-TR9</graphdb.version>
+		<graphdb.version>11.0-spring-6-TR18</graphdb.version>
         <gt.version>27.5</gt.version>
 		<lucene.version>8.10.1</lucene.version>
 		<dependency.check.version>8.2.1</dependency.check.version>
@@ -184,9 +184,14 @@
 		</dependency>
 
 		<dependency>
-			<groupId>io.github.soc</groupId>
+			<groupId>org.ogc-schemas</groupId>
 			<artifactId>ogc-tools-gml-jts</artifactId>
-			<version>1.1.90</version>
+			<version>4.0.2</version>
+		</dependency>
+		<dependency>
+			<groupId>org.glassfish.jaxb</groupId>
+			<artifactId>jaxb-runtime</artifactId>
+			<version>4.0.5</version>
 		</dependency>
 
 		<!-- For Geotoolkit's cache. We need to have it outside the plugin classloader so it must be packaged in the dist -->
