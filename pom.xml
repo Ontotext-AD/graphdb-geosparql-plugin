@@ -7,7 +7,7 @@
 	<version>3.0-SNAPSHOT</version>
 
 	<properties>
-		<graphdb.version>11.0.0-TR9</graphdb.version>
+		<graphdb.version>11.0-spring-6-TR18</graphdb.version>
         <gt.version>27.5</gt.version>
 		<lucene.version>8.10.1</lucene.version>
 		<dependency.check.version>8.2.1</dependency.check.version>
