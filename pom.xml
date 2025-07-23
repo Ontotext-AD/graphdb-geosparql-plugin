@@ -8,7 +8,7 @@
 
 	<properties>
 		<graphdb.version>11.0-spring-6-TR18</graphdb.version>
-        <gt.version>27.5</gt.version>
+        <gt.version>29.6</gt.version>
 		<lucene.version>8.10.1</lucene.version>
 		<dependency.check.version>8.2.1</dependency.check.version>
 
@@ -129,7 +129,7 @@
 		<dependency>
 			<groupId>org.apache.commons</groupId>
 			<artifactId>commons-lang3</artifactId>
-			<version>3.17.0</version>
+			<version>3.18.0</version>
 			<scope>provided</scope>
 		</dependency>
 
