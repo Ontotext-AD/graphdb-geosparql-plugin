@@ -4,7 +4,7 @@
 
 	<groupId>com.ontotext.graphdb.plugins</groupId>
 	<artifactId>geosparql-plugin</artifactId>
-	<version>3.1.1-RC2</version>
+	<version>3.1-SNAPSHOT</version>
 
 	<properties>
 		<graphdb.version>11.0-spring-6-TR18</graphdb.version>
@@ -334,6 +334,6 @@
 		<connection>scm:git:git@github.com:Ontotext-AD/graphdb-geosparql-plugin.git</connection>
 		<developerConnection>scm:git:git@github.com:Ontotext-AD/graphdb-geosparql-plugin.git</developerConnection>
 		<url>https://github.com/Ontotext-AD/graphdb-geosparql-plugin</url>
-		<tag>3.1.1-RC2</tag>
+		<tag>HEAD</tag>
 	</scm>
 </project>
