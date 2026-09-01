@@ -1,1 +1,0 @@
-<?xml version="1.0" encoding="UTF-8" standalone="yes"?><ns1:Point xmlns:ns1="http://www.opengis.net/gml" xmlns:ns2="http://www.w3.org/1999/xlink" xmlns:ns3="http://www.w3.org/2001/SMIL20/" xmlns:ns4="http://www.w3.org/2001/SMIL20/Language" srsName="urn:ogc:def:crs:EPSG::4326"><ns1:pos>5.0 3.0</ns1:pos></ns1:Point>

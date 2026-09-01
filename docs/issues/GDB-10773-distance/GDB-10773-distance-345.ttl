@@ -1,0 +1,11 @@
+@prefix geo: <http://www.opengis.net/ont/geosparql#> .
+@prefix data: <http://www.triona.se/data#> .
+
+# EPSG:3006 (SWEREF99 TM). ΔE=3 m, ΔN=4 m → Euclidean distance = 5 m.
+data:obj3 geo:hasGeometry [
+    geo:asWKT "<http://www.opengis.net/def/crs/EPSG/0/3006> POINT Z (522000.0 6704000.0 100.)"^^geo:wktLiteral
+] .
+
+data:obj4 geo:hasGeometry [
+    geo:asWKT "<http://www.opengis.net/def/crs/EPSG/0/3006> POINT Z (522003.0 6704004.0 100.)"^^geo:wktLiteral
+] .

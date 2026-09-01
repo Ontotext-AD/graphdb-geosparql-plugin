@@ -1,193 +1,254 @@
 package com.ontotext.trree.geosparql;
 
-import com.ontotext.trree.geosparql.lucene.LuceneMultiSearchEntityGeometryIterator;
+import com.ontotext.trree.geosparql.jena.IndexGeometry;
+import com.ontotext.trree.geosparql.jena.SourceGeometryLiteral;
+import com.ontotext.trree.geosparql.vocabulary.GeoConstants;
 import com.ontotext.trree.sdk.Entities;
+import com.ontotext.trree.sdk.PluginException;
 import com.ontotext.trree.sdk.StatementIterator;
-import com.useekm.indexing.GeoConstants;
-import org.locationtech.jts.geom.Geometry;
 import org.eclipse.rdf4j.model.IRI;
 import org.eclipse.rdf4j.model.Literal;
 import org.eclipse.rdf4j.model.Value;
 import org.slf4j.Logger;
 
 import java.io.IOException;
+import java.util.Collection;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
+import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
 
 /**
- * The work horse of the implementation. It will use the indexer to get rough results
- * and then invoke the respective GeoSPARQL function to narrow down the exact matches.
+ * Produces statement matches for a GeoSPARQL property relation.
+ *
+ * <p>With one side bound, Lucene supplies either envelope-proven entity ids or grouped uncertain candidates.
+ * Envelope-proven disjoint matches need no source payload; uncertain candidates are evaluated against the source
+ * geometry literal snapshots matched by the current candidate lookup. Full-scan fallbacks evaluate complete source
+ * sets, and a fully bound pair bypasses candidate lookup.
+ *
+ * <p>One side is fixed for every candidate traversal, so the candidate entity id uniquely identifies the resulting
+ * entity pair. Repeated source-document hits are grouped by the lookup, and repeated bound-source matches emit that
+ * candidate entity at most once. Closing the statement iterator also closes the active Lucene reader.
  */
 class GeoSparqlRelationIterator extends StatementIterator {
 	private final GeoSparqlPlugin parent;
 	private final Logger logger;
-	private final GeoSparqlFunction function;
+	private final GeoSparqlPropertyRelation relation;
 	private final Entities entities;
+	private final long boundSubject;
+	private final long boundObject;
+	private EntityGeometries boundSubjectGeometries;
+	private EntityGeometries boundObjectGeometries;
+	private RelationCandidateTraversal candidateIterator;
+	private final Set<Long> emittedCandidateEntityIds = new HashSet<>();
 
-	private Geometry knownGeometry;
-	private EntityGeometryIterator iKnownEntities;
-	private EntityGeometryIterator iCandidateEntities;
+	private boolean boundPairEvaluated;
 
-	private EntityGeometryIterator iSubjectGeometries;
-	private EntityGeometryIterator iObjectGeometries;
-
-	private LuceneMultiSearchEntityGeometryIterator searchIterator;
-
-	private boolean trustLucene;
-
-	private boolean inverse;
-
-	GeoSparqlRelationIterator(GeoSparqlPlugin parent, GeoSparqlFunction function,
-	                                 long subject, long predicate, long object, Entities entities) {
+	GeoSparqlRelationIterator(GeoSparqlPlugin parent, GeoSparqlPropertyRelation relation,
+							   long subject, long predicate, long object, Entities entities) {
 		this.parent = parent;
 		this.logger = parent.getLogger();
-		this.function = function;
+		this.relation = relation;
 		this.subject = subject;
 		this.predicate = predicate;
 		this.object = object;
 		this.entities = entities;
-
-		if (subject != 0) {
-			// Subject is bound and refers to a Geometry literal or a Geometry/Feature object
-			iSubjectGeometries = makeIteratorFromEntityId(subject);
-		}
-
-		if (object != 0) {
-			// Object is bound and refers to a Geometry literal or a Geometry/Feature object
-			iObjectGeometries = makeIteratorFromEntityId(object);
-		}
-
-		if (iSubjectGeometries != null && iObjectGeometries != null) {
-			// Both subject and object have explicit geometries, don't use Lucene search but match directly
-			iKnownEntities = iObjectGeometries;
-			iCandidateEntities = iSubjectGeometries;
-
-			inverse = true;
-		} else if (iSubjectGeometries == null) {
-			// Subject is unknown and candidates will be provided by searching in Lucene with the object
-			iKnownEntities = iObjectGeometries;
-			iCandidateEntities = searchIterator = new LuceneMultiSearchEntityGeometryIterator(parent.indexer,
-					function.getSpatialOperation());
-
-			inverse = true;
-		} else {
-			// Object is unknown and candidates will be provided by searching in Lucene with the subject
-			iKnownEntities = iSubjectGeometries;
-			iCandidateEntities = searchIterator = new LuceneMultiSearchEntityGeometryIterator(parent.indexer,
-					function.getInverseSpatialOperation());
-
-			inverse = false;
-		}
+		this.boundSubject = subject;
+		this.boundObject = object;
 	}
 
 	@Override
 	public boolean next() {
-		boolean result = false;
+		try {
+			return nextInternal();
+		} catch (RuntimeException e) {
+			close();
+			throw e;
+		}
+	}
 
-		while (true) {
-			if (knownGeometry == null || !iCandidateEntities.hasNextGeometry()) {
-				if (!iKnownEntities.hasNextGeometry()) {
-					// no more known entities, GeoSPARQLRelationIterator ends
-					break;
-				}
+	private boolean nextInternal() {
+		if (boundSubject != 0 && boundObject != 0) {
+			return nextBoundPair();
+		}
+		if (boundSubject == 0 && boundObject == 0) {
+			return false;
+		}
 
-				// Fresh known Geometry. It will be reused until a match is found or no more candidate Geometries left
-				knownGeometry = iKnownEntities.nextGeometry();
-
-				if (searchIterator != null) {
-					// If we have a search iterator (either subject or object is unbound) we have to notify it
-					// about the new known geometry
-					searchIterator.search(knownGeometry);
-				}
-
-				if (logger.isDebugEnabled()) {
-					logger.debug("KNOWN GEOMETRY: {}; {}", entities.get(iKnownEntities.getEntityForLastGeometry()),
-							knownGeometry);
-				}
+		RelationCandidateTraversal candidates = candidateIterator();
+		while (candidates.hasNext()) {
+			RelationCandidateTraversal.Candidate candidateLookup = candidates.next();
+			long candidateEntityId = candidateLookup.entityId();
+			if (emittedCandidateEntityIds.contains(candidateEntityId)) {
+				continue;
 			}
-
-			Geometry candidateGeometry = iCandidateEntities.nextGeometry();
-
-			if (candidateGeometry != null) {
-				if (logger.isDebugEnabled()) {
-					logger.debug("CANDIDATE: {}; {}", entities.get(iCandidateEntities.getEntityForLastGeometry()),
-							candidateGeometry);
-				}
-
-				result = trustLucene || (inverse ?
-						function.evaluate(candidateGeometry, knownGeometry) :
-						function.evaluate(knownGeometry, candidateGeometry));
+			if (candidateLookup.matchCertainty()
+					== RelationCandidateTraversal.MatchCertainty.DEFINITE_MATCH) {
+				emittedCandidateEntityIds.add(candidateEntityId);
+				setCurrentMatch(candidateEntityId);
+				return true;
+			}
+			CandidateEntity candidate = candidateLookup.exactCandidateEntity();
+			Collection<SourceGeometryLiteral> candidateSourceGeometryLiterals =
+					candidate.matchingSourceGeometryLiterals();
+			Optional<SourceGeometryLiteral> boundSourceGeometryLiteral =
+					candidateLookup.boundSourceGeometryLiteral();
+			boolean holds;
+			if (boundSubject == 0) {
+				holds = boundSourceGeometryLiteral.isEmpty()
+						? relation.evaluate(candidateSourceGeometryLiterals,
+								boundObjectGeometries().sourceGeometryLiterals())
+						: relation.evaluate(candidateSourceGeometryLiterals,
+								boundSourceGeometryLiteral.get());
 			} else {
-				logger.debug(">>>>>>>> GeoSPARQL: No available candidate geometries matching the query!");
-				break;
+				holds = boundSourceGeometryLiteral.isEmpty()
+						? relation.evaluate(boundSubjectGeometries().sourceGeometryLiterals(),
+								candidateSourceGeometryLiterals)
+						: relation.evaluate(boundSourceGeometryLiteral.get(),
+								candidateSourceGeometryLiterals);
 			}
-
-			if (result) {
-				// NB: Skips the remaining geometries for this lastEntity as we already found a match
-				iKnownEntities.advanceToNextEntity();
-
-				if (logger.isDebugEnabled()) {
-					logger.debug("MATCH: {} -> {}", knownGeometry, candidateGeometry);
-				}
-
-				if (inverse) {
-					subject = iCandidateEntities.getEntityForLastGeometry();
-					object = iKnownEntities.getEntityForLastGeometry();
-				} else {
-					subject = iKnownEntities.getEntityForLastGeometry();
-					object = iCandidateEntities.getEntityForLastGeometry();
-				}
-
-				// found a pair of subject/object that satisfies the condition
-				break;
+			if (holds
+					&& emittedCandidateEntityIds.add(candidateEntityId)) {
+				setCurrentMatch(candidateEntityId);
+				return true;
 			}
 		}
 
-		return result;
+		return false;
 	}
-
 
 	@Override
 	public void close() {
-		try {
-			iKnownEntities.close();
-		} catch (IOException e) {
-			logger.warn("Unable to close entity-geometry iterator.", e);
+		closeIterator(candidateIterator);
+	}
+
+	private boolean nextBoundPair() {
+		if (boundPairEvaluated) {
+			return false;
+		}
+		boundPairEvaluated = true;
+		if (!relation.evaluate(boundSubjectGeometries().sourceGeometryLiterals(),
+				boundObjectGeometries().sourceGeometryLiterals())) {
+			return false;
+		}
+		subject = boundSubject;
+		object = boundObject;
+		logMatch();
+		return true;
+	}
+
+	private RelationCandidateTraversal candidateIterator() {
+		if (candidateIterator == null) {
+			EntityGeometries boundGeometries;
+			if (boundSubject == 0) {
+				boundGeometries = boundObjectGeometries();
+			} else {
+				boundGeometries = boundSubjectGeometries();
+			}
+			candidateIterator = new RelationCandidateTraversal(parent.indexer, relation,
+					boundGeometries.indexGeometries(), boundSubject != 0, logger);
+		}
+		return candidateIterator;
+	}
+
+	private void setCurrentMatch(long candidateEntityId) {
+		if (boundSubject == 0) {
+			subject = candidateEntityId;
+			object = boundObject;
+		} else {
+			subject = boundSubject;
+			object = candidateEntityId;
+		}
+		logMatch();
+	}
+
+	private EntityGeometries geometriesForEntity(long entityId) {
+		Value value = entities.get(entityId);
+		if (value instanceof Literal) {
+			IRI datatype = GeoConstants.GEO_GML_LITERAL.equals(((Literal) value).getDatatype())
+					? GeoConstants.GEO_GML_LITERAL : GeoConstants.GEO_WKT_LITERAL;
+			return EntityGeometries.fromIndexGeometry(
+					parent.getIndexGeometryFromLiteral((Literal) value, datatype));
 		}
 
+		CloseableIterator<SourceGeometryLiteral> iterator = parent.indexer.getSourceGeometryLiteralsFor(entityId);
+		if (iterator == null) {
+			throw new PluginException("Unable to create GeoSPARQL geometry iterator for entity id " + entityId);
+		}
+
+		return geometriesFromIterator(iterator);
+	}
+
+	private EntityGeometries geometriesFromIterator(CloseableIterator<SourceGeometryLiteral> iterator) {
+		EntityGeometries geometries = new EntityGeometries();
 		try {
-			iCandidateEntities.close();
+			while (iterator.hasNext()) {
+				geometries.addSource(iterator.next());
+			}
+		} finally {
+			closeIterator(iterator);
+		}
+		return geometries;
+	}
+
+	private EntityGeometries boundSubjectGeometries() {
+		if (boundSubjectGeometries == null) {
+			boundSubjectGeometries = geometriesForEntity(boundSubject);
+		}
+		return boundSubjectGeometries;
+	}
+
+	private EntityGeometries boundObjectGeometries() {
+		if (boundObjectGeometries == null) {
+			boundObjectGeometries = geometriesForEntity(boundObject);
+		}
+		return boundObjectGeometries;
+	}
+
+	private void closeIterator(CloseableIterator<?> iterator) {
+		if (iterator == null) {
+			return;
+		}
+		try {
+			iterator.close();
 		} catch (IOException e) {
-			logger.warn("Unable to close entity-geometry iterator.", e);
+			logger.warn("Unable to close GeoSPARQL iterator.", e);
 		}
 	}
 
-	/**
-	 * Makes an EntityGeometryIterator from a GraphDB entity id.
-	 * The id may refer to either a Geometry literal (WKT/GML) or an IRI that describes
-	 * a Geometry or Feature object.
-	 *
-	 * @param entityId an entity id
-	 * @return an EntityGeometryIterator
-	 */
-	private EntityGeometryIterator makeIteratorFromEntityId(long entityId) {
-		EntityGeometryIterator iterator;
-		Value value = entities.get(entityId);
-		if (value instanceof Literal) {
-			// the id refers to a literal, we need to parse the geometry
-			IRI subjType = ((Literal)value).getDatatype();
-			Geometry g;
-			if (GeoConstants.GEO_GML_LITERAL.equals(subjType)) {
-				// gml
-				g = parent.getGeometryFromString(value.stringValue(), parent.asGML);
-			} else {
-				// wkt
-				g = parent.getGeometryFromString(value.stringValue(), parent.asWKT);
-			}
-			iterator = new SingleEntityGeometryIterator(entityId, g);
-		} else {
-			// the id refers to an IRI referring to a geometry/feature
-			iterator = parent.indexer.getGeometriesFor(entityId);
+	private void logMatch() {
+		if (logger.isDebugEnabled()) {
+			logger.debug("GeoSPARQL relation match: {} -> {}", entities.get(subject), entities.get(object));
+		}
+	}
+
+	private static final class EntityGeometries {
+		private final Map<SourceGeometryLiteral, IndexGeometry> indexGeometriesBySource = new LinkedHashMap<>();
+
+		private static EntityGeometries fromIndexGeometry(IndexGeometry indexGeometry) {
+			EntityGeometries geometries = new EntityGeometries();
+			geometries.add(indexGeometry);
+			return geometries;
 		}
 
-		return iterator;
+		private void add(IndexGeometry indexGeometry) {
+			if (indexGeometry == null || indexGeometry.sourceGeometryLiteral() == null) {
+				throw new PluginException("GeoSPARQL entity geometry is missing index or source geometry literal.");
+			}
+			indexGeometriesBySource.putIfAbsent(indexGeometry.sourceGeometryLiteral(), indexGeometry);
+		}
+
+		private void addSource(SourceGeometryLiteral sourceGeometryLiteral) {
+			add(IndexGeometry.fromSourceGeometryLiteral(sourceGeometryLiteral));
+		}
+
+		private Set<SourceGeometryLiteral> sourceGeometryLiterals() {
+			return indexGeometriesBySource.keySet();
+		}
+
+		private Collection<IndexGeometry> indexGeometries() {
+			return indexGeometriesBySource.values();
+		}
 	}
 }

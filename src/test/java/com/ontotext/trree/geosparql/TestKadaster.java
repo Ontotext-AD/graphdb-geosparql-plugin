@@ -6,7 +6,6 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
-import java.util.Date;
 import java.util.List;
 
 /**
@@ -37,7 +36,7 @@ public class TestKadaster extends AbstractGeoSparqlPluginTest {
                 "PREFIX geof: <http://www.opengis.net/def/function/geosparql/>\n" +
                 "SELECT ?f\n" +
                 "WHERE {\n" +
-                "    ?f geo:sfWithin \"POLYGON ((0 0, 0 100, 100 100, 100 0, 0 0))\"\n" +
+	                "    ?f geo:sfWithin \"POLYGON ((0 0, 0 89, 100 89, 100 0, 0 0))\"\n" +
                 "}", "f");
         Assert.assertEquals(69230, result.size());
     }

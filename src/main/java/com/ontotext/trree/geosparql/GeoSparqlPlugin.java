@@ -1,24 +1,31 @@
 package com.ontotext.trree.geosparql;
 
-import com.google.common.annotations.VisibleForTesting;
-import com.ontotext.trree.geosparql.gml.GmlConverter;
+import com.ontotext.trree.geosparql.function.GeoSparqlFunctionRegistration;
+import com.ontotext.trree.geosparql.jena.IndexGeometry;
+import com.ontotext.trree.geosparql.jena.JenaGeoSparqlException;
+import com.ontotext.trree.geosparql.jena.JenaGeometryAdapter;
+import com.ontotext.trree.geosparql.jena.SourceGeometryLiteral;
 import com.ontotext.trree.geosparql.lucene.LuceneGeoIndexer;
 import com.ontotext.trree.geosparql.util.GeoSparqlUtils;
 import com.ontotext.trree.sdk.*;
-import com.useekm.indexing.GeoConstants;
-import com.useekm.types.GeoConvert;
-import com.useekm.types.exception.InvalidGeometryException;
-import org.locationtech.jts.geom.Geometry;
+import com.ontotext.trree.geosparql.vocabulary.GeoConstants;
 import gnu.trove.TLongObjectHashMap;
 import org.eclipse.rdf4j.model.IRI;
+import org.eclipse.rdf4j.model.Literal;
+import org.eclipse.rdf4j.model.Value;
 import org.eclipse.rdf4j.model.ValueFactory;
 import org.eclipse.rdf4j.model.datatypes.XMLDatatypeUtil;
 import org.eclipse.rdf4j.model.impl.SimpleValueFactory;
 
-import jakarta.xml.bind.JAXBException;
+import java.util.List;
 
 /**
- * GeoSPARQL index/query plugin.
+ * GraphDB plugin entry point for GeoSPARQL indexing and query evaluation.
+ *
+ * <p>The plugin coordinates configuration, repository geometry discovery, Lucene candidate indexing, property
+ * relation iteration, and Jena-backed function registration. Geometry literal conversion preserves the source
+ * geometry literal used for exact evaluation while deriving one CRS84 index envelope for each non-empty source
+ * geometry literal. An empty source produces a non-spatial sentinel document.
  */
 public class GeoSparqlPlugin extends PluginBase implements PatternInterpreter, UpdateInterpreter,
         ParallelTransactionListener, StatementListener {
@@ -68,10 +75,8 @@ public class GeoSparqlPlugin extends PluginBase implements PatternInterpreter, U
 	GeoSparqlConfig.PrefixTree tmpPrefixTree;
     int tmpPrecision;
 
-    private TLongObjectHashMap<GeoSparqlFunction> predicateIds2Function =
-			new TLongObjectHashMap<>(GeoSparqlFunction.values().length);
-
-	private GmlConverter gmlConverter;
+    private TLongObjectHashMap<GeoSparqlPropertyRelation> predicateIdsToRelation =
+			new TLongObjectHashMap<>(GeoSparqlPropertyRelation.values().length);
 
 	private GeoSparqlUpdateListener updateListener;
 
@@ -84,6 +89,7 @@ public class GeoSparqlPlugin extends PluginBase implements PatternInterpreter, U
 	public void initialize(InitReason reason, PluginConnection pluginConnection) {
         GeoSparqlUtils.migrateConfig(getDataDir().toPath(), getLogger());
         config = GeoSparqlUtils.readConfig(getDataDir().toPath());
+        CrsDataEnvironment.inspectSystem().log(getLogger());
 
         initControlPredicates(pluginConnection.getEntities());
 
@@ -95,7 +101,7 @@ public class GeoSparqlPlugin extends PluginBase implements PatternInterpreter, U
     @Override
 	public double estimate(long subject, long predicate, long object, long context, PluginConnection pluginConnection,
                            RequestContext requestContext) {
-		if ((subject != 0 || object != 0) && predicateIds2Function.contains(predicate)) {
+		if ((subject != 0 || object != 0) && predicateIdsToRelation.contains(predicate)) {
             // GeoSPARQL query
             return 0.1;
         } else if (subject == contextId || predicate == enabledPredicateId || predicate == prefixTreePredicateId
@@ -125,12 +131,12 @@ public class GeoSparqlPlugin extends PluginBase implements PatternInterpreter, U
             return null;
         }
 
-        if (predicateIds2Function.contains(predicate)) {
+        if (predicateIdsToRelation.contains(predicate)) {
             if (subject == 0 && object == 0) {
                 return StatementIterator.EMPTY;
             }
 
-            return new GeoSparqlRelationIterator(this, predicateIds2Function.get(predicate), subject, predicate,
+            return new GeoSparqlRelationIterator(this, predicateIdsToRelation.get(predicate), subject, predicate,
                     object, pluginConnection.getEntities());
         }
 
@@ -153,16 +159,12 @@ public class GeoSparqlPlugin extends PluginBase implements PatternInterpreter, U
             String pluginEnabledStringLiteral = pluginConnection.getEntities().get(object).stringValue();
             config.setEnabled(XMLDatatypeUtil.parseBoolean(pluginEnabledStringLiteral));
             if (config.isEnabled() != wasPluginEnabled) {
-                GeoSparqlUtils.saveConfig(config, getDataDir().toPath());
                 if (config.isEnabled()) {
                     initializeGeoIndexer();
+                }
+                updateListener.saveConfigForTransaction();
+                if (config.isEnabled()) {
                     indexAllData(false, pluginConnection);
-                } else {
-                    try {
-                        indexer.rollback();
-                    } catch (Exception e) {
-                        throw new PluginException("Unable to rollback plugin data", e);
-                    }
                 }
             }
         } else if (predicate == prefixTreePredicateId) {
@@ -185,13 +187,13 @@ public class GeoSparqlPlugin extends PluginBase implements PatternInterpreter, U
             String ignoreErrorsString = pluginConnection.getEntities().get(object).stringValue();
             boolean ignoreErrors = Boolean.parseBoolean(ignoreErrorsString);
             config.setIgnoreErrors(ignoreErrors);
-            GeoSparqlUtils.saveConfig(config, getDataDir().toPath());
+            updateListener.saveConfigForTransaction();
         } else if (predicate == maxBufferedDocsPredicateId) {
             String maxBufferedDocsString = pluginConnection.getEntities().get(object).stringValue();
             try {
                 int maxBufferedDocs = Integer.parseInt(maxBufferedDocsString);
                 config.setMaxBufferedDocs(maxBufferedDocs);
-                GeoSparqlUtils.saveConfig(config, getDataDir().toPath());
+                updateListener.saveConfigForTransaction();
             } catch (NumberFormatException e) {
                 throw new PluginException("Maximum buffered documents must be an integer number.");
             }
@@ -200,7 +202,7 @@ public class GeoSparqlPlugin extends PluginBase implements PatternInterpreter, U
             try {
                 double ramBufferSize = Double.parseDouble(ramBufferSizeString);
                 config.setRamBufferSizeMb(ramBufferSize);
-                GeoSparqlUtils.saveConfig(config, getDataDir().toPath());
+                updateListener.saveConfigForTransaction();
             } catch (NumberFormatException e) {
                 throw new PluginException("Ram buffer size must be a double number.");
             }
@@ -213,47 +215,102 @@ public class GeoSparqlPlugin extends PluginBase implements PatternInterpreter, U
         return config;
     }
 
-    @VisibleForTesting
     public void setConfig(GeoSparqlConfig config) {
         this.config = config;
     }
 
-    Geometry getGeometryFromLiteralId(long id, long geometryTypeId, Entities entities) {
-        return getGeometryFromString(entities.get(id).stringValue(), geometryTypeId);
-    }
+	IndexGeometry getIndexGeometryFromLiteral(Literal literal, IRI fallbackDatatype) {
+		SourceGeometryLiteral sourceGeometryLiteral = JenaGeometryAdapter.toSourceGeometryLiteral(literal,
+				fallbackDatatype);
+		return JenaGeometryAdapter.toIndexGeometry(sourceGeometryLiteral);
+	}
 
-    Geometry getGeometryFromString(String literalValue, long geometryTypeId) {
-        try {
-            if (geometryTypeId == asWKT) {
-                return GeoConvert.wktToGeometry(literalValue);
-            } else if (geometryTypeId == asGML) {
-                return gmlConverter.gmlToGeometry(literalValue);
-            }
-        } catch (InvalidGeometryException e) {
-            // ignore and pretend value isn't there
-            getLogger().debug("Invalid geometry value: " + literalValue);
-        }
+	/**
+	 * Returns one index geometry for a repository source literal, or {@code null} when the object is not a literal or
+	 * {@code ignoreErrors} deliberately skips an invalid repository geometry.
+	 */
+	IndexGeometry getIndexGeometryFromLiteralId(long geometryResourceId, long literalId, long predicateId,
+			Entities entities) {
+		Value value = entities.get(literalId);
+		if (!(value instanceof Literal)) {
+			return null;
+		}
+		IRI datatype = predicateId == asGML ? GeoConstants.GEO_GML_LITERAL : GeoConstants.GEO_WKT_LITERAL;
+		try {
+			return getIndexGeometryFromLiteral((Literal) value, datatype);
+		} catch (JenaGeoSparqlException e) {
+			String subjectText = entities.get(geometryResourceId).stringValue();
+			String failureContext = indexingFailureContext((Literal) value, datatype, e);
+			if (config.isIgnoreErrors()) {
+				getLogger().warn("Skipping GeoSPARQL geometry for subject {} because it cannot be indexed. {}",
+						subjectText, failureContext);
+				return null;
+			}
+			throw new PluginException("Could not index GeoSPARQL geometry for subject " + subjectText
+					+ ". " + failureContext
+					+ ". Check that the geometry CRS URI is correct and that Apache SIS CRS data, such as SIS_DATA "
+					+ "and required grid files, is configured when the CRS is supported. To skip invalid or unsupported "
+					+ "repository geometries, configure ignoreErrors = true and rebuild the index.", e);
+		}
+	}
 
-        return null;
-    }
+	private static String indexingFailureContext(Literal literal, IRI fallbackDatatype,
+			JenaGeoSparqlException cause) {
+		StringBuilder context = new StringBuilder("Source geometry literal datatype: ");
+		context.append(literal.getDatatype());
+		if (!literal.getDatatype().equals(fallbackDatatype)) {
+			context.append("; predicate/fallback datatype: ").append(fallbackDatatype);
+		}
+		String crsUri = sourceGeometryCrs(literal, fallbackDatatype);
+		if (crsUri != null) {
+			context.append("; CRS: ").append(crsUri);
+		}
+		if (cause.getMessage() != null && !cause.getMessage().isBlank()) {
+			context.append("; cause: ").append(cause.getMessage());
+		}
+		return context.toString();
+	}
+
+	private static String sourceGeometryCrs(Literal literal, IRI fallbackDatatype) {
+		try {
+			return JenaGeometryAdapter.toSourceGeometryLiteral(literal, fallbackDatatype).effectiveCrsUri();
+		} catch (JenaGeoSparqlException e) {
+			if (GeoConstants.GEO_WKT_LITERAL.equals(fallbackDatatype)) {
+				String explicitCrs = explicitWktCrs(literal.stringValue());
+				if (explicitCrs != null) {
+					return explicitCrs;
+				}
+				return IndexGeometry.INDEX_CRS + " (implicit GeoSPARQL WKT default)";
+			}
+			return null;
+		}
+	}
+
+	private static String explicitWktCrs(String lexicalForm) {
+		String trimmed = lexicalForm.trim();
+		if (!trimmed.startsWith("<")) {
+			return null;
+		}
+		int end = trimmed.indexOf('>');
+		if (end <= 1) {
+			return null;
+		}
+		return trimmed.substring(1, end);
+	}
 
     private void initPluginFeatures(Entities entities) {
+        JenaGeometryAdapter.initialize();
+
         enableGeoSparqlPredicates(entities);
 
-        for (GeoSparqlFunction function : GeoSparqlFunction.values()) {
-            long predicateUriId = entities.put(function.getPredicateUri(), Entities.Scope.DEFAULT);
-            predicateIds2Function.put(predicateUriId, function);
-        }
-
-        try {
-            this.gmlConverter = new GmlConverter();
-        } catch (JAXBException e) {
-            throw new PluginException("Unable to init GML converter.", e);
+        for (GeoSparqlPropertyRelation relation : GeoSparqlPropertyRelation.values()) {
+            long predicateUriId = entities.put(relation.getPredicateUri(), Entities.Scope.DEFAULT);
+            predicateIdsToRelation.put(predicateUriId, relation);
         }
 
         initializeGeoIndexer();
 
-        FunctionLoader.loadFunctionsInPackage("com.useekm.geosparql");
+        GeoSparqlFunctionRegistration.registerAll();
     }
 
     /**
@@ -289,25 +346,32 @@ public class GeoSparqlPlugin extends PluginBase implements PatternInterpreter, U
                 indexer.initialize();
                 getLogger().debug(">>>>>>>> GeoSPARQL: Lucene indexer initialized!");
             } catch (Exception e) {
-                throw new PluginException("Cannot initialize GeoSPARQL indexer!");
+                throw new PluginException("Cannot initialize GeoSPARQL indexer.", e);
             }
         }
     }
 
     private void indexAllData(boolean forced, PluginConnection pluginConnection) {
+        updateListener.prepareConfigMutation();
         config.updateCurrentSettings();
         indexer.initSettings();
         try {
+			boolean luceneTransactionAlreadyActive = indexer.isTransactionActive();
+			if (!luceneTransactionAlreadyActive) {
+				updateListener.beginIndexTransactionForPersistentMutation();
+			}
             if (forced) {
                 getLogger().info(">>>>>>>> GeoSPARQL: Initializing force reindexing process...");
-                new GeoSparqlForceReindexer(indexer, this).reindex(pluginConnection);
+                new GeoSparqlFullIndexer(indexer, this).reindex(pluginConnection);
             } else {
                 getLogger().info(">>>>>>>> GeoSPARQL: Initializing indexing process...");
-                indexer.begin();
-                new GeoSparqlForceReindexer(indexer, this).reindex(pluginConnection);
-                indexer.commit();
+                new GeoSparqlFullIndexer(indexer, this).reindex(pluginConnection);
+                // The enclosing GraphDB transaction, or an existing Lucene transaction, owns the outcome.
+                if (!updateListener.isGraphDbTransactionActive() && !luceneTransactionAlreadyActive) {
+                    indexer.commit();
+                }
             }
-            GeoSparqlUtils.saveConfig(config, getDataDir().toPath());
+            updateListener.saveConfigForTransaction();
             getLogger().info(">>>>>>>> GeoSPARQL: Indexing completed!");
         } catch (Exception e) {
             throw new PluginException("Unable to index GeoSPARQL geometries.", e);

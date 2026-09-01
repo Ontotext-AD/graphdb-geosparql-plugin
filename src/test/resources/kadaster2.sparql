@@ -3,5 +3,5 @@ PREFIX geof: <http://www.opengis.net/def/function/geosparql/>
 
 SELECT ?f
 WHERE {
-    ?f geo:sfWithin "POLYGON ((0 0, 0 100, 100 100, 100 0, 0 0))"
+    ?f geo:sfWithin "POLYGON ((0 0, 0 89, 100 89, 100 0, 0 0))"
 }

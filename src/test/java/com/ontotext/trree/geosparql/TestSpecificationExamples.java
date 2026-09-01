@@ -6,39 +6,21 @@ import org.eclipse.rdf4j.rio.RDFFormat;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
-import org.junit.runner.RunWith;
-import org.junit.runners.Parameterized;
 
-import java.util.Arrays;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 /**
  * Uses sample data and sample queries from Annex B of the GeoSPARQL specification.
  */
-@RunWith(Parameterized.class)
 public class TestSpecificationExamples extends AbstractGeoSparqlPluginTest {
-	@Parameterized.Parameters
-	public static Iterable<Object[]> params() {
-		return Arrays.asList(new Object[][]{{false}, {true}});
-	}
-
-	private boolean forceRebuild;
-
-	public TestSpecificationExamples(boolean forceRebuild) {
-		this.forceRebuild = forceRebuild;
-	}
-
 	@Before
 	public void setupConn() throws Exception {
 		importData("simple_features_geometries.rdf", RDFFormat.RDFXML);
         importData("geosparql-example.rdf", RDFFormat.RDFXML);
 
 		enablePlugin();
-
-		if (forceRebuild) {
-			restartRepositoryAndDeleteIndex();
-			enablePlugin();
-		}
 	}
 
 	private List<Value> executeExampleQuery(String number) throws Exception {
@@ -48,17 +30,21 @@ public class TestSpecificationExamples extends AbstractGeoSparqlPluginTest {
 	@Test
 	public void testExample1() throws Exception {
 		List<Value> result = executeExampleQuery("1");
-		Assert.assertEquals(SimpleValueFactory.getInstance().createIRI("http://example.org/ApplicationSchema#B"), result.get(0));
-		Assert.assertEquals(SimpleValueFactory.getInstance().createIRI("http://example.org/ApplicationSchema#F"), result.get(1));
 		Assert.assertEquals(2, result.size());
+		Assert.assertEquals(Set.of(
+				SimpleValueFactory.getInstance().createIRI("http://example.org/ApplicationSchema#B"),
+				SimpleValueFactory.getInstance().createIRI("http://example.org/ApplicationSchema#F")),
+				new HashSet<>(result));
 	}
 
 	@Test
 	public void testExample1i() throws Exception {
 		List<Value> result = executeExampleQuery("1i");
-		Assert.assertEquals(SimpleValueFactory.getInstance().createIRI("http://example.org/ApplicationSchema#B"), result.get(0));
-		Assert.assertEquals(SimpleValueFactory.getInstance().createIRI("http://example.org/ApplicationSchema#F"), result.get(1));
 		Assert.assertEquals(2, result.size());
+		Assert.assertEquals(Set.of(
+				SimpleValueFactory.getInstance().createIRI("http://example.org/ApplicationSchema#B"),
+				SimpleValueFactory.getInstance().createIRI("http://example.org/ApplicationSchema#F")),
+				new HashSet<>(result));
 	}
 
 	@Test
@@ -109,8 +95,16 @@ public class TestSpecificationExamples extends AbstractGeoSparqlPluginTest {
 		 * but that isn't true as the sfOverlaps relation requires geometries of the same
 		 * dimension. Geometry A is 2D (polygon), while E is 1D (a line).
 		 */
+		assertExample5Results();
+
+		restartRepositoryAndDeleteIndex();
+		enablePlugin();
+
+		assertExample5Results();
+	}
+
+	private void assertExample5Results() throws Exception {
 		List<Value> result = executeExampleQuery("5");
-        System.out.println(result.size());
         Assert.assertTrue(result.contains(SimpleValueFactory.getInstance().createIRI("http://example.org/ApplicationSchema#D")));
 		Assert.assertTrue(result.contains(SimpleValueFactory.getInstance().createIRI("http://example.org/ApplicationSchema#DExactGeom")));
 		Assert.assertEquals(2, result.size());

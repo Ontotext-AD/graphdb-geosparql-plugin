@@ -8,9 +8,32 @@
 
 	<properties>
 		<graphdb.version>11.0-spring-6-TR18</graphdb.version>
-        <gt.version>29.6</gt.version>
+		<jena.version>6.2.0</jena.version>
+		<sis.version>1.6</sis.version>
+		<derby.version>10.15.2.0</derby.version>
 		<lucene.version>8.10.1</lucene.version>
+		<jts.version>1.20.0</jts.version>
+		<spatial4j.version>0.7</spatial4j.version>
+		<slf4j.version>2.0.16</slf4j.version>
+		<testcontainers.version>1.21.4</testcontainers.version>
 		<dependency.check.version>8.2.1</dependency.check.version>
+		<maven.compiler.release>21</maven.compiler.release>
+		<project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+		<!--
+			Packaging smoke intentionally uses GraphDB 10.8.x, the last GraphDB Free
+			runtime that can start without a separately issued licence. GraphDB 11+
+			requires a registered licence even for Free, so it cannot be used in
+			unattended public CI without licence provisioning.
+
+			The build and functional tests still target ${graphdb.version}; this
+			container smoke validates the assembled plugin archive, host loading,
+			HTTP startup, and external SIS data wiring on the last licence-free
+			GraphDB runtime.
+		-->
+		<graphdb.packaging-smoke.graphdb-image>ontotext/graphdb:10.8.12</graphdb.packaging-smoke.graphdb-image>
+		<graphdb.packaging-smoke.java-image>eclipse-temurin:21.0.11_10-jdk-jammy</graphdb.packaging-smoke.java-image>
+		<graphdb.packaging-smoke.plugin-zip>${project.build.directory}/${project.artifactId}-graphdb-plugin.zip</graphdb.packaging-smoke.plugin-zip>
+		<graphdb.packaging-smoke.sis-data-dir>${project.build.directory}/packaging-smoke</graphdb.packaging-smoke.sis-data-dir>
 
 		<internal.repo>https://maven.ontotext.com/content/repositories/owlim-releases</internal.repo>
 		<snapshots.repo>https://maven.ontotext.com/content/repositories/owlim-snapshots</snapshots.repo>
@@ -27,11 +50,6 @@
 				<groupId>org.apache.maven.plugins</groupId>
 				<artifactId>maven-compiler-plugin</artifactId>
 				<version>3.13.0</version>
-				<configuration>
-					<source>11</source>
-					<target>11</target>
-					<encoding>UTF-8</encoding>
-				</configuration>
 			</plugin>
 
 			<plugin>
@@ -66,6 +84,30 @@
 
 			<plugin>
 				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-failsafe-plugin</artifactId>
+				<version>3.2.5</version>
+				<executions>
+					<execution>
+						<id>verify-plugin-archive</id>
+						<phase>package</phase>
+						<goals>
+							<goal>integration-test</goal>
+							<goal>verify</goal>
+						</goals>
+						<configuration>
+							<includes>
+								<include>**/GraphDbPluginArchiveIT.java</include>
+							</includes>
+							<systemPropertyVariables>
+								<graphdb.pluginArchive>${graphdb.packaging-smoke.plugin-zip}</graphdb.pluginArchive>
+							</systemPropertyVariables>
+						</configuration>
+					</execution>
+				</executions>
+			</plugin>
+
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
 				<artifactId>maven-surefire-plugin</artifactId>
 				<version>3.2.5</version>
 				<configuration>
@@ -80,6 +122,30 @@
 				<groupId>org.apache.maven.plugins</groupId>
 				<artifactId>maven-javadoc-plugin</artifactId>
 				<version>3.6.3</version>
+			</plugin>
+
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-dependency-plugin</artifactId>
+				<version>3.7.0</version>
+				<configuration>
+					<!-- RDF4J is part of the GraphDB plugin API exposed by graphdb-sdk. -->
+					<ignoredUsedUndeclaredDependencies>
+						<ignoredUsedUndeclaredDependency>org.eclipse.rdf4j:*</ignoredUsedUndeclaredDependency>
+					</ignoredUsedUndeclaredDependencies>
+					<!-- These dependencies are supplied by the host or discovered indirectly at runtime. -->
+					<ignoredUnusedDeclaredDependencies>
+						<ignoredUnusedDeclaredDependency>org.apache.commons:commons-lang3</ignoredUnusedDeclaredDependency>
+						<ignoredUnusedDeclaredDependency>org.apache.lucene:lucene-backward-codecs</ignoredUnusedDeclaredDependency>
+						<ignoredUnusedDeclaredDependency>org.ogc-schemas:ogc-tools-gml-jts</ignoredUnusedDeclaredDependency>
+						<ignoredUnusedDeclaredDependency>org.glassfish.jaxb:jaxb-runtime</ignoredUnusedDeclaredDependency>
+						<!-- Apache SIS discovers the Derby data source reflectively. -->
+						<ignoredUnusedDeclaredDependency>org.apache.derby:derby</ignoredUnusedDeclaredDependency>
+						<ignoredUnusedDeclaredDependency>org.apache.derby:derbytools</ignoredUnusedDeclaredDependency>
+						<!-- Test-only EPSG data; see its dependency declaration for the applicable terms. -->
+						<ignoredUnusedDeclaredDependency>org.apache.sis.non-free:sis-embedded-data</ignoredUnusedDeclaredDependency>
+					</ignoredUnusedDeclaredDependencies>
+				</configuration>
 			</plugin>
 
 			<plugin>
@@ -126,6 +192,14 @@
 			<scope>provided</scope>
 		</dependency>
 
+		<!-- GraphDB supplies the logging API to plugins at runtime. -->
+		<dependency>
+			<groupId>org.slf4j</groupId>
+			<artifactId>slf4j-api</artifactId>
+			<version>${slf4j.version}</version>
+			<scope>provided</scope>
+		</dependency>
+
 		<dependency>
 			<groupId>org.apache.commons</groupId>
 			<artifactId>commons-lang3</artifactId>
@@ -158,29 +232,29 @@
 			<version>${lucene.version}</version>
 		</dependency>
 
+		<dependency>
+			<groupId>org.locationtech.spatial4j</groupId>
+			<artifactId>spatial4j</artifactId>
+			<version>${spatial4j.version}</version>
+		</dependency>
+
 		<!-- Geometric & Geodetic stuff for GeoSPARQL implementation: -->
+		<dependency>
+			<groupId>org.apache.jena</groupId>
+			<artifactId>jena-core</artifactId>
+			<version>${jena.version}</version>
+		</dependency>
+
+		<dependency>
+			<groupId>org.apache.jena</groupId>
+			<artifactId>jena-geosparql</artifactId>
+			<version>${jena.version}</version>
+		</dependency>
+
 		<dependency>
 			<groupId>org.locationtech.jts</groupId>
 			<artifactId>jts-core</artifactId>
-			<version>1.16.1</version>
-		</dependency>
-
-		<dependency>
-			<groupId>org.geotools</groupId>
-			<artifactId>gt-referencing</artifactId>
-			<version>${gt.version}</version>
-		</dependency>
-
-		<dependency>
-			<groupId>org.geotools</groupId>
-			<artifactId>gt-epsg-extension</artifactId>
-			<version>${gt.version}</version>
-		</dependency>
-
-		<dependency>
-			<groupId>org.geotools</groupId>
-			<artifactId>gt-epsg-hsql</artifactId>
-			<version>${gt.version}</version>
+			<version>${jts.version}</version>
 		</dependency>
 
 		<dependency>
@@ -192,14 +266,6 @@
 			<groupId>org.glassfish.jaxb</groupId>
 			<artifactId>jaxb-runtime</artifactId>
 			<version>4.0.5</version>
-		</dependency>
-
-		<!-- For Geotoolkit's cache. We need to have it outside the plugin classloader so it must be packaged in the dist -->
-		<dependency>
-			<groupId>org.hsqldb</groupId>
-			<artifactId>hsqldb</artifactId>
-			<version>2.7.1</version>
-			<scope>provided</scope>
 		</dependency>
 
 		<dependency>
@@ -241,6 +307,47 @@
 			<groupId>junit</groupId>
 			<artifactId>junit</artifactId>
 			<version>4.13.1</version>
+			<scope>test</scope>
+		</dependency>
+
+		<dependency>
+			<groupId>org.hamcrest</groupId>
+			<artifactId>hamcrest-core</artifactId>
+			<version>1.3</version>
+			<scope>test</scope>
+		</dependency>
+
+		<dependency>
+			<groupId>org.testcontainers</groupId>
+			<artifactId>testcontainers</artifactId>
+			<version>${testcontainers.version}</version>
+			<scope>test</scope>
+		</dependency>
+
+		<!--
+			Apache SIS uses Derby for the SpatialMetadata database under SIS_DATA. The plugin supplies
+			the database runtime; deployments supply the optional EPSG data separately.
+		-->
+		<dependency>
+			<groupId>org.apache.derby</groupId>
+			<artifactId>derby</artifactId>
+			<version>${derby.version}</version>
+		</dependency>
+		<dependency>
+			<groupId>org.apache.derby</groupId>
+			<artifactId>derbytools</artifactId>
+			<version>${derby.version}</version>
+		</dependency>
+
+		<!--
+			Test-only EPSG dataset used by projected-CRS GeoSPARQL tests. It is not included in the assembled plugin.
+			Running these tests uses data subject to the EPSG Terms of Use: https://epsg.org/terms-of-use.html
+			Plugin deployments obtain optional EPSG data separately and expose it to Apache SIS through SIS_DATA.
+		-->
+		<dependency>
+			<groupId>org.apache.sis.non-free</groupId>
+			<artifactId>sis-embedded-data</artifactId>
+			<version>${sis.version}</version>
 			<scope>test</scope>
 		</dependency>
 	</dependencies>
@@ -314,6 +421,65 @@
 			<properties>
 				<extraArgLine>--add-exports jdk.management.agent/jdk.internal.agent=ALL-UNNAMED</extraArgLine>
 			</properties>
+		</profile>
+		<profile>
+			<id>graphdb-packaging-smoke</id>
+			<build>
+				<plugins>
+					<plugin>
+						<groupId>org.apache.maven.plugins</groupId>
+						<artifactId>maven-dependency-plugin</artifactId>
+						<executions>
+							<execution>
+								<id>unpack-packaging-smoke-sis-data</id>
+								<phase>pre-integration-test</phase>
+								<goals>
+									<goal>unpack</goal>
+								</goals>
+								<configuration>
+									<artifactItems>
+										<artifactItem>
+											<groupId>org.apache.sis.non-free</groupId>
+											<artifactId>sis-embedded-data</artifactId>
+											<version>${sis.version}</version>
+											<type>jar</type>
+											<outputDirectory>${project.build.directory}/packaging-smoke</outputDirectory>
+											<includes>SIS-DATA/**</includes>
+										</artifactItem>
+									</artifactItems>
+								</configuration>
+							</execution>
+						</executions>
+					</plugin>
+					<plugin>
+						<groupId>org.apache.maven.plugins</groupId>
+						<artifactId>maven-failsafe-plugin</artifactId>
+						<configuration>
+							<systemPropertyVariables>
+								<graphdb.packagingSmoke.dockerfile>${project.basedir}/src/test/docker/graphdb/Dockerfile</graphdb.packagingSmoke.dockerfile>
+								<graphdb.packagingSmoke.pluginZip>${graphdb.packaging-smoke.plugin-zip}</graphdb.packagingSmoke.pluginZip>
+								<graphdb.packagingSmoke.sisDataDir>${graphdb.packaging-smoke.sis-data-dir}</graphdb.packagingSmoke.sisDataDir>
+								<graphdb.packagingSmoke.graphdbImage>${graphdb.packaging-smoke.graphdb-image}</graphdb.packagingSmoke.graphdbImage>
+								<graphdb.packagingSmoke.javaImage>${graphdb.packaging-smoke.java-image}</graphdb.packagingSmoke.javaImage>
+							</systemPropertyVariables>
+						</configuration>
+						<executions>
+							<execution>
+								<id>run-graphdb-packaging-smoke</id>
+								<goals>
+									<goal>integration-test</goal>
+									<goal>verify</goal>
+								</goals>
+								<configuration>
+									<includes>
+										<include>**/GraphDbPackagingSmokeIT.java</include>
+									</includes>
+								</configuration>
+							</execution>
+						</executions>
+					</plugin>
+				</plugins>
+			</build>
 		</profile>
 	</profiles>
 

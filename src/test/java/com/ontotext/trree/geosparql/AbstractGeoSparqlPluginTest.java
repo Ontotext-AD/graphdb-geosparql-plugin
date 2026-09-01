@@ -90,7 +90,6 @@ public abstract class AbstractGeoSparqlPluginTest {
 	protected void restartRepositoryAndDeleteIndex() throws Exception {
 		connection.close();
 		repository.shutDown();
-        System.out.println(repository.getDataDir());
         FileUtil.deleteDir(getGeoSparqlStorageDir());
 		repository.init();
 		connection = repository.getConnection();
@@ -101,11 +100,12 @@ public abstract class AbstractGeoSparqlPluginTest {
     }
 
     protected List<Value> executeSparqlQueryWithResult(String query, String binding) throws Exception {
-		TupleQueryResult tqr = connection.prepareTupleQuery(QueryLanguage.SPARQL, query).evaluate();
 		List<Value> result = new ArrayList<Value>();
-		while (tqr.hasNext()) {
-			BindingSet bs = tqr.next();
-			result.add(bs.getValue(binding));
+		try (TupleQueryResult tqr = connection.prepareTupleQuery(QueryLanguage.SPARQL, query).evaluate()) {
+			while (tqr.hasNext()) {
+				BindingSet bs = tqr.next();
+				result.add(bs.getValue(binding));
+			}
 		}
 		return result;
 	}

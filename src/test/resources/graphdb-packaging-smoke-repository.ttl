@@ -1,0 +1,24 @@
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#>.
+@prefix rep: <http://www.openrdf.org/config/repository#>.
+@prefix sr: <http://www.openrdf.org/config/repository/sail#>.
+@prefix sail: <http://www.openrdf.org/config/sail#>.
+@prefix graphdb: <http://www.ontotext.com/config/graphdb#>.
+
+[] a rep:Repository;
+    rep:repositoryID "packaging-smoke";
+    rdfs:label "GeoSPARQL packaging smoke test";
+    rep:repositoryImpl [
+        rep:repositoryType "graphdb:SailRepository";
+        sr:sailImpl [
+            sail:sailType "graphdb:Sail";
+            graphdb:ruleset "empty";
+            graphdb:storage-folder "storage";
+            graphdb:entity-index-size "1000000";
+            graphdb:entity-id-size "32";
+            graphdb:enable-context-index "false";
+            graphdb:enablePredicateList "true";
+            graphdb:enable-fts-index "false";
+            graphdb:in-memory-literal-properties "true";
+            graphdb:enable-literal-index "true"
+        ]
+    ].

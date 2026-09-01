@@ -1,0 +1,39 @@
+# Executable derivative of docs/issues/GDB-9378/GDB-9378.ttl for the ACCORD Tegel query.
+# The complete supplied Turtle remains unchanged with the issue report.
+@prefix bldg: <http://www.opengis.net/ont/citygml/building/3.0/> .
+@prefix geo: <http://www.opengis.net/ont/geosparql#> .
+@prefix xp: <https://graphdb.accordproject.eu/resource/xplanung/> .
+
+<https://graphdb.accordproject.eu/resource/tegel/ifc/bldg1>
+    a bldg:Building, xp:BuildingSubArea, geo:Feature ;
+    geo:hasDefaultGeometry <https://graphdb.accordproject.eu/resource/tegel/ifc/bldg1/geo> .
+
+<https://graphdb.accordproject.eu/resource/tegel/ifc/bldg1/geo>
+    a geo:Geometry ;
+    geo:asGML """<gml:MultiSurface xmlns:gml="http://www.opengis.net/gml/3.2"
+            srsName="http://www.opengis.net/def/crs/EPSG/0/25833">
+          <gml:surfaceMember>
+            <gml:Polygon gml:id="poly_0">
+              <gml:exterior>
+                <gml:LinearRing>
+                  <gml:posList>
+                    384170.043029876 5823965.732678945
+                    384171.5252327839 5823963.820445918
+                    384169.82854831655 5823962.505342073
+                    384169.4472838209 5823962.209823128
+                    384170.641614143 5823960.668982912
+                    384171.8971992667 5823959.049116108
+                    384173.0884739345 5823957.512218103
+                    384170.8403740072 5823955.76971087
+                    384164.29052155087 5823964.2218328295
+                    384166.5301781032 5823969.704315466
+                    384169.2905311447 5823968.576698598
+                    384172.1861576227 5823967.393821924
+                    384170.337240536 5823965.9607222695
+                    384170.043029876 5823965.732678945
+                  </gml:posList>
+                </gml:LinearRing>
+              </gml:exterior>
+            </gml:Polygon>
+          </gml:surfaceMember>
+        </gml:MultiSurface>"""^^geo:gmlLiteral .

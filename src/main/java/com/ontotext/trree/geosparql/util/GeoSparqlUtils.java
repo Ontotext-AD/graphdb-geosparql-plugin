@@ -6,8 +6,8 @@ import org.apache.lucene.spatial.prefix.tree.GeohashPrefixTree;
 import org.apache.lucene.spatial.prefix.tree.QuadPrefixTree;
 import org.slf4j.Logger;
 
+import java.io.ByteArrayOutputStream;
 import java.io.FileInputStream;
-import java.io.FileOutputStream;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -21,6 +21,8 @@ import java.util.Properties;
  * @since 01 Oct 2015.
  */
 public class GeoSparqlUtils {
+    private static final DurableFileOperations DURABLE_FILES = new DurableFileOperations();
+
     public static void migrateConfig(Path pluginDataDir, Logger logger) {
         GeoSparqlConfig config = new GeoSparqlConfig();
 
@@ -62,17 +64,16 @@ public class GeoSparqlUtils {
     }
 
     public static void saveConfig(GeoSparqlConfig config, Path pluginDataDir) {
+        saveConfig(config, pluginDataDir, DURABLE_FILES);
+    }
+
+    static void saveConfig(GeoSparqlConfig config, Path pluginDataDir,
+            DurableFileOperations durableFiles) {
         Path configPath = GeoSparqlConfig.resolveConfigPath(pluginDataDir);
-        if (!Files.exists(configPath.getParent())) {
-            try {
-                Files.createDirectories(configPath.getParent());
-            } catch (IOException e) {
-                throw new PluginException("Cannot save GeoSPARQL configuration file.", e);
-            }
-        }
-        try (FileOutputStream os = new FileOutputStream(configPath.toFile())) {
+        try (ByteArrayOutputStream output = new ByteArrayOutputStream()) {
             Properties properties = config.getAsProperties();
-            properties.store(os, "GeoSPARQL configuration");
+            properties.store(output, "GeoSPARQL configuration");
+            durableFiles.replace(configPath, output.toByteArray());
         } catch (IOException e) {
             throw new PluginException("Cannot save GeoSPARQL configuration file.", e);
         }

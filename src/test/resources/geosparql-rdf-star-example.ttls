@@ -3,7 +3,6 @@
 @prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
 @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
 @prefix sf: <http://www.opengis.net/ont/sf#> .
-@prefix ns_ext: <http://rdf.useekm.com/ext#> .
 
 my:PlaceOfInterest a rdfs:Class;
   rdfs:subClassOf geo:Feature .
@@ -11,23 +10,15 @@ my:PlaceOfInterest a rdfs:Class;
 my:hasExactGeometry a rdf:Property;
   rdfs:subPropertyOf geo:hasDefaultGeometry, geo:hasGeometry .
 
-my:hasPointGeometry a rdf:Property;
-  rdfs:subPropertyOf geo:hasGeometry .
+<<my:A rdf:type my:PlaceOfInterest>> my:hasExactGeometry my:AGeometry .
+<<my:B rdf:type my:PlaceOfInterest>> my:hasExactGeometry my:BGeometry .
+<<my:C rdf:type my:PlaceOfInterest>> my:hasExactGeometry my:CGeometry .
 
-<<my:A rdf:type my:PlaceOfInterest>> my:hasExactGeometry my:AExactGeom;
-  my:hasPointGeometry my:APointGeom .
+my:AGeometry a sf:Polygon;
+  geo:asWKT "POLYGON((0 0,0 10,10 10,10 0,0 0))"^^geo:wktLiteral .
 
-<<my:AExactGeom rdf:type sf:Polygon>> geo:asWKT """
-			
-				<http://www.opengis.net/def/crs/OGC/1.3/CRS84>
-				Polygon((-83.6 34.1, -83.2 34.1, -83.2 34.5, -83.6 34.5, -83.6 34.1))
-			
-		"""^^geo:wktLiteral .
+my:BGeometry a sf:Polygon;
+  geo:asWKT "POLYGON((2 2,2 4,4 4,4 2,2 2))"^^geo:wktLiteral .
 
-<<my:APointGeom rdf:type sf:Point>>   geo:asWKT """
-			
-				<http://www.opengis.net/def/crs/OGC/1.3/CRS84> Point(-83.4 34.3)
-			
-		"""^^geo:wktLiteral .
-
-<<my:A rdf:type my:PlaceOfInterest>> ns_ext:coveredBy <<my:B rdf:type my:PlaceOfInterest>> .
+my:CGeometry a sf:Polygon;
+  geo:asWKT "POLYGON((3 3,3 12,12 12,12 3,3 3))"^^geo:wktLiteral .

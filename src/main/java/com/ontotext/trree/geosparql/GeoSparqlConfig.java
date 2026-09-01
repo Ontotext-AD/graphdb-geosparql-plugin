@@ -1,8 +1,6 @@
 package com.ontotext.trree.geosparql;
 
 import com.ontotext.trree.sdk.PluginException;
-import org.apache.lucene.spatial.prefix.tree.GeohashPrefixTree;
-import org.apache.lucene.spatial.prefix.tree.QuadPrefixTree;
 import org.eclipse.rdf4j.model.Literal;
 import org.eclipse.rdf4j.model.impl.SimpleValueFactory;
 

@@ -10,6 +10,12 @@
       <outputFileNameMapping>${artifact.artifactId}.${artifact.extension}</outputFileNameMapping>
       <outputDirectory>/</outputDirectory>
       <useProjectArtifact>true</useProjectArtifact>
+      <excludes>
+        <exclude>org.slf4j:slf4j-api</exclude>
+        <exclude>org.slf4j:jcl-over-slf4j</exclude>
+        <exclude>org.slf4j:jul-to-slf4j</exclude>
+        <exclude>org.slf4j:log4j-over-slf4j</exclude>
+      </excludes>
     </dependencySet>
   </dependencySets>
 </assembly>

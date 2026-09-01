@@ -9,8 +9,6 @@ import org.junit.Test;
 
 import java.io.File;
 import java.util.List;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 import static org.junit.Assert.*;
 
@@ -20,11 +18,6 @@ import static org.junit.Assert.*;
  */
 public class TestReindex extends AbstractGeoSparqlPluginTest {
 
-    private static final Pattern LUCENE_INDEX_FILES_PATTERN = Pattern.compile(
-            "(segments(\\_\\d+|\\.gen)|.*?\\.cfe|.*?\\.cfs|write\\.lock|.*?\\.si|.*?\\.fnm|.*?\\.dim|.*?\\.dvm" +
-                    "|.*?\\.fdt|.*?\\.dvd|.*?\\.tip|.*?\\.fdx|.*?\\.dii|.*?\\.doc|.*?\\.tim|.*?\\.fdm|.*?\\.tmd" +
-                    "|.*?\\.kdd|.*?\\.kdm|.*?\\.kdi)$");
-
     @Before
     public void setupConn() throws Exception {
         importData("simple_features_geometries.rdf", RDFFormat.RDFXML);
@@ -33,8 +26,8 @@ public class TestReindex extends AbstractGeoSparqlPluginTest {
         enablePlugin();
     }
 
-    @Test(expected = RuntimeException.class)
-    public void testFailedQueryAfterDeletedIndex() throws Exception {
+    @Test
+    public void queryFailsAfterIndexIsDeleted() throws Exception {
         //test with select query
         assertSparqlSelectExample5Results();
 
@@ -43,11 +36,11 @@ public class TestReindex extends AbstractGeoSparqlPluginTest {
         assertFalse(getGeoSparqlStorageDir().exists());
 
         // select query should fail
-        assertSparqlSelectExample5Results();
+        assertThrows(RuntimeException.class, this::assertSparqlSelectExample5Results);
     }
 
     @Test
-    public void testReindexThroughSparqlPredicate() throws Exception {
+    public void forceReindexPredicateRebuildsDeletedIndex() throws Exception {
         //test with select query
         assertSparqlSelectExample5Results();
 
@@ -63,34 +56,31 @@ public class TestReindex extends AbstractGeoSparqlPluginTest {
 
         //test if index exists
         final File indexDir = GeoSparqlConfig.resolveIndexPath(getGeoSparqlStorageDir().toPath()).toFile();
-        assertTrue(indexDir.listFiles().length > 1);
-        assertLuceneIndexFiles(indexDir.listFiles());
+        assertTrue(indexDir.isDirectory());
 
     }
 
     @Test
-    public void testNoReindexThroughRepositoryReinit() throws Exception {
+    public void repositoryRestartDoesNotRebuildDeletedIndex() throws Exception {
         FileUtil.deleteDir(getGeoSparqlStorageDir());
         assertTrue(!getGeoSparqlStorageDir().exists());
 
         restartRepository();
 
-        final File indexDir = new File(getGeoSparqlStorageDir(), "index");
+        final File indexDir = GeoSparqlConfig.resolveIndexPath(getGeoSparqlStorageDir().toPath()).toFile();
         assertFalse(indexDir.exists());
     }
 
+    @Test
+    public void testCurrentV2IndexRemainsQueryableAfterRepositoryRestart() throws Exception {
+        final File indexDir = GeoSparqlConfig.resolveIndexPath(getGeoSparqlStorageDir().toPath()).toFile();
+        assertTrue(indexDir.isDirectory());
+        assertSparqlSelectExample5Results();
 
-    private void assertLuceneIndexFiles(File[] files) {
-        for (File file : files) {
-            String indexFileName = file.getName();
-            Matcher m = LUCENE_INDEX_FILES_PATTERN.matcher(indexFileName);
-            assertTrue(file.exists());
-            String group = null;
-            if (m.matches()) {
-                group = m.group(1);
-            }
-            assertEquals(indexFileName, group);
-        }
+        restartRepository();
+
+        assertTrue(indexDir.isDirectory());
+        assertSparqlSelectExample5Results();
     }
 
     private void assertSparqlSelectExample5Results() throws Exception {

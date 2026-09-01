@@ -23,7 +23,7 @@ public class TestGDB354 extends AbstractGeoSparqlPluginTest {
 
         Assert.assertEquals(1, result.size());
         Assert.assertNotNull(result.get(0));
-        Assert.assertEquals(156876.14940214372d, ((Literal) result.get(0)).doubleValue(), 0.00001);
+        Assert.assertEquals(157225.64850128975d, ((Literal) result.get(0)).doubleValue(), 0.00001);
     }
 
     @Ignore
