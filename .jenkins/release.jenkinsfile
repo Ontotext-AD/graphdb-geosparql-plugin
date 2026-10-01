@@ -76,7 +76,7 @@ pipeline {
         steps {
           withDockerContainer(image: 'docker-registry.ontotext.com/jenkins-builder:0.2-jdk25', args: "-w ${WORKSPACE}") {
             withKeeper(credentials: env.KEEPER_CREDENTIALS, envs: [
-              [record: env.KEEPER_GIT_RELEASE_RECORD, prefix: 'GIT_RELEASE', fields: ['login', 'password']],
+              [record: env.KEEPER_GIT_RELEASE_RECORD, prefix: 'GIT_RELEASE', fields: ['login']],
               [record: env.KEEPER_NEXUS_RECORD, prefix: 'NEXUS', fields: ['login', 'password']]
             ]) {
               script {
@@ -85,19 +85,18 @@ pipeline {
                 withEnv([
                   "JAVA_HOME=/opt/java/openjdk",
                   "GIT_AUTHOR_NAME=${env.GIT_RELEASE_LOGIN}",
-                  "GIT_AUTHOR_EMAIL=${env.GIT_RELEASE_LOGIN}",
+                  "GIT_AUTHOR_EMAIL=${env.GIT_RELEASE_LOGIN}@users.noreply.github.com",
                   "GIT_COMMITTER_NAME=${env.GIT_RELEASE_LOGIN}",
-                  "GIT_COMMITTER_EMAIL=${env.GIT_RELEASE_LOGIN}"
+                  "GIT_COMMITTER_EMAIL=${env.GIT_RELEASE_LOGIN}@users.noreply.github.com"
                 ]) {
                   sh """
                     shortBranch="\$(echo "\${GIT_BRANCH}" | sed 's|^origin/||')"
                     git checkout -b "\${shortBranch}" 2>/dev/null || git checkout "\${shortBranch}"
                     mvn -B \
                       -Dmaven.repo.local=${WORKSPACE}/.m2/repository \
-                      -Dusername="\$GIT_RELEASE_LOGIN" \
-                      -Dpassword="\$GIT_RELEASE_PASSWORD" \
                       -DreleaseVersion="${params.releaseVersion}" \
                       ${devArg} \
+                      -DpushChanges=false \
                       -Darguments="${skipTestsArg} -Dnexus.username=\$NEXUS_LOGIN -Dnexus.password=\$NEXUS_PASSWORD" \
                       -Prelease \
                       release:prepare \
@@ -117,34 +116,38 @@ pipeline {
         steps {
           withDockerContainer(image: 'docker-registry.ontotext.com/jenkins-builder:0.2-jdk25', args: "-w ${WORKSPACE}") {
             withKeeper(credentials: env.KEEPER_CREDENTIALS, envs: [
-              [record: env.KEEPER_GIT_RELEASE_RECORD, prefix: 'GIT_RELEASE', fields: ['login', 'password']],
               [record: env.KEEPER_NEXUS_RECORD, prefix: 'NEXUS', fields: ['login', 'password']]
             ]) {
-              script {
-                withEnv([
-                  "JAVA_HOME=/opt/java/openjdk",
-                  "GIT_AUTHOR_NAME=${env.GIT_RELEASE_LOGIN}",
-                  "GIT_AUTHOR_EMAIL=${env.GIT_RELEASE_LOGIN}",
-                  "GIT_COMMITTER_NAME=${env.GIT_RELEASE_LOGIN}",
-                  "GIT_COMMITTER_EMAIL=${env.GIT_RELEASE_LOGIN}"
-                ]) {
-                  sh """
-                    shortBranch="\$(echo "\${GIT_BRANCH}" | sed 's|^origin/||')"
-                    git checkout "\${shortBranch}"
-                    mvn -B \
-                      -Dmaven.repo.local=${WORKSPACE}/.m2/repository \
-                      -Dusername="\$GIT_RELEASE_LOGIN" \
-                      -Dpassword="\$GIT_RELEASE_PASSWORD" \
-                      -DreleaseVersion="${params.releaseVersion}" \
-                      -Darguments="-DskipTests -Dnexus.username=\$NEXUS_LOGIN -Dnexus.password=\$NEXUS_PASSWORD" \
-                      -Prelease \
-                      release:perform \
-                      -s ${WORKSPACE}/.m2/settings.xml
-                  """
-                }
+              withEnv(["JAVA_HOME=/opt/java/openjdk"]) {
+                sh """
+                  mvn -B \
+                    -Dmaven.repo.local=${WORKSPACE}/.m2/repository \
+                    -DreleaseVersion="${params.releaseVersion}" \
+                    -DlocalCheckout=true \
+                    -Darguments="-DskipTests -Dnexus.username=\$NEXUS_LOGIN -Dnexus.password=\$NEXUS_PASSWORD" \
+                    -Prelease \
+                    release:perform \
+                    -s ${WORKSPACE}/.m2/settings.xml
+                """
               }
             }
           }
+        }
+      }
+
+      stage('Push to GitHub') {
+        when {
+          expression { params.releaseVersion?.trim() }
+        }
+        steps {
+          sh """
+            mkdir -p ~/.ssh
+            ssh-keyscan github.com >> ~/.ssh/known_hosts
+            shortBranch="\$(echo "\${GIT_BRANCH}" | sed 's|^origin/||')"
+            git remote set-url origin git@github.com:Ontotext-AD/graphdb-geosparql-plugin.git
+            git push origin "HEAD:refs/heads/\${shortBranch}"
+            git push origin "refs/tags/${params.releaseVersion}"
+          """
         }
       }
     }
@@ -174,18 +177,14 @@ pipeline {
       failure {
         script {
           withDockerContainer(image: 'docker-registry.ontotext.com/jenkins-builder:0.2-jdk25', args: "-w ${WORKSPACE}") {
-            withKeeper(credentials: env.KEEPER_CREDENTIALS, envs: [
-              [record: env.KEEPER_GIT_RELEASE_RECORD, prefix: 'GIT_RELEASE', fields: ['login', 'password']]
-            ]) {
-              withEnv(['JAVA_HOME=/opt/java/openjdk']) {
-                 sh '''
-                   set +e
-                   mvn -B -Dusername="$GIT_RELEASE_LOGIN" -Dpassword="$GIT_RELEASE_PASSWORD" release:rollback
-                   mvn -B release:clean -s ${WORKSPACE}/.m2/settings.xml
-                   set -e
-                 '''
-               }
-            }
+            withEnv(['JAVA_HOME=/opt/java/openjdk']) {
+               sh '''
+                 set +e
+                 mvn -B -DpushChanges=false release:rollback
+                 mvn -B release:clean -s ${WORKSPACE}/.m2/settings.xml
+                 set -e
+               '''
+             }
           }
         }
         slackSend(
