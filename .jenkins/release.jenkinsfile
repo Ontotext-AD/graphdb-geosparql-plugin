@@ -49,7 +49,7 @@ pipeline {
 
   environment {
     KEEPER_CREDENTIALS='ksm-jenkins'
-    KEEPER_GIT_RELEASE_RECORD = 'GU9o8UrZfbtGPfkxvxwCxg'
+    KEEPER_GIT_RELEASE_RECORD = '8hm1g9HCfBPgoWAmpiHn6w'
     KEEPER_NEXUS_RECORD = 'xRckZaBDxYhmpMgsaT4tCg'
     KEEPER_NVD_API_KEY_RECORD='ejsvY-w_afWMP3gpKMJoOA'
     KEEPER_M2_SETTINGS_RECORD = 'keeper://w6o5mGXWgN7zNvrr6K7QGQ/file/settings.xml'
