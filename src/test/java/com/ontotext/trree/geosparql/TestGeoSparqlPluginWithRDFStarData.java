@@ -1,6 +1,6 @@
 package com.ontotext.trree.geosparql;
 
-import org.eclipse.rdf4j.model.Triple;
+import org.eclipse.rdf4j.model.TripleTerm;
 import org.eclipse.rdf4j.model.Value;
 import org.eclipse.rdf4j.rio.RDFFormat;
 import org.junit.Assert;
@@ -12,28 +12,30 @@ import java.util.Collections;
 import java.util.List;
 
 public class TestGeoSparqlPluginWithRDFStarData extends AbstractGeoSparqlPluginTest {
-	private static final String EMBEDDED_A_TRIPLE = "<<http://example.org/ApplicationSchema#A http://www.w3.org/1999/02/22-rdf-syntax-ns#type http://example.org/ApplicationSchema#PlaceOfInterest>>";
-	private static final String EMBEDDED_B_TRIPLE = "<<http://example.org/ApplicationSchema#B http://www.w3.org/1999/02/22-rdf-syntax-ns#type http://example.org/ApplicationSchema#PlaceOfInterest>>";
+	private static final String EMBEDDED_A_TRIPLE = "<<( http://example.org/ApplicationSchema#A http://www.w3.org/1999/02/22-rdf-syntax-ns#type http://example.org/ApplicationSchema#PlaceOfInterest )>>";
+	private static final String EMBEDDED_B_TRIPLE = "<<( http://example.org/ApplicationSchema#B http://www.w3.org/1999/02/22-rdf-syntax-ns#type http://example.org/ApplicationSchema#PlaceOfInterest )>>";
 
 	private static final String WITHIN_FROM_BOUND_EMBEDDED_SUBJECT =
 			"PREFIX geo: <http://www.opengis.net/ont/geosparql#>\n" +
-			"PREFIX my: <http://example.org/ApplicationSchema#>\n" +
-			"PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>\n" +
-			"SELECT ?feature WHERE {\n" +
-			"  <<my:B rdf:type my:PlaceOfInterest>> geo:sfWithin ?feature .\n" +
-			"}";
+					"PREFIX my: <http://example.org/ApplicationSchema#>\n" +
+					"PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>\n" +
+					"SELECT ?feature WHERE {\n" +
+					"  <<my:B rdf:type my:PlaceOfInterest>> geo:sfWithin ?within .\n" +
+					"  ?within rdf:reifies ?feature .\n" +
+					"}";
 
 	private static final String WITHIN_FROM_BOUND_EMBEDDED_OBJECT =
 			"PREFIX geo: <http://www.opengis.net/ont/geosparql#>\n" +
-			"PREFIX my: <http://example.org/ApplicationSchema#>\n" +
-			"PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>\n" +
-			"SELECT ?feature WHERE {\n" +
-			"  ?feature geo:sfWithin <<my:A rdf:type my:PlaceOfInterest>> .\n" +
-			"}";
+					"PREFIX my: <http://example.org/ApplicationSchema#>\n" +
+					"PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>\n" +
+					"SELECT ?feature WHERE {\n" +
+					"  ?within geo:sfWithin <<my:A rdf:type my:PlaceOfInterest>> .\n" +
+					"  ?within rdf:reifies ?feature .\n" +
+					"}";
 
 	@Before
 	public void setupConn() throws Exception {
-		importData("geosparql-rdf-star-example.ttls", RDFFormat.TURTLESTAR);
+		importData("geosparql-rdf-star-example.ttls", RDFFormat.TURTLE);
 		enablePlugin();
 	}
 
@@ -51,7 +53,7 @@ public class TestGeoSparqlPluginWithRDFStarData extends AbstractGeoSparqlPluginT
 		List<Value> result = executeSparqlQueryWithResult(query, "feature");
 		List<String> embeddedFeatures = new ArrayList<>();
 		for (Value value : result) {
-			if (value instanceof Triple) {
+			if (value instanceof TripleTerm) {
 				embeddedFeatures.add(value.stringValue());
 			}
 		}

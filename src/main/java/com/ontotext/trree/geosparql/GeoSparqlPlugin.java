@@ -9,7 +9,7 @@ import com.ontotext.trree.geosparql.lucene.LuceneGeoIndexer;
 import com.ontotext.trree.geosparql.util.GeoSparqlUtils;
 import com.ontotext.trree.sdk.*;
 import com.ontotext.trree.geosparql.vocabulary.GeoConstants;
-import gnu.trove.TLongObjectHashMap;
+import gnu.trove.map.hash.TLongObjectHashMap;
 import org.eclipse.rdf4j.model.IRI;
 import org.eclipse.rdf4j.model.Literal;
 import org.eclipse.rdf4j.model.Value;
