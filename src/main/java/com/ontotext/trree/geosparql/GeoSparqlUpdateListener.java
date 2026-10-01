@@ -3,8 +3,8 @@ package com.ontotext.trree.geosparql;
 import com.ontotext.trree.geosparql.util.DurableFileOperations;
 import com.ontotext.trree.geosparql.util.GeoSparqlUtils;
 import com.ontotext.trree.sdk.*;
-import gnu.trove.TLongHashSet;
-import gnu.trove.TLongProcedure;
+import gnu.trove.set.hash.TLongHashSet;
+import gnu.trove.procedure.TLongProcedure;
 
 import java.io.IOException;
 import java.nio.file.Files;
