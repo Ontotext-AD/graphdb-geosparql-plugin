@@ -151,6 +151,19 @@ Environment=SIS_DATA=/var/lib/graphdb/sis-data
 
 The exact path is up to you. It must be visible to the JVM that runs GraphDB. Do not mount the Derby database read-only unless it has been prepared for read-only use and Derby has a writable temporary directory.
 
+### Repositories and GraphDB processes
+
+All repositories in a GraphDB process that use the same GeoSPARQL plugin installation share one plugin runtime,
+including one embedded Derby engine for the EPSG database in `SIS_DATA`. Any number of repositories in the process can
+use projected CRSes, and creating, restarting, or deleting a repository does not affect the others. Install the plugin
+in one directory: each separately installed GeoSPARQL plugin directory runs its own runtime and Derby engine.
+
+The embedded Derby database in `SIS_DATA` can be open for writing in only one process at a time. When several GraphDB
+processes use the same CRS data, for example cluster nodes or containers on one host, either:
+
+- give each process its own copy of the `SIS_DATA` directory, or
+- mount one copy read-only in every process, prepared for read-only use as described above.
+
 ## CRS Data Contents
 
 The required data depends on the CRSes you need to support.
@@ -184,7 +197,7 @@ Recommended validation checks:
 
 ### Repository packaging smoke test
 
-The repository includes an opt-in smoke test that packages the plugin and supplies an external `SIS_DATA` directory. It runs a CRS84 GeoSPARQL property relation, an indexed EPSG:3006 GeoSPARQL property relation, and an EPSG:3006 five-metre distance filter function in GraphDB:
+The repository includes an opt-in smoke test that packages the plugin and supplies an external `SIS_DATA` directory. It runs a CRS84 GeoSPARQL property relation, an indexed EPSG:3006 GeoSPARQL property relation, and an EPSG:3006 five-metre distance filter function in GraphDB. It also creates and deletes repositories in the same GraphDB process and checks that each one resolves EPSG:3006:
 
 ```bash
 mvn -Pgraphdb-packaging-smoke verify
@@ -277,6 +290,14 @@ Cannot find NTv2 file named "OSTN02_NTv2.gsb".
 ```
 
 then a CRS operation needs a grid-shift file that is not present in the deployed CRS data. Install the required file, restart GraphDB, and rerun known-point validation.
+
+If `derby.log` in the GraphDB working directory contains:
+
+```text
+ERROR XSDB6: Another instance of Derby may have already booted the database
+```
+
+then another process, or a second GeoSPARQL plugin installation in the same GraphDB process, has the `SIS_DATA` EPSG database open for writing, and Apache SIS falls back to its built-in CRS subset. Give each GraphDB process its own copy of the directory or mount it read-only, keep one plugin installation, and restart GraphDB.
 
 If a geometry fails with an unsupported CRS error, treat it as one of:
 
