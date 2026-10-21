@@ -22,6 +22,7 @@ import java.io.IOException;
 import java.lang.management.ManagementFactory;
 import java.net.URL;
 import java.net.URLClassLoader;
+import java.util.function.Supplier;
 
 /**
  * GraphDB plugin entry point that forwards each repository's calls to a {@link GeoSparqlPlugin} loaded by one JVM-wide
@@ -66,22 +67,31 @@ public final class GeoSparqlPluginFacade extends PluginBase implements PatternIn
 				|| PluginBase.class.getClassLoader() == repositoryLoader) {
 			return repositoryLoader;
 		}
-		MBeanServer server = ManagementFactory.getPlatformMBeanServer();
 		try {
 			ObjectName name = new ObjectName(RUNTIME_CLASS_LOADER_NAME_PREFIX + ",location="
 					+ ObjectName.quote(pluginJar().toString()));
-			if (!server.isRegistered(name)) {
-				ClassLoader created = newRuntimeClassLoader(pluginJars.getURLs(), repositoryLoader.getParent());
-				try {
-					server.registerMBean(created, name);
-				} catch (InstanceAlreadyExistsException publishedConcurrently) {
-					((Closeable) created).close();
-				}
-			}
-			return server.getClassLoader(name);
+			return publishedRuntimeClassLoader(ManagementFactory.getPlatformMBeanServer(), name,
+					() -> newRuntimeClassLoader(pluginJars.getURLs(), repositoryLoader.getParent()));
 		} catch (JMException | IOException e) {
 			throw new IllegalStateException("Cannot publish the GeoSPARQL plugin runtime class loader.", e);
 		}
+	}
+
+	/**
+	 * Returns the runtime class loader published under {@code name}, first publishing one from {@code create} if none
+	 * is. When another repository publishes first, the created class loader is closed and the published one is used.
+	 */
+	static ClassLoader publishedRuntimeClassLoader(MBeanServer server, ObjectName name, Supplier<ClassLoader> create)
+			throws JMException, IOException {
+		if (!server.isRegistered(name)) {
+			ClassLoader created = create.get();
+			try {
+				server.registerMBean(created, name);
+			} catch (InstanceAlreadyExistsException publishedConcurrently) {
+				((Closeable) created).close();
+			}
+		}
+		return server.getClassLoader(name);
 	}
 
 	/**

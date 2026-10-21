@@ -3,14 +3,23 @@ package com.ontotext.trree.geosparql;
 import com.ontotext.trree.sdk.PluginBase;
 import org.junit.Test;
 
+import javax.management.InstanceAlreadyExistsException;
+import javax.management.MBeanServer;
+import javax.management.ObjectName;
+import java.io.IOException;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
+import java.lang.reflect.Proxy;
+import java.net.URL;
+import java.net.URLClassLoader;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertSame;
+import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
 public class GeoSparqlPluginFacadeTest {
@@ -29,6 +38,37 @@ public class GeoSparqlPluginFacadeTest {
 			} catch (NoSuchMethodException e) {
 				fail("The GraphDB entry point does not override " + method);
 			}
+		}
+	}
+
+	@Test
+	public void runtimePublishedByAnotherRepositoryIsUsedAndTheCreatedOneClosed() throws Exception {
+		ClassLoader published = new URLClassLoader(new URL[0]);
+		ObjectName name = new ObjectName(GeoSparqlPluginFacade.RUNTIME_CLASS_LOADER_NAME_PREFIX + ",location=\"jar\"");
+		MBeanServer server = (MBeanServer) Proxy.newProxyInstance(MBeanServer.class.getClassLoader(),
+				new Class<?>[]{MBeanServer.class}, (proxy, method, arguments) -> switch (method.getName()) {
+					case "isRegistered" -> false;
+					case "registerMBean" -> throw new InstanceAlreadyExistsException(name.toString());
+					case "getClassLoader" -> published;
+					default -> throw new AssertionError("Unexpected MBean server call: " + method.getName());
+				});
+		ClosingClassLoader created = new ClosingClassLoader();
+
+		assertSame(published, GeoSparqlPluginFacade.publishedRuntimeClassLoader(server, name, () -> created));
+		assertTrue("The class loader that lost the publication must be closed", created.closed);
+	}
+
+	private static final class ClosingClassLoader extends URLClassLoader {
+		private boolean closed;
+
+		ClosingClassLoader() {
+			super(new URL[0]);
+		}
+
+		@Override
+		public void close() throws IOException {
+			closed = true;
+			super.close();
 		}
 	}
 
