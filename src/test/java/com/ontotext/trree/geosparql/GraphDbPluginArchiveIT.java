@@ -94,6 +94,11 @@ public class GraphDbPluginArchiveIT {
 	}
 
 	@Test
+	public void repositoriesUseEpsgDataConcurrently() throws Exception {
+		assertLifecycle("concurrent-epsg-repositories", true);
+	}
+
+	@Test
 	public void separatePluginInstallationsUseSeparateRuntimes() throws Exception {
 		assertLifecycle("separate-installations");
 	}

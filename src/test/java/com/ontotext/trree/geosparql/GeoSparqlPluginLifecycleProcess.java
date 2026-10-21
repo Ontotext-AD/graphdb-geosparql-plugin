@@ -30,6 +30,13 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
+import java.util.concurrent.Callable;
+import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
 /** Exercises repository lifetimes with dependencies loaded from the assembled plugin archive. */
@@ -76,6 +83,53 @@ public final class GeoSparqlPluginLifecycleProcess {
 			}
 			""";
 
+	private static final int QUERY_THREADS_PER_REPOSITORY = 4;
+	private static final int QUERIES_PER_THREAD = 20;
+
+	/** Projected CRSes that need the SIS_DATA EPSG database, each with a point inside its area of use. */
+	private static final List<ProjectedPoint> PROJECTED_POINTS = List.of(
+			new ProjectedPoint(3006, 522000, 6704000),
+			new ProjectedPoint(2154, 652000, 6862000),
+			new ProjectedPoint(3035, 4321000, 3210000),
+			new ProjectedPoint(2193, 1750000, 5430000));
+
+	private record ProjectedPoint(int epsgCode, long easting, long northing) {
+		String insertGeometries() {
+			return """
+					PREFIX geo: <http://www.opengis.net/ont/geosparql#>
+					PREFIX ex: <http://example.com/lifecycle/>
+					INSERT DATA {
+					  ex:container geo:hasDefaultGeometry ex:containerGeometry .
+					  ex:containerGeometry geo:asWKT "%s"^^geo:wktLiteral .
+					  ex:thing geo:hasDefaultGeometry ex:thingGeometry .
+					  ex:thingGeometry geo:asWKT "%s"^^geo:wktLiteral .
+					}
+					""".formatted(
+					wkt("POLYGON((%d %d,%d %d,%d %d,%d %d,%d %d))".formatted(
+							easting - 10, northing - 10, easting - 10, northing + 10, easting + 10, northing + 10,
+							easting + 10, northing - 10, easting - 10, northing - 10)),
+					wkt("POINT(%d %d)".formatted(easting, northing)));
+		}
+
+		/** Asks whether two points 3 and 4 metres apart in this CRS are five metres apart. */
+		String fiveMetreDistanceQuery() {
+			return """
+					PREFIX geo: <http://www.opengis.net/ont/geosparql#>
+					PREFIX geof: <http://www.opengis.net/def/function/geosparql/>
+					PREFIX uom: <http://www.opengis.net/def/uom/OGC/1.0/>
+					ASK {
+					  BIND(geof:distance("%s"^^geo:wktLiteral, "%s"^^geo:wktLiteral, uom:metre) AS ?distance)
+					  FILTER(abs(?distance - 5.0) < 0.01)
+					}
+					""".formatted(wkt("POINT(%d %d)".formatted(easting, northing)),
+					wkt("POINT(%d %d)".formatted(easting + 3, northing + 4)));
+		}
+
+		private String wkt(String geometry) {
+			return "<http://www.opengis.net/def/crs/EPSG/0/" + epsgCode + "> " + geometry;
+		}
+	}
+
 	private GeoSparqlPluginLifecycleProcess() {
 	}
 
@@ -97,6 +151,7 @@ public final class GeoSparqlPluginLifecycleProcess {
 				case "initialization-failure" -> assertFailedInitializationCollected(Path.of(arguments[2]), work);
 				case "unstopped-sis" -> assertUnstoppedSisRetainsPluginLoader(Path.of(arguments[2]));
 				case "indexed-epsg-repositories" -> assertIndexedEpsgRepositoriesCollected(manager);
+				case "concurrent-epsg-repositories" -> assertRepositoriesUseEpsgDataConcurrently(manager);
 				case "isolated-epsg-database" -> assertIsolatedRuntimesCannotShareEpsgDatabase(Path.of(arguments[2]));
 				case "separate-installations" -> assertSeparateInstallationsUseSeparateRuntimes(Path.of(arguments[2]));
 				case "first-loader-retained" -> assertHostRetainsLoader(manager, true);
@@ -217,6 +272,78 @@ public final class GeoSparqlPluginLifecycleProcess {
 		}
 		awaitCollection(collectable(retired, 1));
 		assertDependencyThreadsStartedOnce();
+	}
+
+	/**
+	 * Repositories that each use a different projected CRS build their indexes at the same time, then query
+	 * concurrently, so first-time EPSG lookups and repeated lookups all go through the shared SIS and Derby runtime.
+	 */
+	private static void assertRepositoriesUseEpsgDataConcurrently(GraphDBRepositoryManager manager) throws Exception {
+		List<Repository> repositories = new ArrayList<>();
+		for (ProjectedPoint point : PROJECTED_POINTS) {
+			Repository repository = create(manager, "concurrent-" + point.epsgCode());
+			try (RepositoryConnection connection = repository.getConnection()) {
+				connection.prepareUpdate(point.insertGeometries()).execute();
+			}
+			repositories.add(repository);
+		}
+		ExecutorService executor = Executors.newFixedThreadPool(repositories.size() * QUERY_THREADS_PER_REPOSITORY);
+		try {
+			CyclicBarrier indexing = new CyclicBarrier(repositories.size());
+			List<Callable<Void>> enable = new ArrayList<>();
+			for (Repository repository : repositories) {
+				enable.add(() -> {
+					indexing.await();
+					try (RepositoryConnection connection = repository.getConnection()) {
+						connection.prepareUpdate(ENABLE_GEOSPARQL).execute();
+					}
+					return null;
+				});
+			}
+			awaitAll(executor.invokeAll(enable, 60, TimeUnit.SECONDS), "concurrent index builds");
+
+			CyclicBarrier querying = new CyclicBarrier(repositories.size() * QUERY_THREADS_PER_REPOSITORY);
+			List<Callable<Void>> queries = new ArrayList<>();
+			for (int index = 0; index < repositories.size(); index++) {
+				Repository repository = repositories.get(index);
+				ProjectedPoint point = PROJECTED_POINTS.get(index);
+				for (int thread = 0; thread < QUERY_THREADS_PER_REPOSITORY; thread++) {
+					queries.add(() -> {
+						querying.await();
+						try (RepositoryConnection connection = repository.getConnection()) {
+							for (int query = 0; query < QUERIES_PER_THREAD; query++) {
+								if (!connection.prepareBooleanQuery(QueryLanguage.SPARQL, EPSG_WITHIN_QUERY).evaluate()) {
+									throw new AssertionError("Indexed EPSG:" + point.epsgCode()
+											+ " property relation must match");
+								}
+								if (!connection.prepareBooleanQuery(QueryLanguage.SPARQL, point.fiveMetreDistanceQuery())
+										.evaluate()) {
+									throw new AssertionError("EPSG:" + point.epsgCode() + " distance must be five metres");
+								}
+							}
+						}
+						return null;
+					});
+				}
+			}
+			awaitAll(executor.invokeAll(queries, 60, TimeUnit.SECONDS), "concurrent queries");
+		} finally {
+			executor.shutdownNow();
+		}
+		assertDependencyThreadsStartedOnce();
+	}
+
+	private static void awaitAll(List<Future<Void>> tasks, String work) throws Exception {
+		for (Future<Void> task : tasks) {
+			if (task.isCancelled()) {
+				throw new AssertionError("The " + work + " did not finish in time");
+			}
+			try {
+				task.get();
+			} catch (ExecutionException failure) {
+				throw new AssertionError("The " + work + " failed", failure.getCause());
+			}
+		}
 	}
 
 	/** Apache SIS starts its daemon threads once for the class loader that owns it. */
