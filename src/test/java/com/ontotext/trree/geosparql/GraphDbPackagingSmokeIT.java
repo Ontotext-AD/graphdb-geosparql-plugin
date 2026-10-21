@@ -109,18 +109,36 @@ public class GraphDbPackagingSmokeIT {
 
 	@Test
 	public void assembledPluginUsesExternalCrsDataForIndexedPropertyRelationAndDistanceFunction() throws Exception {
-		createRepository();
-		executeUpdate(INSERT_GEOMETRIES, "insert smoke-test geometries");
-		executeUpdate(ENABLE_GEOSPARQL, "enable GeoSPARQL and build its index");
+		createRepository(REPOSITORY_ID);
+		executeUpdate(REPOSITORY_ID, INSERT_GEOMETRIES, "insert smoke-test geometries");
+		executeUpdate(REPOSITORY_ID, ENABLE_GEOSPARQL, "enable GeoSPARQL and build its index");
 
-		assertAskTrue(WITHIN_QUERY, "execute indexed geo:sfWithin query");
-		assertAskTrue(EPSG_3006_WITHIN_QUERY, "execute EPSG:3006 indexed geo:sfWithin query");
-		assertAskTrue(EPSG_3006_DISTANCE_QUERY, "evaluate EPSG:3006 five-metre distance function");
+		assertAskTrue(REPOSITORY_ID, WITHIN_QUERY, "execute indexed geo:sfWithin query");
+		assertAskTrue(REPOSITORY_ID, EPSG_3006_WITHIN_QUERY, "execute EPSG:3006 indexed geo:sfWithin query");
+		assertAskTrue(REPOSITORY_ID, EPSG_3006_DISTANCE_QUERY, "evaluate EPSG:3006 five-metre distance function");
 	}
 
-	private void assertAskTrue(String query, String operation) throws Exception {
+	@Test
+	public void repositoriesShareExternalCrsDataAcrossRepositoryCreationAndDeletion() throws Exception {
+		assertIndexedEpsg3006("shared-crs-first");
+		assertIndexedEpsg3006("shared-crs-second");
+		deleteRepository("shared-crs-first");
+		assertAskTrue("shared-crs-second", EPSG_3006_WITHIN_QUERY,
+				"execute EPSG:3006 indexed geo:sfWithin query in shared-crs-second after deleting shared-crs-first");
+		assertIndexedEpsg3006("shared-crs-third");
+	}
+
+	private void assertIndexedEpsg3006(String repositoryId) throws Exception {
+		createRepository(repositoryId);
+		executeUpdate(repositoryId, INSERT_GEOMETRIES, "insert geometries into " + repositoryId);
+		executeUpdate(repositoryId, ENABLE_GEOSPARQL, "enable GeoSPARQL and build the index of " + repositoryId);
+		assertAskTrue(repositoryId, EPSG_3006_WITHIN_QUERY, "execute EPSG:3006 indexed geo:sfWithin query in "
+				+ repositoryId);
+	}
+
+	private void assertAskTrue(String repositoryId, String query, String operation) throws Exception {
 		HttpResponse<String> response = send(HttpRequest.newBuilder(
-				endpoint("/repositories/" + REPOSITORY_ID + "?query=" + encode(query)))
+				endpoint("/repositories/" + repositoryId + "?query=" + encode(query)))
 				.header("Accept", "application/sparql-results+json")
 				.timeout(Duration.ofMinutes(2))
 				.GET()
@@ -130,8 +148,11 @@ public class GraphDbPackagingSmokeIT {
 				TRUE_BOOLEAN_RESULT.matcher(response.body()).find());
 	}
 
-	private void createRepository() throws Exception {
-		byte[] repositoryConfig = readResource("/graphdb-packaging-smoke-repository.ttl");
+	private void createRepository(String repositoryId) throws Exception {
+		byte[] repositoryConfig = new String(readResource("/graphdb-packaging-smoke-repository.ttl"),
+				StandardCharsets.UTF_8)
+				.replace("rep:repositoryID \"" + REPOSITORY_ID + "\"", "rep:repositoryID \"" + repositoryId + "\"")
+				.getBytes(StandardCharsets.UTF_8);
 		String boundary = "GraphDbPackagingSmokeBoundary";
 		ByteArrayOutputStream body = new ByteArrayOutputStream();
 		body.write(("--" + boundary + "\r\n"
@@ -145,11 +166,18 @@ public class GraphDbPackagingSmokeIT {
 				.header("Content-Type", "multipart/form-data; boundary=" + boundary)
 				.timeout(Duration.ofMinutes(2))
 				.POST(HttpRequest.BodyPublishers.ofByteArray(body.toByteArray()))
-				.build(), "create ephemeral GraphDB repository");
+				.build(), "create ephemeral GraphDB repository " + repositoryId);
 	}
 
-	private void executeUpdate(String update, String operation) throws Exception {
-		send(HttpRequest.newBuilder(endpoint("/repositories/" + REPOSITORY_ID + "/statements"))
+	private void deleteRepository(String repositoryId) throws Exception {
+		send(HttpRequest.newBuilder(endpoint("/rest/repositories/" + repositoryId))
+				.timeout(Duration.ofMinutes(2))
+				.DELETE()
+				.build(), "delete GraphDB repository " + repositoryId);
+	}
+
+	private void executeUpdate(String repositoryId, String update, String operation) throws Exception {
+		send(HttpRequest.newBuilder(endpoint("/repositories/" + repositoryId + "/statements"))
 				.header("Content-Type", "application/x-www-form-urlencoded")
 				.timeout(Duration.ofMinutes(2))
 				.POST(HttpRequest.BodyPublishers.ofString("update=" + encode(update)))
