@@ -99,6 +99,11 @@ public class GraphDbPluginArchiveIT {
 	}
 
 	@Test
+	public void entryPointsLoadedTogetherShareOneRuntime() throws Exception {
+		assertLifecycle("concurrent-runtime-creation");
+	}
+
+	@Test
 	public void separatePluginInstallationsUseSeparateRuntimes() throws Exception {
 		assertLifecycle("separate-installations");
 	}
@@ -158,11 +163,15 @@ public class GraphDbPluginArchiveIT {
 				builder.environment().put("SIS_DATA", sisData.toString());
 			}
 			process = builder.start();
-			assertTrue("Lifecycle process timed out: " + output, process.waitFor(120, TimeUnit.SECONDS));
+			boolean terminated = process.waitFor(120, TimeUnit.SECONDS);
+			if (!terminated) {
+				process.destroyForcibly().waitFor();
+			}
 			String diagnostics = Files.readString(output);
+			String tail = diagnostics.substring(Math.max(0, diagnostics.length() - 12000));
+			assertTrue("Lifecycle process timed out (" + scenario + "):\n" + tail, terminated);
 			diagnostics.lines().filter(line -> line.startsWith("thread-census ")).forEach(System.out::println);
-			assertEquals("Lifecycle process failed (" + scenario + "):\n"
-					+ diagnostics.substring(Math.max(0, diagnostics.length() - 12000)), 0, process.exitValue());
+			assertEquals("Lifecycle process failed (" + scenario + "):\n" + tail, 0, process.exitValue());
 		} finally {
 			if (process != null && process.isAlive()) {
 				process.destroyForcibly().waitFor();

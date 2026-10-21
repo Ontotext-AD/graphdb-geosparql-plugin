@@ -154,6 +154,7 @@ public final class GeoSparqlPluginLifecycleProcess {
 				case "concurrent-epsg-repositories" -> assertRepositoriesUseEpsgDataConcurrently(manager);
 				case "isolated-epsg-database" -> assertIsolatedRuntimesCannotShareEpsgDatabase(Path.of(arguments[2]));
 				case "separate-installations" -> assertSeparateInstallationsUseSeparateRuntimes(Path.of(arguments[2]));
+				case "concurrent-runtime-creation" -> assertEntryPointsLoadedTogetherShareOneRuntime(Path.of(arguments[2]));
 				case "first-loader-retained" -> assertHostRetainsLoader(manager, true);
 				case "last-loader-retained" -> assertHostRetainsLoader(manager, false);
 				default -> throw new IllegalArgumentException("Unknown lifecycle scenario: " + arguments[0]);
@@ -333,17 +334,19 @@ public final class GeoSparqlPluginLifecycleProcess {
 		assertDependencyThreadsStartedOnce();
 	}
 
-	private static void awaitAll(List<Future<Void>> tasks, String work) throws Exception {
-		for (Future<Void> task : tasks) {
+	private static <T> List<T> awaitAll(List<Future<T>> tasks, String work) throws Exception {
+		List<T> results = new ArrayList<>();
+		for (Future<T> task : tasks) {
 			if (task.isCancelled()) {
 				throw new AssertionError("The " + work + " did not finish in time");
 			}
 			try {
-				task.get();
+				results.add(task.get());
 			} catch (ExecutionException failure) {
 				throw new AssertionError("The " + work + " failed", failure.getCause());
 			}
 		}
+		return results;
 	}
 
 	/** Apache SIS starts its daemon threads once for the class loader that owns it. */
@@ -530,6 +533,33 @@ public final class GeoSparqlPluginLifecycleProcess {
 				.queryNames(new ObjectName(GeoSparqlPluginFacade.RUNTIME_CLASS_LOADER_NAME_PREFIX + ",*"), null);
 		if (names.size() != 2) {
 			throw new AssertionError("Expected one runtime class loader per plugin directory: " + names);
+		}
+	}
+
+	/** Entry points that GraphDB loads from one plugin directory at the same instant create and share one runtime. */
+	private static void assertEntryPointsLoadedTogetherShareOneRuntime(Path plugins) throws Exception {
+		Path installation = plugins.resolve("geosparql-plugin");
+		int entryPoints = 8;
+		CyclicBarrier loading = new CyclicBarrier(entryPoints);
+		ExecutorService executor = Executors.newFixedThreadPool(entryPoints);
+		List<ClassLoader> runtimes;
+		try {
+			List<Callable<ClassLoader>> loads = new ArrayList<>();
+			for (int index = 0; index < entryPoints; index++) {
+				loads.add(() -> {
+					loading.await();
+					return forwardedPlugin(locatePlugin(installation)).getClass().getClassLoader();
+				});
+			}
+			runtimes = awaitAll(executor.invokeAll(loads, 60, TimeUnit.SECONDS), "concurrent entry point loads");
+		} finally {
+			executor.shutdownNow();
+		}
+		if (runtimes.stream().anyMatch(runtime -> runtime != runtimes.getFirst())) {
+			throw new AssertionError("Entry points loaded together must share one runtime");
+		}
+		if (runtimeClassLoader() != runtimes.getFirst()) {
+			throw new AssertionError("The published runtime must be the one the entry points use");
 		}
 	}
 
