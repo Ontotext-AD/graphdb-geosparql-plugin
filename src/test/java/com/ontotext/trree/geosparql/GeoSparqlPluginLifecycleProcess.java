@@ -98,6 +98,7 @@ public final class GeoSparqlPluginLifecycleProcess {
 				case "unstopped-sis" -> assertUnstoppedSisRetainsPluginLoader(Path.of(arguments[2]));
 				case "indexed-epsg-repositories" -> assertIndexedEpsgRepositoriesCollected(manager);
 				case "isolated-epsg-database" -> assertIsolatedRuntimesCannotShareEpsgDatabase(Path.of(arguments[2]));
+				case "separate-installations" -> assertSeparateInstallationsUseSeparateRuntimes(Path.of(arguments[2]));
 				case "first-loader-retained" -> assertHostRetainsLoader(manager, true);
 				case "last-loader-retained" -> assertHostRetainsLoader(manager, false);
 				default -> throw new IllegalArgumentException("Unknown lifecycle scenario: " + arguments[0]);
@@ -271,7 +272,9 @@ public final class GeoSparqlPluginLifecycleProcess {
 			if (!query.evaluate()) {
 				throw new AssertionError("GeoSPARQL filter function must match before repository deletion");
 			}
-			manager.removeRepository(deleted);
+			if (!manager.removeRepository(deleted)) {
+				throw new AssertionError("Repository must be deleted: " + deleted);
+			}
 			if (!query.evaluate()) {
 				throw new AssertionError("GeoSPARQL filter function must match after repository deletion");
 			}
@@ -373,6 +376,34 @@ public final class GeoSparqlPluginLifecycleProcess {
 		}
 		((Closeable) loader).close();
 		return new WeakReference<>(loader);
+	}
+
+	/** Entry points from one plugin directory share a runtime; a separately installed directory loads its own. */
+	private static void assertSeparateInstallationsUseSeparateRuntimes(Path plugins) throws Exception {
+		Path installation = plugins.resolve("geosparql-plugin");
+		Path separateInstallation = plugins.resolveSibling("separate-plugins").resolve("geosparql-plugin");
+		try (var paths = Files.walk(installation)) {
+			for (Path source : paths.toList()) {
+				Path target = separateInstallation.resolve(installation.relativize(source).toString());
+				if (Files.isDirectory(source)) {
+					Files.createDirectories(target);
+				} else {
+					Files.copy(source, target);
+				}
+			}
+		}
+		ClassLoader runtime = forwardedPlugin(locatePlugin(installation)).getClass().getClassLoader();
+		if (forwardedPlugin(locatePlugin(installation)).getClass().getClassLoader() != runtime) {
+			throw new AssertionError("Entry points from one plugin directory must share a runtime");
+		}
+		if (forwardedPlugin(locatePlugin(separateInstallation)).getClass().getClassLoader() == runtime) {
+			throw new AssertionError("A separately installed plugin directory must load its own runtime");
+		}
+		var names = ManagementFactory.getPlatformMBeanServer()
+				.queryNames(new ObjectName(GeoSparqlPluginFacade.RUNTIME_CLASS_LOADER_NAME_PREFIX + ",*"), null);
+		if (names.size() != 2) {
+			throw new AssertionError("Expected one runtime class loader per plugin directory: " + names);
+		}
 	}
 
 	private static void assertHostRetainsLoader(GraphDBRepositoryManager manager, boolean first) throws Exception {

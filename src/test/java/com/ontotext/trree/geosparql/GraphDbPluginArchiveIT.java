@@ -94,6 +94,11 @@ public class GraphDbPluginArchiveIT {
 	}
 
 	@Test
+	public void separatePluginInstallationsUseSeparateRuntimes() throws Exception {
+		assertLifecycle("separate-installations");
+	}
+
+	@Test
 	public void indexedEpsgRepositoriesShareCrsDataAndReleaseTheirPluginClassLoaders() throws Exception {
 		assertLifecycle("indexed-epsg-repositories", true);
 	}
