@@ -140,6 +140,12 @@ public final class GeoSparqlPluginFacade extends PluginBase implements PatternIn
 	/** Initializes the plugin with its runtime as the context class loader, so dependency service lookups use it. */
 	@Override
 	public void initialize(InitReason reason, PluginConnection pluginConnection) {
+		ClassLoader repositoryLoader = GeoSparqlPluginFacade.class.getClassLoader();
+		if (plugin.getClass().getClassLoader() == repositoryLoader && PluginBase.class.getClassLoader() != repositoryLoader) {
+			getLogger().warn("GeoSPARQL loads its runtime for each repository because GraphDB's plugin class loader does "
+					+ "not expose the plugin jars. Repositories cannot share the SIS_DATA EPSG database, and deleted "
+					+ "repositories keep their runtime in memory.");
+		}
 		Thread thread = Thread.currentThread();
 		ClassLoader previous = thread.getContextClassLoader();
 		thread.setContextClassLoader(plugin.getClass().getClassLoader());
