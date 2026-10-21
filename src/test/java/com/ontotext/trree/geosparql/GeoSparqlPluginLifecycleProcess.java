@@ -498,7 +498,7 @@ public final class GeoSparqlPluginLifecycleProcess {
 		assertFunction(repository);
 	}
 
-	/** Fails initialization before and after geometry initialization, three times each. */
+	/** Fails initialization before and after geometry initialization. */
 	private static List<Retired> failInitializations(Path plugins, Path work) throws Exception {
 		List<Retired> retired = new ArrayList<>();
 		for (int index = 0; index < 3; index++) {

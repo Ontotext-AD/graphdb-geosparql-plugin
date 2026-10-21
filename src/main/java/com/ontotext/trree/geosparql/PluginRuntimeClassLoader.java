@@ -11,10 +11,11 @@ import java.util.List;
 /**
  * Loads the GeoSPARQL plugin and its bundled dependencies once per JVM.
  *
- * <p>Classes and resources follow GraphDB's external plugin class loader: bundled jars take precedence over the host,
- * so the plugin's Lucene, Jena, Apache SIS and Derby are used even when the host provides other versions. Classes the
- * plugin does not bundle, including the GraphDB SDK, RDF4J and SLF4J, come from the host. Service descriptors for
- * Lucene and ANTLR come only from the plugin jars, as GraphDB excludes host copies of those for external plugins.
+ * <p>Classes and resources follow GraphDB's external plugin class loader: bundled jars take precedence over GraphDB's,
+ * so the plugin uses its own versions of libraries that GraphDB also provides. Classes that are not in the plugin jars,
+ * including the GraphDB SDK, RDF4J and SLF4J, come from GraphDB, so both sides of the entry point use the same types.
+ * Service descriptors for Lucene and ANTLR come only from the plugin jars, as GraphDB excludes host copies of those for
+ * external plugins.
  *
  * <p>The class loader is published as an MBean so every repository's entry point can find it. It is private to that
  * lookup and does not join the MBean server's class loader repository.
