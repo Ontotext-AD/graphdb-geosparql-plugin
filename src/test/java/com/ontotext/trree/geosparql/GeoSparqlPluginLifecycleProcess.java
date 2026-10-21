@@ -50,17 +50,6 @@ public final class GeoSparqlPluginLifecycleProcess {
 			  FILTER(geof:sfIntersects(?left, ?right))
 			}
 			""";
-	private static final String INSERT_EPSG_GEOMETRIES = """
-			PREFIX geo: <http://www.opengis.net/ont/geosparql#>
-			PREFIX ex: <http://example.com/lifecycle/>
-			INSERT DATA {
-			  ex:container geo:hasDefaultGeometry ex:containerGeometry .
-			  ex:containerGeometry geo:asWKT "<http://www.opengis.net/def/crs/EPSG/0/3006> \
-			POLYGON((521990 6703990,521990 6704010,522010 6704010,522010 6703990,521990 6703990))"^^geo:wktLiteral .
-			  ex:thing geo:hasDefaultGeometry ex:thingGeometry .
-			  ex:thingGeometry geo:asWKT "<http://www.opengis.net/def/crs/EPSG/0/3006> POINT(522000 6704000)"^^geo:wktLiteral .
-			}
-			""";
 	private static final String ENABLE_GEOSPARQL = """
 			PREFIX plugin: <http://www.ontotext.com/plugins/geosparql#>
 			INSERT DATA { [] plugin:enabled true }
@@ -69,18 +58,6 @@ public final class GeoSparqlPluginLifecycleProcess {
 			PREFIX geo: <http://www.opengis.net/ont/geosparql#>
 			PREFIX ex: <http://example.com/lifecycle/>
 			ASK { ex:thing geo:sfWithin ex:container }
-			""";
-	private static final String EPSG_DISTANCE_QUERY = """
-			PREFIX geo: <http://www.opengis.net/ont/geosparql#>
-			PREFIX geof: <http://www.opengis.net/def/function/geosparql/>
-			PREFIX uom: <http://www.opengis.net/def/uom/OGC/1.0/>
-			ASK {
-			  BIND(geof:distance(
-			    "<http://www.opengis.net/def/crs/EPSG/0/3006> POINT(522000 6704000)"^^geo:wktLiteral,
-			    "<http://www.opengis.net/def/crs/EPSG/0/3006> POINT(522003 6704004)"^^geo:wktLiteral,
-			    uom:metre) AS ?distance)
-			  FILTER(abs(?distance - 5.0) < 0.01)
-			}
 			""";
 
 	private static final int QUERY_THREADS_PER_REPOSITORY = 4;
@@ -152,6 +129,11 @@ public final class GeoSparqlPluginLifecycleProcess {
 				case "unstopped-sis" -> assertUnstoppedSisRetainsPluginLoader(Path.of(arguments[2]));
 				case "indexed-epsg-repositories" -> assertIndexedEpsgRepositoriesCollected(manager);
 				case "concurrent-epsg-repositories" -> assertRepositoriesUseEpsgDataConcurrently(manager);
+				case "concurrent-repository-creation" -> assertRepositoriesCreatedTogetherShareOneRuntime(manager);
+				case "delete-during-epsg-queries" -> assertFirstEpsgRepositoryDeletedWhileOthersQuery(manager);
+				case "recreated-repository" -> assertRecreatedRepositoryIndexesEpsgData(manager);
+				case "initialization-failure-recovery" ->
+						assertRuntimeUsableAfterFailedInitializations(manager, Path.of(arguments[2]), work);
 				case "isolated-epsg-database" -> assertIsolatedRuntimesCannotShareEpsgDatabase(Path.of(arguments[2]));
 				case "separate-installations" -> assertSeparateInstallationsUseSeparateRuntimes(Path.of(arguments[2]));
 				case "concurrent-runtime-creation" -> assertEntryPointsLoadedTogetherShareOneRuntime(Path.of(arguments[2]));
@@ -306,31 +288,96 @@ public final class GeoSparqlPluginLifecycleProcess {
 			CyclicBarrier querying = new CyclicBarrier(repositories.size() * QUERY_THREADS_PER_REPOSITORY);
 			List<Callable<Void>> queries = new ArrayList<>();
 			for (int index = 0; index < repositories.size(); index++) {
-				Repository repository = repositories.get(index);
-				ProjectedPoint point = PROJECTED_POINTS.get(index);
 				for (int thread = 0; thread < QUERY_THREADS_PER_REPOSITORY; thread++) {
-					queries.add(() -> {
-						querying.await();
-						try (RepositoryConnection connection = repository.getConnection()) {
-							for (int query = 0; query < QUERIES_PER_THREAD; query++) {
-								if (!connection.prepareBooleanQuery(QueryLanguage.SPARQL, EPSG_WITHIN_QUERY).evaluate()) {
-									throw new AssertionError("Indexed EPSG:" + point.epsgCode()
-											+ " property relation must match");
-								}
-								if (!connection.prepareBooleanQuery(QueryLanguage.SPARQL, point.fiveMetreDistanceQuery())
-										.evaluate()) {
-									throw new AssertionError("EPSG:" + point.epsgCode() + " distance must be five metres");
-								}
-							}
-						}
-						return null;
-					});
+					queries.add(epsgQueries(repositories.get(index), PROJECTED_POINTS.get(index), querying));
 				}
 			}
 			awaitAll(executor.invokeAll(queries, 60, TimeUnit.SECONDS), "concurrent queries");
 		} finally {
 			executor.shutdownNow();
 		}
+		assertDependencyThreadsStartedOnce();
+	}
+
+	/** Runs the repository's property-relation and distance queries repeatedly once the barrier opens. */
+	private static Callable<Void> epsgQueries(Repository repository, ProjectedPoint point, CyclicBarrier querying) {
+		return () -> {
+			querying.await();
+			try (RepositoryConnection connection = repository.getConnection()) {
+				for (int query = 0; query < QUERIES_PER_THREAD; query++) {
+					assertEpsgQueries(connection, point);
+				}
+			}
+			return null;
+		};
+	}
+
+	/**
+	 * Repositories created at the same instant share the published runtime, and each indexes its own projected CRS
+	 * through it, which starts the runtime's dependency threads once.
+	 */
+	private static void assertRepositoriesCreatedTogetherShareOneRuntime(GraphDBRepositoryManager manager)
+			throws Exception {
+		CyclicBarrier creating = new CyclicBarrier(PROJECTED_POINTS.size());
+		ExecutorService executor = Executors.newFixedThreadPool(PROJECTED_POINTS.size());
+		List<Repository> repositories;
+		try {
+			List<Callable<Repository>> creations = new ArrayList<>();
+			for (ProjectedPoint point : PROJECTED_POINTS) {
+				creations.add(() -> {
+					creating.await();
+					return create(manager, "created-" + point.epsgCode());
+				});
+			}
+			repositories = awaitAll(executor.invokeAll(creations, 60, TimeUnit.SECONDS),
+					"concurrent repository creations");
+		} finally {
+			executor.shutdownNow();
+		}
+		ClassLoader runtime = runtimeClassLoader();
+		for (int index = 0; index < repositories.size(); index++) {
+			if (servingPlugin(repositories.get(index)).getClass().getClassLoader() != runtime) {
+				throw new AssertionError("Repositories created together must share the published runtime");
+			}
+			indexEpsgData(repositories.get(index), PROJECTED_POINTS.get(index));
+		}
+		assertDependencyThreadsStartedOnce();
+	}
+
+	/**
+	 * The repository whose calls created the runtime and opened the EPSG database is deleted while the other
+	 * repositories query their projected CRSes on worker threads. Those queries keep succeeding, the deleted
+	 * repository's plugin instance is released, and the runtime keeps its one set of dependency threads.
+	 */
+	private static void assertFirstEpsgRepositoryDeletedWhileOthersQuery(GraphDBRepositoryManager manager)
+			throws Exception {
+		ProjectedPoint firstPoint = PROJECTED_POINTS.getFirst();
+		String firstId = "epsg-" + firstPoint.epsgCode();
+		Repository first = indexEpsgData(manager, firstId, firstPoint);
+		List<ProjectedPoint> points = PROJECTED_POINTS.subList(1, PROJECTED_POINTS.size());
+		List<Repository> repositories = new ArrayList<>();
+		for (ProjectedPoint point : points) {
+			repositories.add(indexEpsgData(manager, "epsg-" + point.epsgCode(), point));
+		}
+		assertDependencyThreadsStartedOnce();
+		ExecutorService executor = Executors.newFixedThreadPool(repositories.size() * QUERY_THREADS_PER_REPOSITORY);
+		Retired retired;
+		try {
+			// The deleting thread joins the barrier, so the deletion starts once every query thread is querying.
+			CyclicBarrier querying = new CyclicBarrier(repositories.size() * QUERY_THREADS_PER_REPOSITORY + 1);
+			List<Future<Void>> queries = new ArrayList<>();
+			for (int index = 0; index < repositories.size(); index++) {
+				for (int thread = 0; thread < QUERY_THREADS_PER_REPOSITORY; thread++) {
+					queries.add(executor.submit(epsgQueries(repositories.get(index), points.get(index), querying)));
+				}
+			}
+			querying.await();
+			retired = delete(manager, firstId, first);
+			awaitAll(queries, "queries during repository deletion");
+		} finally {
+			executor.shutdownNow();
+		}
+		awaitCollection(List.of(retired.plugin()));
 		assertDependencyThreadsStartedOnce();
 	}
 
@@ -362,20 +409,42 @@ public final class GeoSparqlPluginLifecycleProcess {
 		}
 	}
 
-	private static Retired indexEpsgDataAndDelete(GraphDBRepositoryManager manager, String id)
-			throws Exception {
+	private static Retired indexEpsgDataAndDelete(GraphDBRepositoryManager manager, String id) throws Exception {
+		return delete(manager, id, indexEpsgData(manager, id, PROJECTED_POINTS.getFirst()));
+	}
+
+	private static Repository indexEpsgData(GraphDBRepositoryManager manager, String id, ProjectedPoint point) {
 		Repository repository = create(manager, id);
+		indexEpsgData(repository, point);
+		return repository;
+	}
+
+	/** Indexes the point's geometries and checks its property relation and distance. */
+	private static void indexEpsgData(Repository repository, ProjectedPoint point) {
 		try (RepositoryConnection connection = repository.getConnection()) {
-			connection.prepareUpdate(INSERT_EPSG_GEOMETRIES).execute();
+			connection.prepareUpdate(point.insertGeometries()).execute();
 			connection.prepareUpdate(ENABLE_GEOSPARQL).execute();
-			if (!connection.prepareBooleanQuery(QueryLanguage.SPARQL, EPSG_WITHIN_QUERY).evaluate()) {
-				throw new AssertionError("Indexed EPSG:3006 property relation must match: " + id);
-			}
-			if (!connection.prepareBooleanQuery(QueryLanguage.SPARQL, EPSG_DISTANCE_QUERY).evaluate()) {
-				throw new AssertionError("EPSG:3006 distance must be five metres: " + id);
-			}
+			assertEpsgQueries(connection, point);
 		}
-		return delete(manager, id, repository);
+	}
+
+	private static void assertEpsgQueries(RepositoryConnection connection, ProjectedPoint point) {
+		if (!connection.prepareBooleanQuery(QueryLanguage.SPARQL, EPSG_WITHIN_QUERY).evaluate()) {
+			throw new AssertionError("Indexed EPSG:" + point.epsgCode() + " property relation must match");
+		}
+		if (!connection.prepareBooleanQuery(QueryLanguage.SPARQL, point.fiveMetreDistanceQuery()).evaluate()) {
+			throw new AssertionError("EPSG:" + point.epsgCode() + " distance must be five metres");
+		}
+	}
+
+	/**
+	 * A repository created with a deleted repository's ID indexes and queries EPSG data again. Every repository's
+	 * index uses the runtime's one Lucene lock registry, so the deleted repository's index lock must have been released.
+	 */
+	private static void assertRecreatedRepositoryIndexesEpsgData(GraphDBRepositoryManager manager) throws Exception {
+		Retired deleted = indexEpsgDataAndDelete(manager, "recreated");
+		indexEpsgData(manager, "recreated", PROJECTED_POINTS.getFirst());
+		awaitCollection(List.of(deleted.plugin()));
 	}
 
 	private static void awaitCollection(List<? extends WeakReference<?>> retired) throws Exception {
@@ -418,12 +487,25 @@ public final class GeoSparqlPluginLifecycleProcess {
 	}
 
 	private static void assertFailedInitializationCollected(Path plugins, Path work) throws Exception {
+		awaitCollection(collectable(failInitializations(plugins, work), 0));
+	}
+
+	/** Failed initializations leave the shared runtime usable by a repository created afterwards. */
+	private static void assertRuntimeUsableAfterFailedInitializations(GraphDBRepositoryManager manager, Path plugins,
+			Path work) throws Exception {
+		failInitializations(plugins, work);
+		Repository repository = indexEpsgData(manager, "recovered", PROJECTED_POINTS.getFirst());
+		assertFunction(repository);
+	}
+
+	/** Fails initialization before and after geometry initialization, three times each. */
+	private static List<Retired> failInitializations(Path plugins, Path work) throws Exception {
 		List<Retired> retired = new ArrayList<>();
 		for (int index = 0; index < 3; index++) {
 			retired.add(failInitialization(plugins.resolve("geosparql-plugin"), work.resolve("failed-" + index), false));
 			retired.add(failInitialization(plugins.resolve("geosparql-plugin"), work.resolve("failed-early-" + index), true));
 		}
-		awaitCollection(collectable(retired, 0));
+		return retired;
 	}
 
 	private static Retired failInitialization(Path pluginDirectory, Path data,

@@ -70,6 +70,11 @@ public class GraphDbPluginArchiveIT {
 		assertLifecycle("initialization-failure");
 	}
 
+	@Test
+	public void runtimeRemainsUsableAfterFailedInitializations() throws Exception {
+		assertLifecycle("initialization-failure-recovery", true);
+	}
+
 	/**
 	 * Dependency limitation: Apache SIS 1.6, observed with GraphDB 10.8.12 and 11.0 on Java 21, starts a reference-queue
 	 * thread and registers a JVM shutdown hook that keep the class loader that loaded it reachable after GraphDB closes
@@ -99,8 +104,18 @@ public class GraphDbPluginArchiveIT {
 	}
 
 	@Test
+	public void firstEpsgRepositoryCanBeDeletedWhileOthersQuery() throws Exception {
+		assertLifecycle("delete-during-epsg-queries", true);
+	}
+
+	@Test
 	public void entryPointsLoadedTogetherShareOneRuntime() throws Exception {
 		assertLifecycle("concurrent-runtime-creation");
+	}
+
+	@Test
+	public void repositoriesCreatedTogetherShareOneRuntime() throws Exception {
+		assertLifecycle("concurrent-repository-creation", true);
 	}
 
 	@Test
@@ -111,6 +126,11 @@ public class GraphDbPluginArchiveIT {
 	@Test
 	public void indexedEpsgRepositoriesShareCrsDataAndReleaseTheirPluginClassLoaders() throws Exception {
 		assertLifecycle("indexed-epsg-repositories", true);
+	}
+
+	@Test
+	public void recreatedRepositoryIndexesEpsgData() throws Exception {
+		assertLifecycle("recreated-repository", true);
 	}
 
 	/**
