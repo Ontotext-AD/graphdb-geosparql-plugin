@@ -79,8 +79,8 @@ public class GraphDbPluginArchiveIT {
 	 * Dependency limitation: Apache SIS 1.6, observed with GraphDB 10.8.12 and 11.0 on Java 21, starts a reference-queue
 	 * thread and registers a JVM shutdown hook that keep the class loader that loaded it reachable after GraphDB closes
 	 * it, unless {@code Shutdown.stop} runs. Once SIS releases a closed class loader without {@code Shutdown.stop}, this
-	 * test fails, and a closed class loader that loaded SIS can be collected. ADR 0022 records why the plugin loads SIS
-	 * once per JVM.
+	 * test fails, and a closed class loader that loaded SIS can be collected. {@link GeoSparqlPluginFacade} therefore
+	 * loads SIS once per JVM, in a class loader that is never closed.
 	 */
 	@Test
 	public void unstoppedSisRetainsClosedPluginClassLoader() throws Exception {
