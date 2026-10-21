@@ -1,6 +1,5 @@
 package com.ontotext.trree.geosparql;
 
-import com.ontotext.trree.OwlimSchemaRepository;
 import com.ontotext.trree.geosparql.jena.IndexGeometry;
 import com.ontotext.trree.geosparql.jena.SourceGeometryLiteral;
 import com.ontotext.trree.geosparql.vocabulary.GeoConstants;
@@ -9,7 +8,6 @@ import org.eclipse.rdf4j.model.IRI;
 import org.eclipse.rdf4j.model.Literal;
 import org.eclipse.rdf4j.repository.RepositoryConnection;
 import org.eclipse.rdf4j.repository.RepositoryException;
-import org.eclipse.rdf4j.repository.sail.SailRepository;
 import org.junit.Test;
 
 import java.io.IOException;
@@ -28,8 +26,7 @@ public class TestIndexCommitFailure extends AbstractGeoSparqlPluginTest {
 		enablePlugin();
 		executePluginControl(GeoSparqlPlugin.IGNORE_ERRORS_PREDICATE_IRI, VF.createLiteral(true));
 
-		GeoSparqlPlugin plugin = (GeoSparqlPlugin) ((OwlimSchemaRepository) ((SailRepository) repository).getSail())
-				.getPlugin("GeoSPARQL");
+		GeoSparqlPlugin plugin = activePlugin();
 		IOException commitFailure = new IOException("Simulated index commit failure");
 		FailingCommitIndexer indexer = new FailingCommitIndexer(commitFailure);
 		plugin.indexer = indexer;
@@ -63,8 +60,7 @@ public class TestIndexCommitFailure extends AbstractGeoSparqlPluginTest {
 		connection.add(geometry, GeoConstants.GEO_AS_WKT, original);
 		connection.commit();
 
-		GeoSparqlPlugin plugin = (GeoSparqlPlugin) ((OwlimSchemaRepository) ((SailRepository) repository).getSail())
-				.getPlugin("GeoSPARQL");
+		GeoSparqlPlugin plugin = activePlugin();
 		IOException writeFailure = new IOException("Simulated Lucene addDocuments failure");
 		FailingIndexGeometryListIndexer indexer = new FailingIndexGeometryListIndexer(writeFailure);
 		plugin.indexer = indexer;

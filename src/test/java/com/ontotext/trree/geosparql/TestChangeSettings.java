@@ -285,10 +285,6 @@ public class TestChangeSettings extends AbstractGeoSparqlPluginTest {
 		assertSetting("precision", "precision", "20");
 	}
 
-	private GeoSparqlPlugin activePlugin() {
-		return (GeoSparqlPlugin) ((OwlimSchemaRepository) ((SailRepository) repository).getSail())
-				.getPlugin("GeoSPARQL");
-	}
 
 	private static final class FailingFreshIndexIndexer extends LuceneGeoIndexer {
 		private FailingFreshIndexIndexer(GeoSparqlPlugin parent) {

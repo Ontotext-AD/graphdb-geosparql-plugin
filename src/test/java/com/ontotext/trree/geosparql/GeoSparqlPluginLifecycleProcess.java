@@ -1,0 +1,459 @@
+package com.ontotext.trree.geosparql;
+
+import com.ontotext.graphdb.Config;
+import com.ontotext.graphdb.GraphDBRepositoryManager;
+import com.ontotext.test.utils.OwlimSeRepositoryDescription;
+import com.ontotext.trree.OwlimSchemaRepository;
+import com.ontotext.trree.sdk.Entities;
+import com.ontotext.trree.sdk.InitReason;
+import com.ontotext.trree.sdk.Plugin;
+import com.ontotext.trree.sdk.PluginBase;
+import com.ontotext.trree.sdk.PluginConnection;
+import com.ontotext.trree.sdk.ShutdownReason;
+import com.ontotext.trree.sdk.impl.ServiceLocator;
+import org.slf4j.LoggerFactory;
+import org.eclipse.rdf4j.query.QueryLanguage;
+import org.eclipse.rdf4j.query.algebra.evaluation.function.FunctionRegistry;
+import org.eclipse.rdf4j.repository.Repository;
+import org.eclipse.rdf4j.repository.RepositoryConnection;
+import org.eclipse.rdf4j.repository.sail.SailRepository;
+
+import javax.management.ObjectName;
+import java.io.Closeable;
+import java.lang.management.ManagementFactory;
+import java.lang.ref.WeakReference;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Proxy;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+import java.util.TreeMap;
+import java.util.stream.Collectors;
+
+/** Exercises repository lifetimes with dependencies loaded from the assembled plugin archive. */
+public final class GeoSparqlPluginLifecycleProcess {
+	private static final String INTERSECTS = "http://www.opengis.net/def/function/geosparql/sfIntersects";
+	private static final String INTERSECTS_QUERY = """
+			PREFIX geo: <http://www.opengis.net/ont/geosparql#>
+			PREFIX geof: <http://www.opengis.net/def/function/geosparql/>
+			ASK {
+			  VALUES (?left ?right) { ("POINT(1 1)"^^geo:wktLiteral "POINT(1 1)"^^geo:wktLiteral) }
+			  FILTER(geof:sfIntersects(?left, ?right))
+			}
+			""";
+	private static final String INSERT_EPSG_GEOMETRIES = """
+			PREFIX geo: <http://www.opengis.net/ont/geosparql#>
+			PREFIX ex: <http://example.com/lifecycle/>
+			INSERT DATA {
+			  ex:container geo:hasDefaultGeometry ex:containerGeometry .
+			  ex:containerGeometry geo:asWKT "<http://www.opengis.net/def/crs/EPSG/0/3006> \
+			POLYGON((521990 6703990,521990 6704010,522010 6704010,522010 6703990,521990 6703990))"^^geo:wktLiteral .
+			  ex:thing geo:hasDefaultGeometry ex:thingGeometry .
+			  ex:thingGeometry geo:asWKT "<http://www.opengis.net/def/crs/EPSG/0/3006> POINT(522000 6704000)"^^geo:wktLiteral .
+			}
+			""";
+	private static final String ENABLE_GEOSPARQL = """
+			PREFIX plugin: <http://www.ontotext.com/plugins/geosparql#>
+			INSERT DATA { [] plugin:enabled true }
+			""";
+	private static final String EPSG_WITHIN_QUERY = """
+			PREFIX geo: <http://www.opengis.net/ont/geosparql#>
+			PREFIX ex: <http://example.com/lifecycle/>
+			ASK { ex:thing geo:sfWithin ex:container }
+			""";
+	private static final String EPSG_DISTANCE_QUERY = """
+			PREFIX geo: <http://www.opengis.net/ont/geosparql#>
+			PREFIX geof: <http://www.opengis.net/def/function/geosparql/>
+			PREFIX uom: <http://www.opengis.net/def/uom/OGC/1.0/>
+			ASK {
+			  BIND(geof:distance(
+			    "<http://www.opengis.net/def/crs/EPSG/0/3006> POINT(522000 6704000)"^^geo:wktLiteral,
+			    "<http://www.opengis.net/def/crs/EPSG/0/3006> POINT(522003 6704004)"^^geo:wktLiteral,
+			    uom:metre) AS ?distance)
+			  FILTER(abs(?distance - 5.0) < 0.01)
+			}
+			""";
+
+	private GeoSparqlPluginLifecycleProcess() {
+	}
+
+	public static void main(String[] arguments) throws Exception {
+		Path work = Path.of(arguments[1]);
+		System.setProperty("graphdb.home.work", work.resolve("work").toString());
+		System.setProperty("register-external-plugins", arguments[2]);
+		System.setProperty("graphdb.stats.default", "disabled");
+		Config.reset();
+		GraphDBRepositoryManager manager = new GraphDBRepositoryManager(work.toFile());
+		manager.init();
+		try {
+			switch (arguments[0]) {
+				case "deleted-repositories" -> assertDeletedRepositoriesCollected(manager);
+				case "close-oldest" -> assertOtherRepositoryRemainsUsable(manager, false);
+				case "close-newest" -> assertOtherRepositoryRemainsUsable(manager, true);
+				case "restart" -> assertRestartRemainsUsable(manager);
+				case "disable-enable" -> assertPluginCanBeEnabledAgain(manager);
+				case "initialization-failure" -> assertFailedInitializationCollected(Path.of(arguments[2]), work);
+				case "unstopped-sis" -> assertUnstoppedSisRetainsPluginLoader(Path.of(arguments[2]));
+				case "indexed-epsg-repositories" -> assertIndexedEpsgRepositoriesCollected(manager);
+				case "isolated-epsg-database" -> assertIsolatedRuntimesCannotShareEpsgDatabase(Path.of(arguments[2]));
+				case "first-loader-retained" -> assertHostRetainsLoader(manager, true);
+				case "last-loader-retained" -> assertHostRetainsLoader(manager, false);
+				default -> throw new IllegalArgumentException("Unknown lifecycle scenario: " + arguments[0]);
+			}
+		} finally {
+			manager.shutDown();
+		}
+	}
+
+	private static Repository create(GraphDBRepositoryManager manager, String id) {
+		OwlimSeRepositoryDescription description = new OwlimSeRepositoryDescription();
+		description.setId(id);
+		description.getOwlimSailConfig().setRuleset("empty");
+		manager.addRepositoryConfig(description.getRepositoryConfig());
+		Repository repository = manager.getRepository(id);
+		if (!loader(repository).getClass().getName().contains("ExternalPluginLoader")) {
+			throw new AssertionError("Expected the GraphDB external plugin loader");
+		}
+		return repository;
+	}
+
+	private static ClassLoader loader(Repository repository) {
+		return ((OwlimSchemaRepository) ((SailRepository) repository).getSail()).getPlugin("GeoSPARQL")
+				.getClass().getClassLoader();
+	}
+
+	/** Returns the plugin instance that serves the repository behind GraphDB's entry point. */
+	private static Object servingPlugin(Repository repository) throws Exception {
+		Object servingPlugin = forwardedPlugin(((OwlimSchemaRepository) ((SailRepository) repository).getSail())
+				.getPlugin("GeoSPARQL"));
+		if (servingPlugin.getClass().getClassLoader() != runtimeClassLoader()) {
+			throw new AssertionError("Repositories must share one plugin runtime class loader");
+		}
+		return servingPlugin;
+	}
+
+	/** Returns the plugin instance that a GraphDB entry point forwards to. */
+	private static Object forwardedPlugin(Object entryPoint) throws Exception {
+		var plugin = entryPoint.getClass().getDeclaredMethod("plugin");
+		plugin.setAccessible(true);
+		return plugin.invoke(entryPoint);
+	}
+
+	private static ClassLoader runtimeClassLoader() throws Exception {
+		var server = ManagementFactory.getPlatformMBeanServer();
+		var names = server.queryNames(new ObjectName(GeoSparqlPluginFacade.RUNTIME_CLASS_LOADER_NAME_PREFIX + ",*"), null);
+		if (names.size() != 1) {
+			throw new AssertionError("Expected one plugin runtime class loader: " + names);
+		}
+		return server.getClassLoader(names.iterator().next());
+	}
+
+	/** Weak references to a deleted repository's plugin class loader and the plugin instance that served it. */
+	private record Retired(WeakReference<ClassLoader> loader, WeakReference<Object> plugin) {
+	}
+
+	/**
+	 * Selects the references that must be collected: every serving plugin and every repository class loader except
+	 * the first and the last {@code keptByHost}. The JDK keeps the class loader of the repository whose calls created
+	 * the plugin runtime, which defines only the GraphDB entry point, and GraphDB keeps the class loader of the last
+	 * repository a thread queried; the {@code first-loader-retained} and {@code last-loader-retained} scenarios cover
+	 * both.
+	 */
+	private static List<WeakReference<?>> collectable(List<Retired> retired, int keptByHost) {
+		List<WeakReference<?>> references = new ArrayList<>();
+		for (int index = 0; index < retired.size(); index++) {
+			references.add(retired.get(index).plugin());
+			if (index > 0 && index < retired.size() - keptByHost) {
+				references.add(retired.get(index).loader());
+			}
+		}
+		return references;
+	}
+
+	/** Deletes the repository and returns weak references to its plugin class loader and serving plugin instance. */
+	private static Retired delete(GraphDBRepositoryManager manager, String id, Repository repository)
+			throws Exception {
+		Retired retired = new Retired(new WeakReference<>(loader(repository)),
+				new WeakReference<>(servingPlugin(repository)));
+		if (!manager.removeRepository(id)) {
+			throw new AssertionError("Repository must be deleted: " + id);
+		}
+		return retired;
+	}
+
+	private static Retired createAndDelete(GraphDBRepositoryManager manager, String id) throws Exception {
+		return createAndDelete(manager, id, false);
+	}
+
+	private static Retired createAndDelete(GraphDBRepositoryManager manager, String id,
+			boolean evaluateFunction) throws Exception {
+		Repository repository = create(manager, id);
+		if (evaluateFunction) {
+			assertFunction(repository);
+		}
+		return delete(manager, id, repository);
+	}
+
+	private static void assertDeletedRepositoriesCollected(GraphDBRepositoryManager manager) throws Exception {
+		List<Retired> retired = new ArrayList<>();
+		for (int index = 0; index < 6; index++) {
+			retired.add(createAndDelete(manager, "repository-" + index, index % 2 != 0));
+		}
+		ClassLoader currentFunctions = FunctionRegistry.getInstance().get(INTERSECTS).orElseThrow()
+				.getClass().getClassLoader();
+		if (currentFunctions != runtimeClassLoader()) {
+			throw new AssertionError("Registered functions must belong to the shared plugin runtime");
+		}
+		awaitCollection(collectable(retired, 1));
+	}
+
+	private static void assertIndexedEpsgRepositoriesCollected(GraphDBRepositoryManager manager) throws Exception {
+		List<Retired> retired = new ArrayList<>();
+		for (int index = 0; index < 4; index++) {
+			retired.add(indexEpsgDataAndDelete(manager, "indexed-" + index));
+		}
+		awaitCollection(collectable(retired, 1));
+		assertDependencyThreadsStartedOnce();
+	}
+
+	/** Apache SIS starts its daemon threads once for the class loader that owns it. */
+	private static void assertDependencyThreadsStartedOnce() {
+		Map<String, Long> threads = Thread.getAllStackTraces().keySet().stream()
+				.collect(Collectors.groupingBy(thread -> thread.getName().replaceAll("\\d+", "#"), TreeMap::new,
+						Collectors.counting()));
+		System.out.println("thread-census " + threads);
+		for (String name : List.of("ReferenceQueueConsumer", "DelayedExecutor")) {
+			if (threads.getOrDefault(name, 0L) != 1) {
+				throw new AssertionError("Expected one " + name + " thread: " + threads);
+			}
+		}
+	}
+
+	private static Retired indexEpsgDataAndDelete(GraphDBRepositoryManager manager, String id)
+			throws Exception {
+		Repository repository = create(manager, id);
+		try (RepositoryConnection connection = repository.getConnection()) {
+			connection.prepareUpdate(INSERT_EPSG_GEOMETRIES).execute();
+			connection.prepareUpdate(ENABLE_GEOSPARQL).execute();
+			if (!connection.prepareBooleanQuery(QueryLanguage.SPARQL, EPSG_WITHIN_QUERY).evaluate()) {
+				throw new AssertionError("Indexed EPSG:3006 property relation must match: " + id);
+			}
+			if (!connection.prepareBooleanQuery(QueryLanguage.SPARQL, EPSG_DISTANCE_QUERY).evaluate()) {
+				throw new AssertionError("EPSG:3006 distance must be five metres: " + id);
+			}
+		}
+		return delete(manager, id, repository);
+	}
+
+	private static void awaitCollection(List<? extends WeakReference<?>> retired) throws Exception {
+		for (int attempt = 0; attempt < 30; attempt++) {
+			System.gc();
+			Thread.sleep(100);
+			if (retired.stream().allMatch(reference -> reference.refersTo(null))) {
+				return;
+			}
+		}
+		long retained = retired.stream().filter(reference -> !reference.refersTo(null)).count();
+		throw new AssertionError("Deleted repositories' plugin class loaders or instances remain reachable: " + retained
+				+ " / " + retired.size());
+	}
+
+	private static void assertOtherRepositoryRemainsUsable(GraphDBRepositoryManager manager,
+			boolean closeNewest) throws Exception {
+		Repository first = create(manager, "first");
+		Repository second = create(manager, "second");
+		Repository survivor = closeNewest ? first : second;
+		String deleted = closeNewest ? "second" : "first";
+		try (RepositoryConnection connection = survivor.getConnection()) {
+			var query = connection.prepareBooleanQuery(QueryLanguage.SPARQL, INTERSECTS_QUERY);
+			if (!query.evaluate()) {
+				throw new AssertionError("GeoSPARQL filter function must match before repository deletion");
+			}
+			manager.removeRepository(deleted);
+			if (!query.evaluate()) {
+				throw new AssertionError("GeoSPARQL filter function must match after repository deletion");
+			}
+			assertFunction(survivor);
+			createAndDelete(manager, "replacement");
+			if (!query.evaluate()) {
+				throw new AssertionError("GeoSPARQL filter function must match after function replacement");
+			}
+			assertFunction(survivor);
+		}
+	}
+
+	private static void assertFailedInitializationCollected(Path plugins, Path work) throws Exception {
+		List<Retired> retired = new ArrayList<>();
+		for (int index = 0; index < 3; index++) {
+			retired.add(failInitialization(plugins.resolve("geosparql-plugin"), work.resolve("failed-" + index), false));
+			retired.add(failInitialization(plugins.resolve("geosparql-plugin"), work.resolve("failed-early-" + index), true));
+		}
+		awaitCollection(collectable(retired, 0));
+	}
+
+	private static Retired failInitialization(Path pluginDirectory, Path data,
+			boolean beforeGeometryInitialization) throws Exception {
+		PluginBase plugin = locatePlugin(pluginDirectory);
+		ClassLoader loader = plugin.getClass().getClassLoader();
+		WeakReference<Object> serving = new WeakReference<>(forwardedPlugin(plugin));
+		plugin.setDataDir(Files.createDirectories(data).toFile());
+		plugin.setLogger(LoggerFactory.getLogger("GeoSPARQL"));
+		Entities entities = (Entities) Proxy.newProxyInstance(Entities.class.getClassLoader(),
+				new Class<?>[]{Entities.class}, (proxy, method, arguments) -> {
+			if (method.getName().equals("put")) {
+				if (beforeGeometryInitialization
+						|| arguments[0].toString().equals("http://www.opengis.net/ont/geosparql#asWKT")) {
+					throw new IllegalStateException("Entity allocation failed");
+				}
+				return 1L;
+			}
+			throw new AssertionError("Unexpected entity operation: " + method.getName());
+		});
+		PluginConnection connection = (PluginConnection) Proxy.newProxyInstance(PluginConnection.class.getClassLoader(),
+				new Class<?>[]{PluginConnection.class}, (proxy, method, arguments) -> {
+			if (method.getName().equals("getEntities")) {
+				return entities;
+			}
+			throw new AssertionError("Unexpected connection operation: " + method.getName());
+		});
+		ClassLoader previous = Thread.currentThread().getContextClassLoader();
+		Thread.currentThread().setContextClassLoader(loader);
+		try {
+			try {
+				plugin.initialize(InitReason.DEFAULT, connection);
+				throw new AssertionError("Initialization must reject entity allocation failure");
+			} catch (IllegalStateException expected) {
+				if (!expected.getMessage().equals("Entity allocation failed")) {
+					throw expected;
+				}
+			}
+			plugin.shutdown(ShutdownReason.DEFAULT);
+		} finally {
+			Thread.currentThread().setContextClassLoader(previous);
+			((Closeable) loader).close();
+		}
+		return new Retired(new WeakReference<>(loader), serving);
+	}
+
+	private static PluginBase locatePlugin(Path pluginDirectory) throws Exception {
+		for (Plugin candidate : ServiceLocator.locateExternal(pluginDirectory.toFile(), Plugin.class)) {
+			if (candidate.getName().equals("GeoSPARQL")) {
+				return (PluginBase) candidate;
+			}
+		}
+		throw new AssertionError("Expected the GeoSPARQL plugin from the archive");
+	}
+
+	private static void assertUnstoppedSisRetainsPluginLoader(Path plugins) throws Exception {
+		Path pluginDirectory = plugins.resolve("geosparql-plugin");
+		// The first entry point creates the runtime class loader, which keeps that repository class loader reachable.
+		locatePlugin(pluginDirectory);
+		awaitCollection(List.of(initializeAndClose(pluginDirectory, true)));
+		WeakReference<ClassLoader> unstopped = initializeAndClose(pluginDirectory, false);
+		for (int attempt = 0; attempt < 10; attempt++) {
+			System.gc();
+			Thread.sleep(100);
+		}
+		if (unstopped.refersTo(null)) {
+			throw new AssertionError("Apache SIS released the plugin class loader without Shutdown.stop");
+		}
+	}
+
+	/** Initializes the archive's Jena and SIS runtime without plugin initialization, shuts down Jena, and closes the loader. */
+	private static WeakReference<ClassLoader> initializeAndClose(Path pluginDirectory, boolean stopSis) throws Exception {
+		ClassLoader loader = locatePlugin(pluginDirectory).getClass().getClassLoader();
+		Class<?> adapter = Class.forName("com.ontotext.trree.geosparql.jena.JenaGeometryAdapter", true, loader);
+		adapter.getMethod("initialize").invoke(null);
+		Class.forName("org.apache.jena.sys.JenaSystem", true, loader).getMethod("shutdown").invoke(null);
+		if (stopSis) {
+			Class.forName("org.apache.sis.system.Shutdown", true, loader).getMethod("stop", Class.class)
+					.invoke(null, adapter);
+		}
+		((Closeable) loader).close();
+		return new WeakReference<>(loader);
+	}
+
+	private static void assertHostRetainsLoader(GraphDBRepositoryManager manager, boolean first) throws Exception {
+		List<Retired> retired = new ArrayList<>();
+		for (int index = 0; index < 3; index++) {
+			retired.add(createAndDelete(manager, "repository-" + index, true));
+		}
+		awaitCollection(collectable(retired, 1));
+		Retired kept = first ? retired.getFirst() : retired.getLast();
+		if (kept.loader().refersTo(null)) {
+			throw new AssertionError("The " + (first ? "first" : "last") + " repository class loader was collected");
+		}
+	}
+
+	/** A second class loader cannot open the EPSG database that another class loader's Derby engine has open. */
+	private static void assertIsolatedRuntimesCannotShareEpsgDatabase(Path plugins) throws Exception {
+		Path pluginDirectory = plugins.resolve("geosparql-plugin");
+		ClassLoader first = locatePlugin(pluginDirectory).getClass().getClassLoader();
+		ClassLoader second = locatePlugin(pluginDirectory).getClass().getClassLoader();
+		if (!resolvesEpsg3006(first)) {
+			throw new AssertionError("The first class loader must resolve EPSG:3006 from SIS_DATA");
+		}
+		if (resolvesEpsg3006(second)) {
+			throw new AssertionError("A second Derby engine opened the EPSG database another engine has open");
+		}
+		String derbyLog = Files.readString(Path.of(System.getProperty("derby.stream.error.file")));
+		if (!derbyLog.contains("XSDB6")) {
+			throw new AssertionError("Expected Derby to report the database as already booted:\n" + derbyLog);
+		}
+	}
+
+	private static boolean resolvesEpsg3006(ClassLoader loader) throws Exception {
+		Thread thread = Thread.currentThread();
+		ClassLoader previous = thread.getContextClassLoader();
+		thread.setContextClassLoader(loader);
+		try {
+			Class.forName("org.apache.sis.referencing.CRS", true, loader).getMethod("forCode", String.class)
+					.invoke(null, "EPSG:3006");
+			return true;
+		} catch (InvocationTargetException unresolved) {
+			return false;
+		} finally {
+			thread.setContextClassLoader(previous);
+		}
+	}
+
+	private static void assertPluginCanBeEnabledAgain(GraphDBRepositoryManager manager) throws Exception {
+		Repository first = create(manager, "first");
+		Repository second = create(manager, "second");
+		var plugins = ((OwlimSchemaRepository) ((SailRepository) first).getSail()).getPluginManager();
+		ClassLoader original = loader(first);
+		try (RepositoryConnection connection = first.getConnection()) {
+			connection.prepareUpdate("INSERT DATA { [] <http://www.ontotext.com/owlim/system#stopplugin> \"GeoSPARQL\" }")
+					.execute();
+			if (plugins.getPlugin("GeoSPARQL") != null) {
+				throw new AssertionError("GeoSPARQL plugin must be disabled");
+			}
+			System.gc();
+			assertFunction(second);
+			connection.prepareUpdate("INSERT DATA { [] <http://www.ontotext.com/owlim/system#startplugin> \"GeoSPARQL\" }")
+					.execute();
+		}
+		if (loader(first) != original) {
+			throw new AssertionError("Plugin must be enabled with its existing class loader");
+		}
+		assertFunction(first);
+		assertFunction(second);
+	}
+
+	private static void assertRestartRemainsUsable(GraphDBRepositoryManager manager) {
+		Repository repository = create(manager, "restart");
+		assertFunction(repository);
+		manager.restartRepository("restart");
+		assertFunction(manager.getRepository("restart"));
+	}
+
+	private static void assertFunction(Repository repository) {
+		try (RepositoryConnection connection = repository.getConnection()) {
+			if (!connection.prepareBooleanQuery(QueryLanguage.SPARQL, INTERSECTS_QUERY).evaluate()) {
+				throw new AssertionError("GeoSPARQL filter function must match");
+			}
+		}
+	}
+}
