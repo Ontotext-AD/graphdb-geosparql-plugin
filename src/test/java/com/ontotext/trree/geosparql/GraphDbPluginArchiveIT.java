@@ -76,11 +76,11 @@ public class GraphDbPluginArchiveIT {
 	}
 
 	/**
-	 * Dependency limitation: Apache SIS 1.6, observed with GraphDB 10.8.12 and 11.0 on Java 21, starts a reference-queue
-	 * thread and registers a JVM shutdown hook that keep the class loader that loaded it reachable after GraphDB closes
-	 * it, unless {@code Shutdown.stop} runs. Once SIS releases a closed class loader without {@code Shutdown.stop}, this
-	 * test fails, and a closed class loader that loaded SIS can be collected. {@link GeoSparqlPluginFacade} therefore
-	 * loads SIS once per JVM, in a class loader that is never closed.
+	 * Dependency limitation: Apache SIS 1.6, observed with GraphDB 10.8.12 and 11.0 on Java 21 and GraphDB 11.0 on
+	 * Java 25, starts a reference-queue thread and registers a JVM shutdown hook that keep the class loader that loaded
+	 * it reachable after GraphDB closes it, unless {@code Shutdown.stop} runs. Once SIS releases a closed class loader
+	 * without {@code Shutdown.stop}, this test fails, and a closed class loader that loaded SIS can be collected.
+	 * {@link GeoSparqlPluginFacade} therefore loads SIS once per JVM, in a class loader that is never closed.
 	 */
 	@Test
 	public void unstoppedSisRetainsClosedPluginClassLoader() throws Exception {
@@ -88,10 +88,11 @@ public class GraphDbPluginArchiveIT {
 	}
 
 	/**
-	 * Dependency limitation: an embedded Apache Derby 10.15 engine, observed with GraphDB 10.8.12 and 11.0 on Java 21,
-	 * locks the SIS_DATA EPSG database for its JVM. A Derby engine in a second class loader cannot open it and reports
-	 * {@code XSDB6}, and Apache SIS 1.6 falls back to its built-in CRS subset. Once Derby engines in different class
-	 * loaders can share the database, this test fails, and a second class loader resolves EPSG:3006.
+	 * Dependency limitation: an embedded Apache Derby 10.15 engine, observed with GraphDB 10.8.12 and 11.0 on Java 21
+	 * and GraphDB 11.0 on Java 25, locks the SIS_DATA EPSG database for its JVM. A Derby engine in a second class
+	 * loader cannot open it and reports {@code XSDB6}, and Apache SIS 1.6 falls back to its built-in CRS subset. Once
+	 * Derby engines in different class loaders can share the database, this test fails, and a second class loader
+	 * resolves EPSG:3006.
 	 */
 	@Test
 	public void isolatedPluginRuntimesCannotShareEpsgDatabase() throws Exception {
@@ -134,16 +135,17 @@ public class GraphDbPluginArchiveIT {
 	}
 
 	/**
-	 * Dependency limitation: on Java 21.0.11 a URL class loader, and a thread, capture the AccessControlContext of the
-	 * call that creates them, including the protection domain of the GraphDB entry point on the stack. The plugin runtime
-	 * class loader and the dependency threads started by the first repository's calls therefore keep that closed
-	 * repository class loader, which defines only the entry point, reachable once per JVM. Derby's threads do the same
-	 * for the repository that first opens the SIS_DATA EPSG database. Once the JDK no longer retains these class
-	 * loaders, this test fails, and the first repository's class loader can be collected.
+	 * Dependency limitation: Apache Derby 10.15, observed with GraphDB 11.0 on Java 25, creates the static exceptions
+	 * of its embedded connection class, {@code exceptionClose} and {@code NO_MEM}, when that class initializes, and the
+	 * JVM keeps every class on a captured stack trace reachable. Derby initializes the class when the SIS_DATA EPSG
+	 * database is first opened, with the GraphDB entry point of the repository that opened it on the stack, so that
+	 * repository's closed class loader, which defines only the entry point, stays reachable once per JVM. Once that
+	 * class initializer creates no exception, this test fails, and the first EPSG repository's class loader can be
+	 * collected.
 	 */
 	@Test
-	public void jdkRetainsFirstRepositoryClassLoader() throws Exception {
-		assertLifecycle("first-loader-retained");
+	public void derbyRetainsFirstEpsgRepositoryClassLoader() throws Exception {
+		assertLifecycle("first-epsg-loader-retained", true);
 	}
 
 	/**

@@ -137,8 +137,8 @@ public final class GeoSparqlPluginLifecycleProcess {
 				case "isolated-epsg-database" -> assertIsolatedRuntimesCannotShareEpsgDatabase(Path.of(arguments[2]));
 				case "separate-installations" -> assertSeparateInstallationsUseSeparateRuntimes(Path.of(arguments[2]));
 				case "concurrent-runtime-creation" -> assertEntryPointsLoadedTogetherShareOneRuntime(Path.of(arguments[2]));
-				case "first-loader-retained" -> assertHostRetainsLoader(manager, true);
-				case "last-loader-retained" -> assertHostRetainsLoader(manager, false);
+				case "first-epsg-loader-retained" -> assertFirstEpsgLoaderRetained(manager);
+				case "last-loader-retained" -> assertLastQueriedLoaderRetained(manager);
 				default -> throw new IllegalArgumentException("Unknown lifecycle scenario: " + arguments[0]);
 			}
 		} finally {
@@ -195,16 +195,15 @@ public final class GeoSparqlPluginLifecycleProcess {
 
 	/**
 	 * Selects the references that must be collected: every serving plugin and every repository class loader except
-	 * the first and the last {@code keptByHost}. The JDK keeps the class loader of the repository whose calls created
-	 * the plugin runtime, which defines only the GraphDB entry point, and GraphDB keeps the class loader of the last
-	 * repository a thread queried; the {@code first-loader-retained} and {@code last-loader-retained} scenarios cover
-	 * both.
+	 * the first {@code keptByDerby} and the last {@code keptByHost}. Derby keeps the class loader of the repository
+	 * that first opened the EPSG database, and GraphDB keeps the class loader of the last repository a thread queried;
+	 * the {@code first-epsg-loader-retained} and {@code last-loader-retained} scenarios cover both.
 	 */
-	private static List<WeakReference<?>> collectable(List<Retired> retired, int keptByHost) {
+	private static List<WeakReference<?>> collectable(List<Retired> retired, int keptByDerby, int keptByHost) {
 		List<WeakReference<?>> references = new ArrayList<>();
 		for (int index = 0; index < retired.size(); index++) {
 			references.add(retired.get(index).plugin());
-			if (index > 0 && index < retired.size() - keptByHost) {
+			if (index >= keptByDerby && index < retired.size() - keptByHost) {
 				references.add(retired.get(index).loader());
 			}
 		}
@@ -245,7 +244,7 @@ public final class GeoSparqlPluginLifecycleProcess {
 		if (currentFunctions != runtimeClassLoader()) {
 			throw new AssertionError("Registered functions must belong to the shared plugin runtime");
 		}
-		awaitCollection(collectable(retired, 1));
+		awaitCollection(collectable(retired, 0, 1));
 	}
 
 	private static void assertIndexedEpsgRepositoriesCollected(GraphDBRepositoryManager manager) throws Exception {
@@ -253,7 +252,7 @@ public final class GeoSparqlPluginLifecycleProcess {
 		for (int index = 0; index < 4; index++) {
 			retired.add(indexEpsgDataAndDelete(manager, "indexed-" + index));
 		}
-		awaitCollection(collectable(retired, 1));
+		awaitCollection(collectable(retired, 1, 1));
 		assertDependencyThreadsStartedOnce();
 	}
 
@@ -487,7 +486,7 @@ public final class GeoSparqlPluginLifecycleProcess {
 	}
 
 	private static void assertFailedInitializationCollected(Path plugins, Path work) throws Exception {
-		awaitCollection(collectable(failInitializations(plugins, work), 0));
+		awaitCollection(collectable(failInitializations(plugins, work), 0, 0));
 	}
 
 	/** Failed initializations leave the shared runtime usable by a repository created afterwards. */
@@ -563,8 +562,6 @@ public final class GeoSparqlPluginLifecycleProcess {
 
 	private static void assertUnstoppedSisRetainsPluginLoader(Path plugins) throws Exception {
 		Path pluginDirectory = plugins.resolve("geosparql-plugin");
-		// The first entry point creates the runtime class loader, which keeps that repository class loader reachable.
-		locatePlugin(pluginDirectory);
 		awaitCollection(List.of(initializeAndClose(pluginDirectory, true)));
 		WeakReference<ClassLoader> unstopped = initializeAndClose(pluginDirectory, false);
 		for (int attempt = 0; attempt < 10; attempt++) {
@@ -645,15 +642,25 @@ public final class GeoSparqlPluginLifecycleProcess {
 		}
 	}
 
-	private static void assertHostRetainsLoader(GraphDBRepositoryManager manager, boolean first) throws Exception {
+	private static void assertLastQueriedLoaderRetained(GraphDBRepositoryManager manager) throws Exception {
 		List<Retired> retired = new ArrayList<>();
 		for (int index = 0; index < 3; index++) {
 			retired.add(createAndDelete(manager, "repository-" + index, true));
 		}
-		awaitCollection(collectable(retired, 1));
-		Retired kept = first ? retired.getFirst() : retired.getLast();
-		if (kept.loader().refersTo(null)) {
-			throw new AssertionError("The " + (first ? "first" : "last") + " repository class loader was collected");
+		awaitCollection(collectable(retired, 0, 1));
+		if (retired.getLast().loader().refersTo(null)) {
+			throw new AssertionError("The last queried repository class loader was collected");
+		}
+	}
+
+	private static void assertFirstEpsgLoaderRetained(GraphDBRepositoryManager manager) throws Exception {
+		List<Retired> retired = new ArrayList<>();
+		for (int index = 0; index < 3; index++) {
+			retired.add(indexEpsgDataAndDelete(manager, "indexed-" + index));
+		}
+		awaitCollection(collectable(retired, 1, 1));
+		if (retired.getFirst().loader().refersTo(null)) {
+			throw new AssertionError("The first EPSG repository class loader was collected");
 		}
 	}
 
