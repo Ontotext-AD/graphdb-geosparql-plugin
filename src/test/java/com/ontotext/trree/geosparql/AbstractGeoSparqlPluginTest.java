@@ -6,6 +6,7 @@ import com.ontotext.test.RepositorySetup;
 import com.ontotext.test.TemporaryLocalFolder;
 import com.ontotext.test.TemporaryRepositoryManager;
 import com.ontotext.test.utils.OwlimSeRepositoryDescription;
+import com.ontotext.trree.OwlimSchemaRepository;
 import org.eclipse.rdf4j.common.exception.RDF4JException;
 import org.eclipse.rdf4j.common.io.FileUtil;
 import org.eclipse.rdf4j.common.io.IOUtil;
@@ -22,6 +23,7 @@ import org.eclipse.rdf4j.repository.Repository;
 import org.eclipse.rdf4j.repository.RepositoryConnection;
 import org.eclipse.rdf4j.repository.RepositoryException;
 import org.eclipse.rdf4j.repository.config.RepositoryConfig;
+import org.eclipse.rdf4j.repository.sail.SailRepository;
 import org.eclipse.rdf4j.rio.RDFFormat;
 import org.eclipse.rdf4j.rio.RDFParseException;
 import org.junit.*;
@@ -78,6 +80,12 @@ public abstract class AbstractGeoSparqlPluginTest {
 	@After
 	public void closeConn() throws RepositoryException {
 		connection.close();
+	}
+
+	/** Returns the GeoSPARQL plugin instance that serves {@link #repository}. */
+	protected GeoSparqlPlugin activePlugin() {
+		return (GeoSparqlPlugin) ((GeoSparqlPluginFacade) ((OwlimSchemaRepository) ((SailRepository) repository).getSail())
+				.getPlugin("GeoSPARQL")).plugin();
 	}
 
 	protected void restartRepository() throws RepositoryException {

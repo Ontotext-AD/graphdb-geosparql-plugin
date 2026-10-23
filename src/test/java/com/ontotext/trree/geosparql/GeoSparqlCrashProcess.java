@@ -85,8 +85,8 @@ public final class GeoSparqlCrashProcess {
 	}
 
 	private static GeoSparqlPlugin activePlugin(Repository repository) {
-		return (GeoSparqlPlugin) ((OwlimSchemaRepository) ((SailRepository) repository).getSail())
-				.getPlugin("GeoSPARQL");
+		return (GeoSparqlPlugin) ((GeoSparqlPluginFacade) ((OwlimSchemaRepository) ((SailRepository) repository).getSail())
+				.getPlugin("GeoSPARQL")).plugin();
 	}
 
 	private static void installCrashIndexer(GeoSparqlPlugin plugin, CrashBoundary boundary) throws Exception {

@@ -57,13 +57,20 @@ public class GeoSparqlProcessCrashRecoveryTest {
 
 	private void assertRestartFailsClosed(GeoSparqlCrashProcess.CrashBoundary boundary) throws Exception {
 		Path managerDir = tmpFolder.newFolder(boundary.name().toLowerCase()).toPath();
+		// A file, unlike a pipe, never blocks the crash process on output the test has not yet read.
+		Path outputFile = managerDir.resolveSibling(boundary.name().toLowerCase() + ".log");
 		Process process = new ProcessBuilder(
 				Path.of(System.getProperty("java.home"), "bin", "java").toString(),
 				"-cp", testClassPath(), GeoSparqlCrashProcess.class.getName(), boundary.name(), managerDir.toString())
 				.redirectErrorStream(true)
+				.redirectOutput(outputFile.toFile())
 				.start();
-		assertTrue("Crash process did not terminate", process.waitFor(30, TimeUnit.SECONDS));
-		String output = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+		boolean terminated = process.waitFor(30, TimeUnit.SECONDS);
+		if (!terminated) {
+			process.destroyForcibly().waitFor();
+		}
+		String output = Files.readString(outputFile, StandardCharsets.UTF_8);
+		assertTrue("Crash process did not terminate:\n" + output, terminated);
 		assertEquals(output, GeoSparqlCrashProcess.HALT_CODE, process.exitValue());
 
 		Path dataDir = findPluginDataDir(managerDir);

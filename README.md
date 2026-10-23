@@ -23,7 +23,8 @@ The built plugin can be found in the `target` directory:
 
 The opt-in packaging smoke test requires Docker. It builds a temporary GraphDB 10.8.12 image with Java 21, installs
 the assembled plugin ZIP, and uses externally supplied Apache SIS data to run an EPSG:3006 GeoSPARQL property relation
-and five-metre distance filter function alongside a CRS84 property relation:
+and five-metre distance filter function alongside a CRS84 property relation. It also checks that repositories created
+and deleted in the same GraphDB process each resolve EPSG:3006:
 
 ```bash
 mvn -Pgraphdb-packaging-smoke verify

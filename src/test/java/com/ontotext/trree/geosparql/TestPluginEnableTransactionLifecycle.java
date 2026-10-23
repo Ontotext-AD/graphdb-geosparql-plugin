@@ -1,6 +1,5 @@
 package com.ontotext.trree.geosparql;
 
-import com.ontotext.trree.OwlimSchemaRepository;
 import com.ontotext.trree.geosparql.jena.SourceGeometryLiteral;
 import com.ontotext.trree.geosparql.lucene.LuceneGeoIndexer;
 import com.ontotext.trree.geosparql.util.GeoSparqlUtils;
@@ -8,7 +7,6 @@ import com.ontotext.trree.geosparql.vocabulary.GeoConstants;
 import org.eclipse.rdf4j.model.IRI;
 import org.eclipse.rdf4j.model.Literal;
 import org.eclipse.rdf4j.query.QueryLanguage;
-import org.eclipse.rdf4j.repository.sail.SailRepository;
 import org.junit.Test;
 import org.slf4j.LoggerFactory;
 
@@ -227,10 +225,6 @@ public class TestPluginEnableTransactionLifecycle extends AbstractGeoSparqlPlugi
 		return lexicalForms;
 	}
 
-	private GeoSparqlPlugin activePlugin() {
-		return (GeoSparqlPlugin) ((OwlimSchemaRepository) ((SailRepository) repository).getSail())
-				.getPlugin("GeoSPARQL");
-	}
 
 	private static final class CountingLuceneGeoIndexer extends LuceneGeoIndexer {
 		private int beginCount;
