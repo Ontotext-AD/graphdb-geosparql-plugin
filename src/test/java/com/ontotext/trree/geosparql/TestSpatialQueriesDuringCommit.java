@@ -56,6 +56,8 @@ public class TestSpatialQueriesDuringCommit extends AbstractGeoSparqlPluginTest 
 								+ "GROUP BY ?batch HAVING (COUNT(?g) != " + BATCH_SIZE + ")", "batch"));
 				assertEquals(List.of(String.valueOf(BATCH_SIZE)), select(readConnection,
 						"SELECT (COUNT(?g) AS ?n) WHERE { ?g geo:sfWithin ex:zone ; ex:batch ?batch }", "n"));
+				assertEquals(withinZone(1), select(readConnection,
+						"SELECT ?g WHERE { ?g geo:sfWithin ex:zone } ORDER BY ?g", "g"));
 			}
 			indexer.releaseCommit.countDown();
 			batchCommit.get(TIMEOUT_SECONDS, TimeUnit.SECONDS);
@@ -67,7 +69,21 @@ public class TestSpatialQueriesDuringCommit extends AbstractGeoSparqlPluginTest 
 		try (RepositoryConnection readConnection = repository.getConnection()) {
 			assertEquals(List.of(String.valueOf(2 * BATCH_SIZE)), select(readConnection,
 					"SELECT (COUNT(?g) AS ?n) WHERE { ?g geo:sfWithin ex:zone ; ex:batch ?batch }", "n"));
+			assertEquals(withinZone(2), select(readConnection,
+					"SELECT ?g WHERE { ?g geo:sfWithin ex:zone } ORDER BY ?g", "g"));
 		}
+	}
+
+	/** Returns the zone and the points of batches 1 to {@code batches}, in IRI order. */
+	private static List<String> withinZone(int batches) {
+		List<String> iris = new ArrayList<>();
+		for (int batch = 1; batch <= batches; batch++) {
+			for (int i = 0; i < BATCH_SIZE; i++) {
+				iris.add("http://example.com/b" + batch + "p" + i);
+			}
+		}
+		iris.add("http://example.com/zone");
+		return iris;
 	}
 
 	/** Inserts points inside the zone, each with its batch number, under subject IRIs unique to the batch. */

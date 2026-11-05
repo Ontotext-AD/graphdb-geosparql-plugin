@@ -83,6 +83,13 @@ class GeoSparqlRelationIterator extends StatementIterator {
 			if (emittedCandidateEntityIds.contains(candidateEntityId)) {
 				continue;
 			}
+			// A published Lucene commit can reference entities created by a GraphDB transaction that this
+			// connection cannot see yet. They are not in the RDF this query reads, so they are not matches.
+			if (entities.get(candidateEntityId) == null) {
+				logger.debug("Skipping GeoSPARQL candidate entity id {} that this connection cannot resolve.",
+						candidateEntityId);
+				continue;
+			}
 			if (candidateLookup.matchCertainty()
 					== RelationCandidateTraversal.MatchCertainty.DEFINITE_MATCH) {
 				emittedCandidateEntityIds.add(candidateEntityId);
