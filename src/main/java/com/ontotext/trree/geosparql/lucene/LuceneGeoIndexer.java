@@ -53,6 +53,12 @@ import java.util.function.Supplier;
  * <p>During force reindex, writes are allowed after {@link #freshIndex()}, but
  * reads remain gated by the previously committed compatibility state until commit succeeds. Rollback or failed
  * commit restores that previous state, so an abandoned reindex cannot make this indexer trust an incompatible index.
+ *
+ * <p>A GraphDB transaction publishes its Lucene commit before GraphDB completes the RDF transaction. Queries read the
+ * latest Lucene commit, so until GraphDB reports the outcome they can observe index changes whose RDF statements are
+ * not yet visible. An abort restores the pre-transaction commit. The unresolved-transaction error is reserved for
+ * outcomes that remain unresolved: the durable pending-transaction marker is present at startup, a rollback fails, or
+ * the plugin configuration cannot be restored after an abort.
  */
 public class LuceneGeoIndexer implements GeoSparqlIndexer {
 	private GeoSparqlPlugin parent;
@@ -71,11 +77,12 @@ public class LuceneGeoIndexer implements GeoSparqlIndexer {
 	private boolean provisionalCommitPublished;
 	private boolean schemaMismatchAtTransactionStart;
 	private boolean crsEnvironmentMismatchAtTransactionStart;
-	private boolean recoveryRequired;
 	private boolean recoveryRequiredAtTransactionStart;
 	private GeoSparqlTransactionMarker pendingTransactionMarker;
-	private boolean schemaMismatchDetected;
-	private boolean crsEnvironmentMismatchDetected;
+	// Query threads read these gates while the GraphDB transaction thread updates them.
+	private volatile boolean recoveryRequired;
+	private volatile boolean schemaMismatchDetected;
+	private volatile boolean crsEnvironmentMismatchDetected;
 	private boolean compatibilityMetadataPending;
 	private boolean schemaRebuildInProgress;
 	private final Supplier<String> crsEnvironmentFingerprintSupplier;
@@ -192,7 +199,6 @@ public class LuceneGeoIndexer implements GeoSparqlIndexer {
 			}
 			writeCompatibilityMetadataIfNeeded();
 			pendingTransactionMarker.create();
-			recoveryRequired = true;
 			closeIndexWriter(); // also commits
 			provisionalCommitPublished = true;
 			if (rebuildWasInProgress) {
@@ -240,7 +246,7 @@ public class LuceneGeoIndexer implements GeoSparqlIndexer {
 			cleanupFailure = e;
 		}
 		try {
-			pendingTransactionMarker.remove();
+			removePendingTransactionMarker();
 		} catch (IOException e) {
 			if (cleanupFailure == null) {
 				cleanupFailure = e;
@@ -265,28 +271,58 @@ public class LuceneGeoIndexer implements GeoSparqlIndexer {
 		if (!transactionActive) {
 			return;
 		}
-		boolean pendingCommit = pendingTransactionMarker.exists();
-		if (indexWriter != null && indexWriter.isOpen()) {
-			indexWriter.rollback();
+		try {
+			boolean pendingCommit = pendingTransactionMarker.exists();
+			if (indexWriter != null && indexWriter.isOpen()) {
+				indexWriter.rollback();
+			}
+			boolean commitWasPublished = provisionalCommitPublished
+					|| pendingCommit && hasCommitAfterPreTransactionCommit();
+			if (commitWasPublished) {
+				restorePreTransactionCommit();
+			}
+			releasePreTransactionCommit();
+			deleteObsoleteCommits();
+			schemaMismatchDetected = schemaMismatchAtTransactionStart;
+			crsEnvironmentMismatchDetected = crsEnvironmentMismatchAtTransactionStart;
+			recoveryRequired = recoveryRequiredAtTransactionStart || requireRecovery;
+			if (requireRecovery && !pendingTransactionMarker.exists()) {
+				pendingTransactionMarker.create();
+			}
+			if (!recoveryRequired) {
+				removePendingTransactionMarker();
+			}
+			initSettings();
+		} catch (Exception | Error e) {
+			requireRecoveryAfterFailedRollback(e);
+			throw e;
+		} finally {
+			clearTransactionState();
 		}
-		boolean commitWasPublished = provisionalCommitPublished
-				|| pendingCommit && hasCommitAfterPreTransactionCommit();
-		if (commitWasPublished) {
-			restorePreTransactionCommit();
-		}
-		releasePreTransactionCommit();
-		deleteObsoleteCommits();
-		schemaMismatchDetected = schemaMismatchAtTransactionStart;
-		crsEnvironmentMismatchDetected = crsEnvironmentMismatchAtTransactionStart;
-		recoveryRequired = recoveryRequiredAtTransactionStart || requireRecovery;
-		if (requireRecovery && !pendingTransactionMarker.exists()) {
+	}
+
+	/**
+	 * Leaves the index unreadable in this process and after restart. The failed rollback may have left the published
+	 * commit in place or removed the marker before failing, so the marker is written again. The retained
+	 * pre-transaction snapshot is released because recovery rebuilds the index. The caller then clears the transaction
+	 * state, so a later completed transaction cannot accept the failed outcome.
+	 */
+	private void requireRecoveryAfterFailedRollback(Throwable failure) {
+		recoveryRequired = true;
+		try {
 			pendingTransactionMarker.create();
+		} catch (Exception e) {
+			failure.addSuppressed(e);
 		}
-		if (!recoveryRequired) {
-			pendingTransactionMarker.remove();
+		try {
+			releasePreTransactionCommit();
+		} catch (Exception e) {
+			failure.addSuppressed(e);
 		}
-		initSettings();
-		clearTransactionState();
+	}
+
+	void removePendingTransactionMarker() throws IOException {
+		pendingTransactionMarker.remove();
 	}
 
 	@Override
@@ -541,7 +577,7 @@ public class LuceneGeoIndexer implements GeoSparqlIndexer {
 
 	private void assertReadableCurrentSchema() {
 		if (recoveryRequired) {
-			throw new PluginException("The GeoSPARQL Lucene index has a pending GraphDB transaction. "
+			throw new PluginException("The GeoSPARQL Lucene index has an unresolved GraphDB transaction outcome. "
 					+ "Queries are unavailable until a full force-reindex completes.");
 		}
 		if (schemaMismatchDetected) {

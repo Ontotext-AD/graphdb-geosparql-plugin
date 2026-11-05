@@ -519,9 +519,9 @@ public class LuceneGeoSchemaTest {
         indexer.failCommitClose();
 
         assertThrows(IOException.class, indexer::commit);
-		PluginException pending = assertThrows(PluginException.class,
+		PluginException failedCommit = assertThrows(PluginException.class,
                 () -> indexer.getSourceGeometryLiteralsFor(0));
-		assertTrue(pending.getMessage().contains("pending GraphDB transaction"));
+		assertForceReindexMessage(failedCommit);
 
         indexer.rollback();
 		PluginException mismatch = assertThrows(PluginException.class,

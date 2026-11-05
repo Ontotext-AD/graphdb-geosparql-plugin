@@ -122,30 +122,34 @@ public class GeoSparqlUpdateListenerTest {
 	}
 
 	@Test
-	public void listenerPostCommitAbortRestoresPreviousLuceneStateAfterRestart() throws Exception {
+	public void queriesBeforeCompletionReadPublishedLuceneCommit() throws Exception {
+		Path dataDir = tmpFolder.newFolder("listener-read-before-completion").toPath();
+		GeoSparqlPlugin plugin = enabledPlugin(dataDir);
+		LuceneGeoIndexer indexer = new LuceneGeoIndexer(plugin);
+
+		GeoSparqlUpdateListener listener = publishReplacementAwaitingOutcome(plugin, indexer);
+		assertEquals("POINT(2 2)", onlySource(indexer).lexicalForm());
+		listener.transactionCompleted(emptyPluginConnection());
+
+		assertEquals("POINT(2 2)", onlySource(indexer).lexicalForm());
+		assertFalse(Files.exists(GeoSparqlTransactionMarker.resolvePath(dataDir)));
+		LuceneGeoIndexer restarted = new LuceneGeoIndexer(enabledPlugin(dataDir));
+		restarted.initialize();
+		assertEquals("POINT(2 2)", onlySource(restarted).lexicalForm());
+	}
+
+	@Test
+	public void listenerPostCommitAbortRestoresPreviousLuceneStateBeforeAndAfterRestart() throws Exception {
 		Path dataDir = tmpFolder.newFolder("listener-post-commit-abort").toPath();
 		GeoSparqlPlugin plugin = enabledPlugin(dataDir);
 		LuceneGeoIndexer indexer = new LuceneGeoIndexer(plugin);
-		indexer.initialize();
-		plugin.indexer = indexer;
-		indexer.begin();
-		indexer.indexGeometryList(1L, id -> "geometry",
-				List.of(TestIndexGeometries.fromWkt("POINT(1 1)")));
-		indexer.commit();
-		indexer.complete();
-		GeoSparqlUpdateListener listener = new GeoSparqlUpdateListener(plugin, 1L, 2L, 3L);
-		PluginConnection connection = emptyPluginConnection();
 
-		listener.transactionStarted(connection);
-		listener.beginIndexTransactionForPersistentMutation();
-		indexer.indexGeometryList(1L, id -> "geometry",
-				List.of(TestIndexGeometries.fromWkt("POINT(2 2)")));
-		listener.transactionCommit(connection);
-		PluginException pendingOutcome = assertThrows(PluginException.class,
-				() -> indexer.getSourceGeometryLiteralsFor(1L));
-		assertTrue(pendingOutcome.getMessage().contains("pending GraphDB transaction"));
-		listener.transactionAborted(connection);
+		GeoSparqlUpdateListener listener = publishReplacementAwaitingOutcome(plugin, indexer);
+		assertEquals("POINT(2 2)", onlySource(indexer).lexicalForm());
+		listener.transactionAborted(emptyPluginConnection());
 
+		assertEquals("POINT(1 1)", onlySource(indexer).lexicalForm());
+		assertFalse(Files.exists(GeoSparqlTransactionMarker.resolvePath(dataDir)));
 		LuceneGeoIndexer restarted = new LuceneGeoIndexer(enabledPlugin(dataDir));
 		restarted.initialize();
 		assertEquals("POINT(1 1)", onlySource(restarted).lexicalForm());
@@ -185,28 +189,36 @@ public class GeoSparqlUpdateListenerTest {
 		Path dataDir = tmpFolder.newFolder("listener-failed-restoration").toPath();
 		GeoSparqlPlugin plugin = enabledPlugin(dataDir);
 		FailingRestoreIndexer indexer = new FailingRestoreIndexer(plugin);
-		indexer.initialize();
-		plugin.indexer = indexer;
-		indexer.begin();
-		indexer.indexGeometryList(1L, id -> "geometry",
-				List.of(TestIndexGeometries.fromWkt("POINT(1 1)")));
-		indexer.commit();
-		indexer.complete();
-		GeoSparqlUpdateListener listener = new GeoSparqlUpdateListener(plugin, 1L, 2L, 3L);
-		PluginConnection connection = emptyPluginConnection();
 
-		listener.transactionStarted(connection);
-		listener.beginIndexTransactionForPersistentMutation();
-		indexer.indexGeometryList(1L, id -> "geometry",
-				List.of(TestIndexGeometries.fromWkt("POINT(2 2)")));
-		listener.transactionCommit(connection);
+		GeoSparqlUpdateListener listener = publishReplacementAwaitingOutcome(plugin, indexer);
 		indexer.failRestore = true;
-		listener.transactionAborted(connection);
+		listener.transactionAborted(emptyPluginConnection());
 
-		assertPendingTransactionFailure(indexer);
+		assertUnresolvedTransactionFailure(indexer);
 		LuceneGeoIndexer restarted = new LuceneGeoIndexer(enabledPlugin(dataDir));
 		restarted.initialize();
-		assertPendingTransactionFailure(restarted);
+		assertUnresolvedTransactionFailure(restarted);
+	}
+
+	@Test
+	public void laterCompletedTransactionKeepsFailedRestorationFailClosed() throws Exception {
+		Path dataDir = tmpFolder.newFolder("listener-failed-restoration-later-transaction").toPath();
+		GeoSparqlPlugin plugin = enabledPlugin(dataDir);
+		FailingRestoreIndexer indexer = new FailingRestoreIndexer(plugin);
+		GeoSparqlUpdateListener listener = publishReplacementAwaitingOutcome(plugin, indexer);
+		indexer.failRestore = true;
+		PluginConnection connection = emptyPluginConnection();
+		listener.transactionAborted(connection);
+
+		listener.transactionStarted(connection);
+		listener.transactionCommit(connection);
+		listener.transactionCompleted(connection);
+
+		assertUnresolvedTransactionFailure(indexer);
+		assertTrue(Files.exists(GeoSparqlTransactionMarker.resolvePath(dataDir)));
+		LuceneGeoIndexer restarted = new LuceneGeoIndexer(enabledPlugin(dataDir));
+		restarted.initialize();
+		assertUnresolvedTransactionFailure(restarted);
 	}
 
 	@Test
@@ -241,13 +253,13 @@ public class GeoSparqlUpdateListenerTest {
 		assertEquals(GeoSparqlConfig.PrefixTree.QUAD, plugin.getConfig().getCurrentPrefixTree());
 		assertEquals(11, plugin.getConfig().getCurrentPrecision());
 		assertEquals("POINT(1 1)", committedSourceLexicalForm(dataDir));
-		assertPendingTransactionFailure(indexer);
+		assertUnresolvedTransactionFailure(indexer);
 		GeoSparqlConfig persistedConfig = GeoSparqlUtils.readConfig(dataDir);
 		assertEquals(GeoSparqlConfig.PrefixTree.GEOHASH, persistedConfig.getCurrentPrefixTree());
 		assertEquals(20, persistedConfig.getCurrentPrecision());
 		LuceneGeoIndexer restarted = new LuceneGeoIndexer(pluginFromPersistedConfig(dataDir));
 		restarted.initialize();
-		assertPendingTransactionFailure(restarted);
+		assertUnresolvedTransactionFailure(restarted);
 	}
 
 	@Test
@@ -303,6 +315,27 @@ public class GeoSparqlUpdateListenerTest {
 		return plugin;
 	}
 
+	/**
+	 * Commits {@code POINT(1 1)} for entity 1, then runs a listener transaction through {@code transactionCommit} that
+	 * publishes {@code POINT(2 2)} and leaves the GraphDB outcome unreported.
+	 */
+	private GeoSparqlUpdateListener publishReplacementAwaitingOutcome(GeoSparqlPlugin plugin, LuceneGeoIndexer indexer)
+			throws Exception {
+		indexer.initialize();
+		plugin.indexer = indexer;
+		indexer.begin();
+		indexer.indexGeometryList(1L, id -> "geometry", List.of(TestIndexGeometries.fromWkt("POINT(1 1)")));
+		indexer.commit();
+		indexer.complete();
+		GeoSparqlUpdateListener listener = new GeoSparqlUpdateListener(plugin, 1L, 2L, 3L);
+		PluginConnection connection = emptyPluginConnection();
+		listener.transactionStarted(connection);
+		listener.beginIndexTransactionForPersistentMutation();
+		indexer.indexGeometryList(1L, id -> "geometry", List.of(TestIndexGeometries.fromWkt("POINT(2 2)")));
+		listener.transactionCommit(connection);
+		return listener;
+	}
+
 	private GeoSparqlPlugin pluginFromPersistedConfig(Path dataDir) {
 		GeoSparqlPlugin plugin = new GeoSparqlPlugin();
 		plugin.setConfig(GeoSparqlUtils.readConfig(dataDir));
@@ -327,10 +360,10 @@ public class GeoSparqlUpdateListenerTest {
 		}
 	}
 
-	private void assertPendingTransactionFailure(LuceneGeoIndexer indexer) {
+	private void assertUnresolvedTransactionFailure(LuceneGeoIndexer indexer) {
 		PluginException failure = assertThrows(PluginException.class,
 				() -> indexer.getSourceGeometryLiteralsFor(1L));
-		assertTrue(failure.getMessage().contains("pending GraphDB transaction"));
+		assertTrue(failure.getMessage().contains("unresolved GraphDB transaction outcome"));
 	}
 
 	private PluginConnection emptyPluginConnection() {
