@@ -86,7 +86,7 @@ public class GeoSparqlProcessCrashRecoveryTest {
 		restarted.initialize();
 		PluginException failure = assertThrows(PluginException.class,
 				() -> restarted.getSourceGeometryLiteralsFor(0));
-		assertTrue(failure.getMessage().contains("pending GraphDB transaction"));
+		assertTrue(failure.getMessage().contains("unresolved GraphDB transaction outcome"));
 		assertTrue(failure.getMessage().contains("force-reindex"));
 	}
 

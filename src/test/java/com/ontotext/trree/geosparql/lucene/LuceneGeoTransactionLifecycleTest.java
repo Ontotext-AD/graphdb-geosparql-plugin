@@ -4,6 +4,7 @@ import com.ontotext.test.TemporaryLocalFolder;
 import com.ontotext.trree.geosparql.CloseableIterator;
 import com.ontotext.trree.geosparql.GeoSparqlConfig;
 import com.ontotext.trree.geosparql.GeoSparqlPlugin;
+import com.ontotext.trree.geosparql.GeoSparqlTransactionMarker;
 import com.ontotext.trree.geosparql.TestIndexGeometries;
 import com.ontotext.trree.geosparql.jena.IndexGeometry;
 import com.ontotext.trree.geosparql.jena.SourceGeometryLiteral;
@@ -17,6 +18,7 @@ import org.slf4j.LoggerFactory;
 
 import java.io.File;
 import java.io.IOException;
+import java.nio.file.Files;
 import java.util.List;
 
 import static org.junit.Assert.assertEquals;
@@ -38,7 +40,7 @@ public class LuceneGeoTransactionLifecycleTest {
 		indexer.begin();
 		indexer.indexGeometryList(1L, id -> "geometry", List.of(geometry("POINT(2 2)")));
 		indexer.commit();
-		assertPendingTransactionFailure(indexer);
+		assertEquals("POINT(2 2)", onlySource(indexer).lexicalForm());
 
 		indexer.rollback();
 		assertEquals("POINT(1 1)", onlySource(indexer).lexicalForm());
@@ -55,8 +57,10 @@ public class LuceneGeoTransactionLifecycleTest {
 		indexer.complete();
 
 		commit(indexer, "POINT(2 2)");
+		assertEquals("POINT(2 2)", onlySource(indexer).lexicalForm());
 		indexer.complete();
 
+		assertEquals("POINT(2 2)", onlySource(indexer).lexicalForm());
 		assertEquals("POINT(2 2)", onlySource(createIndexer(dataDir)).lexicalForm());
 		try (FSDirectory directory = FSDirectory.open(GeoSparqlConfig.resolveIndexPath(dataDir.toPath()))) {
 			assertEquals(1, DirectoryReader.listCommits(directory).size());
@@ -69,9 +73,10 @@ public class LuceneGeoTransactionLifecycleTest {
 		LuceneGeoIndexer indexer = createIndexer(dataDir);
 
 		commit(indexer, "POINT(2 2)");
-		assertPendingTransactionFailure(indexer);
+		assertEquals("POINT(2 2)", onlySource(indexer).lexicalForm());
 		indexer.rollback();
 
+		assertEmpty(indexer);
 		assertEmpty(createIndexer(dataDir));
 	}
 
@@ -101,7 +106,7 @@ public class LuceneGeoTransactionLifecycleTest {
 		PluginException failure = assertThrows(PluginException.class,
 				() -> restarted.getSourceGeometryLiteralsFor(1L));
 
-		assertTrue(failure.getMessage().contains("pending GraphDB transaction"));
+		assertTrue(failure.getMessage().contains("unresolved GraphDB transaction outcome"));
 		assertTrue(failure.getMessage().contains("force-reindex"));
 		indexer.rollback();
 	}
@@ -117,9 +122,9 @@ public class LuceneGeoTransactionLifecycleTest {
 		LuceneGeoIndexer restarted = createIndexer(dataDir);
 		restarted.begin();
 		PluginException failure = assertThrows(PluginException.class, restarted::commit);
-		assertTrue(failure.getMessage().contains("pending GraphDB transaction"));
+		assertTrue(failure.getMessage().contains("unresolved GraphDB transaction outcome"));
 		restarted.rollback();
-		assertPendingTransactionFailure(restarted);
+		assertUnresolvedTransactionFailure(restarted);
 	}
 
 	@Test
@@ -141,6 +146,25 @@ public class LuceneGeoTransactionLifecycleTest {
 	}
 
 	@Test
+	public void commitFailingAfterPublicationIsRestoredByRollback() throws Exception {
+		File dataDir = tmpFolder.newFolder("commit-failure-after-publication");
+		FailingCommitIndexer indexer = createFailingIndexer(dataDir);
+		commit(indexer, "POINT(1 1)");
+		indexer.complete();
+
+		indexer.begin();
+		indexer.indexGeometryList(1L, id -> "geometry", List.of(geometry("POINT(2 2)")));
+		indexer.failAfterCommit = true;
+		assertThrows(IOException.class, indexer::commit);
+		assertEquals("POINT(2 2)", onlySource(indexer).lexicalForm());
+		indexer.rollback();
+
+		assertEquals("POINT(1 1)", onlySource(indexer).lexicalForm());
+		assertFalse(Files.exists(GeoSparqlTransactionMarker.resolvePath(dataDir.toPath())));
+		assertEquals("POINT(1 1)", onlySource(createIndexer(dataDir)).lexicalForm());
+	}
+
+	@Test
 	public void failedPostCommitRestorationBlocksReadsBeforeAndAfterRestart() throws Exception {
 		File dataDir = tmpFolder.newFolder("failed-post-commit-restoration");
 		FailingRestoreIndexer indexer = createFailingRestoreIndexer(dataDir);
@@ -151,8 +175,60 @@ public class LuceneGeoTransactionLifecycleTest {
 		indexer.failRestore = true;
 		assertThrows(IOException.class, indexer::rollback);
 
-		assertPendingTransactionFailure(indexer);
-		assertPendingTransactionFailure(createIndexer(dataDir));
+		assertUnresolvedTransactionFailure(indexer);
+		assertUnresolvedTransactionFailure(createIndexer(dataDir));
+	}
+
+	@Test
+	public void restorationErrorBlocksReadsBeforeAndAfterRestart() throws Exception {
+		File dataDir = tmpFolder.newFolder("post-commit-restoration-error");
+		FailingRestoreIndexer indexer = createFailingRestoreIndexer(dataDir);
+		commit(indexer, "POINT(1 1)");
+		indexer.complete();
+
+		commit(indexer, "POINT(2 2)");
+		indexer.restoreError = new OutOfMemoryError("Simulated restoration error");
+		assertThrows(OutOfMemoryError.class, indexer::rollback);
+
+		assertUnresolvedTransactionFailure(indexer);
+		assertUnresolvedTransactionFailure(createIndexer(dataDir));
+	}
+
+	@Test
+	public void failedRollbackRewritesMarkerRemovedBeforeFailure() throws Exception {
+		File dataDir = tmpFolder.newFolder("failed-rollback-marker-removal");
+		FailingMarkerRemovalIndexer indexer = createFailingMarkerRemovalIndexer(dataDir);
+		commit(indexer, "POINT(1 1)");
+		indexer.complete();
+
+		commit(indexer, "POINT(2 2)");
+		indexer.failAfterMarkerRemoval = true;
+		assertThrows(IOException.class, indexer::rollback);
+
+		assertUnresolvedTransactionFailure(indexer);
+		assertTrue(Files.exists(GeoSparqlTransactionMarker.resolvePath(dataDir.toPath())));
+		assertUnresolvedTransactionFailure(createIndexer(dataDir));
+	}
+
+	@Test
+	public void forceReindexAfterFailedRollbackMakesIndexReadable() throws Exception {
+		File dataDir = tmpFolder.newFolder("force-reindex-after-failed-rollback");
+		FailingRestoreIndexer indexer = createFailingRestoreIndexer(dataDir);
+		commit(indexer, "POINT(1 1)");
+		indexer.complete();
+		commit(indexer, "POINT(2 2)");
+		indexer.failRestore = true;
+		assertThrows(IOException.class, indexer::rollback);
+		assertFalse(indexer.isTransactionActive());
+
+		indexer.begin();
+		indexer.freshIndex();
+		indexer.indexGeometryList(1L, id -> "geometry", List.of(geometry("POINT(1 1)")));
+		indexer.commit();
+		indexer.complete();
+
+		assertEquals("POINT(1 1)", onlySource(indexer).lexicalForm());
+		assertEquals("POINT(1 1)", onlySource(createIndexer(dataDir)).lexicalForm());
 	}
 
 	@Test
@@ -185,6 +261,12 @@ public class LuceneGeoTransactionLifecycleTest {
 
 	private FailingRestoreIndexer createFailingRestoreIndexer(File dataDir) throws Exception {
 		FailingRestoreIndexer indexer = new FailingRestoreIndexer(createParent(dataDir));
+		indexer.initialize();
+		return indexer;
+	}
+
+	private FailingMarkerRemovalIndexer createFailingMarkerRemovalIndexer(File dataDir) throws Exception {
+		FailingMarkerRemovalIndexer indexer = new FailingMarkerRemovalIndexer(createParent(dataDir));
 		indexer.initialize();
 		return indexer;
 	}
@@ -230,10 +312,10 @@ public class LuceneGeoTransactionLifecycleTest {
 		}
 	}
 
-	private void assertPendingTransactionFailure(LuceneGeoIndexer indexer) {
+	private void assertUnresolvedTransactionFailure(LuceneGeoIndexer indexer) {
 		PluginException failure = assertThrows(PluginException.class,
 				() -> indexer.getSourceGeometryLiteralsFor(1L));
-		assertTrue(failure.getMessage().contains("pending GraphDB transaction"));
+		assertTrue(failure.getMessage().contains("unresolved GraphDB transaction outcome"));
 	}
 
 	private IndexCommit latestCommit(File dataDir) throws Exception {
@@ -245,6 +327,7 @@ public class LuceneGeoTransactionLifecycleTest {
 
 	private static final class FailingCommitIndexer extends LuceneGeoIndexer {
 		private boolean failCommit;
+		private boolean failAfterCommit;
 
 		private FailingCommitIndexer(GeoSparqlPlugin parent) {
 			super(parent);
@@ -256,11 +339,15 @@ public class LuceneGeoTransactionLifecycleTest {
 				throw new IOException("Simulated commit failure");
 			}
 			super.closeIndexWriter();
+			if (failAfterCommit) {
+				throw new IOException("Simulated failure after the Lucene commit was published");
+			}
 		}
 	}
 
 	private static final class FailingRestoreIndexer extends LuceneGeoIndexer {
 		private boolean failRestore;
+		private Error restoreError;
 
 		private FailingRestoreIndexer(GeoSparqlPlugin parent) {
 			super(parent);
@@ -271,7 +358,27 @@ public class LuceneGeoTransactionLifecycleTest {
 			if (failRestore) {
 				throw new IOException("Simulated restoration failure");
 			}
+			if (restoreError != null) {
+				throw restoreError;
+			}
 			super.restorePreTransactionCommit();
+		}
+	}
+
+	/** Removes the pending-transaction marker and then fails as a directory synchronization failure would. */
+	private static final class FailingMarkerRemovalIndexer extends LuceneGeoIndexer {
+		private boolean failAfterMarkerRemoval;
+
+		private FailingMarkerRemovalIndexer(GeoSparqlPlugin parent) {
+			super(parent);
+		}
+
+		@Override
+		void removePendingTransactionMarker() throws IOException {
+			super.removePendingTransactionMarker();
+			if (failAfterMarkerRemoval) {
+				throw new IOException("Simulated directory synchronization failure after marker removal");
+			}
 		}
 	}
 

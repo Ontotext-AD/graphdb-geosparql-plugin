@@ -29,6 +29,8 @@ public class GeoSparqlRelationIteratorTest {
 	private static final long SUBJECT = 1L;
 	private static final long OBJECT = 2L;
 	private static final long PREDICATE = 3L;
+	/** An entity id that the query connection's entity pool does not resolve. */
+	private static final long UNRESOLVABLE_ENTITY = 4L;
 
 	@Test
 	public void candidateReturnedByIndexIsRejectedWhenExactRelationDoesNotHold() throws Exception {
@@ -378,6 +380,93 @@ public class GeoSparqlRelationIteratorTest {
 		}
 	}
 
+	@Test
+	public void objectBoundLookupSkipsUnresolvableCandidateBeforeExactEvaluation() throws Exception {
+		IndexGeometry container = indexGeometry("POLYGON((0 0,0 2,2 2,2 0,0 0))");
+		IndexGeometry insidePoint = indexGeometry("POINT(1 1)");
+		FakeEntities entities = new FakeEntities();
+		entities.add(SUBJECT, SimpleValueFactory.getInstance().createIRI("http://example.com/inside"));
+		entities.add(OBJECT, SimpleValueFactory.getInstance().createIRI("http://example.com/container"));
+		GeoSparqlPlugin plugin = pluginWith(
+				new ScriptedGeoSparqlIndexer(singletonList(container), List.of(), List.of()));
+		((ScriptedGeoSparqlIndexer) plugin.indexer).envelopeCandidates = iterator(List.of(
+				candidateEntity(UNRESOLVABLE_ENTITY, insidePoint), candidateEntity(SUBJECT, insidePoint)));
+
+		assertOnlyMatch(new GeoSparqlRelationIterator(plugin,
+				GeoSparqlPropertyRelation.SF_WITHIN, 0, PREDICATE, OBJECT, entities));
+	}
+
+	@Test
+	public void subjectBoundLookupSkipsUnresolvableCandidateBeforeExactEvaluation() throws Exception {
+		IndexGeometry container = indexGeometry("POLYGON((0 0,0 2,2 2,2 0,0 0))");
+		FakeEntities entities = new FakeEntities();
+		entities.add(SUBJECT, SimpleValueFactory.getInstance().createLiteral(
+				"POINT(1 1)", GeoConstants.GEO_WKT_LITERAL));
+		entities.add(OBJECT, SimpleValueFactory.getInstance().createIRI("http://example.com/container"));
+		GeoSparqlPlugin plugin = pluginWith(new ScriptedGeoSparqlIndexer(List.of(), List.of(), List.of()));
+		((ScriptedGeoSparqlIndexer) plugin.indexer).envelopeCandidates = iterator(List.of(
+				candidateEntity(UNRESOLVABLE_ENTITY, container), candidateEntity(OBJECT, container)));
+
+		assertOnlyMatch(new GeoSparqlRelationIterator(plugin,
+				GeoSparqlPropertyRelation.SF_WITHIN, SUBJECT, PREDICATE, 0, entities));
+	}
+
+	@Test
+	public void objectBoundDisjointLookupSkipsUnresolvableEnvelopeProvenCandidate() throws Exception {
+		IndexGeometry polygon = indexGeometry("POLYGON((0 0,0 2,2 2,2 0,0 0))");
+		IndexGeometry separatedPoint = indexGeometry("POINT(10 10)");
+		FakeEntities entities = new FakeEntities();
+		entities.add(SUBJECT, SimpleValueFactory.getInstance().createIRI("http://example.com/separated"));
+		entities.add(OBJECT, SimpleValueFactory.getInstance().createIRI("http://example.com/polygon"));
+		GeoSparqlPlugin plugin = pluginWith(
+				new ScriptedGeoSparqlIndexer(singletonList(polygon), List.of(), List.of()));
+		((ScriptedGeoSparqlIndexer) plugin.indexer).definiteCandidates = iterator(List.of(
+				new EnvelopeDisjointCandidate(UNRESOLVABLE_ENTITY, separatedPoint.sourceTopologicalDimension()),
+				new EnvelopeDisjointCandidate(SUBJECT, separatedPoint.sourceTopologicalDimension())));
+
+		assertOnlyMatch(new GeoSparqlRelationIterator(plugin,
+				GeoSparqlPropertyRelation.SF_DISJOINT, 0, PREDICATE, OBJECT, entities));
+	}
+
+	@Test
+	public void subjectBoundDisjointLookupSkipsUnresolvableEnvelopeProvenCandidate() throws Exception {
+		IndexGeometry separatedPolygon = indexGeometry("POLYGON((10 10,10 12,12 12,12 10,10 10))");
+		FakeEntities entities = new FakeEntities();
+		entities.add(SUBJECT, SimpleValueFactory.getInstance().createLiteral(
+				"POINT(1 1)", GeoConstants.GEO_WKT_LITERAL));
+		entities.add(OBJECT, SimpleValueFactory.getInstance().createIRI("http://example.com/separated"));
+		GeoSparqlPlugin plugin = pluginWith(new ScriptedGeoSparqlIndexer(List.of(), List.of(), List.of()));
+		((ScriptedGeoSparqlIndexer) plugin.indexer).definiteCandidates = iterator(List.of(
+				new EnvelopeDisjointCandidate(UNRESOLVABLE_ENTITY, separatedPolygon.sourceTopologicalDimension()),
+				new EnvelopeDisjointCandidate(OBJECT, separatedPolygon.sourceTopologicalDimension())));
+
+		assertOnlyMatch(new GeoSparqlRelationIterator(plugin,
+				GeoSparqlPropertyRelation.SF_DISJOINT, SUBJECT, PREDICATE, 0, entities));
+	}
+
+	/** Asserts that the iterator emits exactly the SUBJECT/OBJECT pair. */
+	private static void assertOnlyMatch(GeoSparqlRelationIterator iterator) {
+		try {
+			assertTrue(iterator.next());
+			assertEquals(SUBJECT, iterator.subject);
+			assertEquals(OBJECT, iterator.object);
+			assertFalse(iterator.next());
+		} finally {
+			iterator.close();
+		}
+	}
+
+	private static GeoSparqlPlugin pluginWith(GeoSparqlIndexer indexer) {
+		GeoSparqlPlugin plugin = new GeoSparqlPlugin();
+		plugin.setLogger(LoggerFactory.getLogger(GeoSparqlRelationIteratorTest.class));
+		plugin.indexer = indexer;
+		return plugin;
+	}
+
+	private static CandidateEntity candidateEntity(long entityId, IndexGeometry geometry) {
+		return new CandidateEntity(entityId, new LinkedHashSet<>(List.of(geometry.sourceGeometryLiteral())));
+	}
+
 	private static IndexGeometry indexGeometry(String wkt) {
 		return TestIndexGeometries.fromWkt(wkt);
 	}
@@ -395,6 +484,7 @@ public class GeoSparqlRelationIteratorTest {
 		private List<IndexGeometry> disjointCleanupCandidateGeometries = List.of();
 		private CloseableIterator<CandidateEntity> nonSpatialCandidates = emptyIterator();
 		private CloseableIterator<EnvelopeDisjointCandidate> definiteCandidates = emptyIterator();
+		private CloseableIterator<CandidateEntity> envelopeCandidates;
 		private final long candidateEntityId;
 		private int envelopeLookupCount;
 		private int disjointCleanupLookupCount;
@@ -441,6 +531,9 @@ public class GeoSparqlRelationIteratorTest {
 		public CloseableIterator<CandidateEntity> getEnvelopeIntersections(
 				IndexGeometry boundSourceIndexGeometry) {
 			envelopeLookupCount++;
+			if (envelopeCandidates != null) {
+				return envelopeCandidates;
+			}
 			if (envelopeLookupCount == 1) {
 				return firstCandidateGeometries.isEmpty()
 						? emptyIterator() : candidateIterator(candidateEntityId, firstCandidateGeometries);
