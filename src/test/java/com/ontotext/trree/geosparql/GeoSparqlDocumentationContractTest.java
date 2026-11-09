@@ -29,7 +29,7 @@ public class GeoSparqlDocumentationContractTest extends AbstractGeoSparqlPluginT
 
 	@Test
 	public void readmeContainsRunnableForceReindexUpdate() throws IOException {
-		String readme = Files.readString(Path.of("README.md"));
+		String readme = Files.readString(Path.of("README.md")).replace("\r\n", "\n");
 
 		assertTrue(readme.contains(DOCUMENTED_FORCE_REINDEX_UPDATE));
 		enablePlugin();

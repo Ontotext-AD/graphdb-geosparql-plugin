@@ -32,3 +32,31 @@ jobs:
 
       - name: Run test suite and packaging smoke test
         run: mvn --batch-mode --no-transfer-progress -Ppublic-ci,graphdb-packaging-smoke verify
+
+  windows:
+    name: Test (Windows)
+    runs-on: windows-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "25"
+          cache: maven
+
+      - name: Run test suite and verify plugin archive
+        run: mvn --batch-mode --no-transfer-progress -Ppublic-ci verify
+
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-test-reports
+          path: |
+            target/surefire-reports/
+            target/failsafe-reports/
