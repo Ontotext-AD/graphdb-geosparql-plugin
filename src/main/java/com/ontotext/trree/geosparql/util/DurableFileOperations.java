@@ -1,5 +1,7 @@
 package com.ontotext.trree.geosparql.util;
 
+import org.apache.lucene.util.Constants;
+
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
@@ -12,7 +14,8 @@ import java.util.Collections;
 import java.util.List;
 
 /**
- * Persists small state files together with the directory entries that name them.
+ * Writes, replaces and deletes small state files so they survive a crash. File contents are always flushed to disk.
+ * The parent directory is flushed too, so the file's name also survives a power loss, except on Windows.
  */
 public class DurableFileOperations {
 	public void write(Path path, byte[] contents) throws IOException {
@@ -61,6 +64,10 @@ public class DurableFileOperations {
 	}
 
 	protected void forceDirectory(Path directory) throws IOException {
+		// Java can't open a directory as a FileChannel on Windows. A missing directory still falls through and throws.
+		if (Constants.WINDOWS && Files.isDirectory(directory)) {
+			return;
+		}
 		try (FileChannel channel = FileChannel.open(directory, StandardOpenOption.READ)) {
 			channel.force(true);
 		}

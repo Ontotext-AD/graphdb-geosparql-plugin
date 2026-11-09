@@ -8,7 +8,9 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 
 /**
- * Durable indication that persistent GeoSPARQL state is awaiting a GraphDB transaction outcome.
+ * A file that exists from the moment a GraphDB transaction starts changing GeoSPARQL state until the plugin knows how
+ * that transaction ended. If it's still there at startup, the index may not match the repository, so the plugin
+ * requires a force reindex.
  */
 public final class GeoSparqlTransactionMarker {
 	private static final String FILE_NAME = "pending-graphdb-transaction";
