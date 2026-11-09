@@ -5,9 +5,14 @@ http://graphdb.ontotext.com/documentation/enterprise/geosparql-support.html
 
 ## Building the plugin
 
-The plugin is a Maven project targeting GraphDB 11. JDK 21 is required to build the plugin and run it in GraphDB.
+The plugin is a Maven project targeting GraphDB 12. JDK 25 is required to build the plugin and run it in GraphDB.
 
 Run `mvn clean package` to build the plugin and execute the tests.
+
+Building against GraphDB 12 needs access to Ontotext's Maven repository, and its tests need a GraphDB licence. Without
+these, add the `public-ci` profile, for example `mvn -Ppublic-ci verify`, or `-Ppublic-ci,graphdb-packaging-smoke` for
+the smoke test below. It builds and tests against GraphDB 10.8.14, which needs neither. It doesn't cover GraphDB 12,
+and it skips the two triple-term tests because they need RDF4J 6.
 
 The package lifecycle also inspects the assembled plugin ZIP without Docker. It verifies that the plugin and supported
 Apache SIS Derby runtime are present and that test-only or legacy CRS provider dependencies are absent.
@@ -21,17 +26,18 @@ The built plugin can be found in the `target` directory:
 
 ### Packaging smoke test
 
-The opt-in packaging smoke test requires Docker. It builds a temporary GraphDB 10.8.12 image with Java 21, installs
-the assembled plugin ZIP, and uses externally supplied Apache SIS data to run an EPSG:3006 GeoSPARQL property relation
-and five-metre distance filter function alongside a CRS84 property relation. It also checks that repositories created
-and deleted in the same GraphDB process each resolve EPSG:3006:
+The opt-in packaging smoke test requires Docker. It builds a temporary GraphDB 10.8.14 image with Java 25, installs
+the assembled plugin ZIP, adds Trove 3 to the host libraries alongside GraphDB 10's Trove 2, and uses externally
+supplied Apache SIS data to run an EPSG:3006 GeoSPARQL property relation and five-metre distance filter function
+alongside a CRS84 property relation. It also checks that repositories created and deleted in the same GraphDB process
+each resolve EPSG:3006:
 
 ```bash
 mvn -Pgraphdb-packaging-smoke verify
 ```
 
 This test checks that the assembled plugin loads and executes in GraphDB with externally supplied Apache SIS CRS data.
-It does not establish GraphDB 10.8 support or replace validation against the target GraphDB 11 runtime.
+It does not establish GraphDB 10.8 support or replace validation against the target GraphDB 12 runtime.
 
 ## Installing the plugin
 

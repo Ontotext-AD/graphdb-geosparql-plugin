@@ -31,4 +31,4 @@ jobs:
           cache: maven
 
       - name: Run test suite and packaging smoke test
-        run: mvn --batch-mode --no-transfer-progress -Pgraphdb-packaging-smoke verify
+        run: mvn --batch-mode --no-transfer-progress -Ppublic-ci,graphdb-packaging-smoke verify

@@ -1,5 +1,6 @@
 package com.ontotext.trree.geosparql;
 
+import gnu.trove.procedure.TLongProcedure;
 import org.junit.ClassRule;
 import org.junit.Test;
 import org.testcontainers.containers.GenericContainer;
@@ -88,6 +89,10 @@ public class GraphDbPackagingSmokeIT {
 
 	private static final ImageFromDockerfile IMAGE = new ImageFromDockerfile()
 			.withFileFromPath("Dockerfile", requiredPath(DOCKERFILE_PROPERTY, "packaging-smoke Dockerfile"))
+			// GraphDB 10 only ships Trove 2, but the plugin needs Trove 3, so copy in the jar that this Trove 3
+			// class comes from.
+			.withFileFromPath("trove4j.jar", Path.of(URI.create(
+					TLongProcedure.class.getProtectionDomain().getCodeSource().getLocation().toExternalForm())))
 			.withFileFromPath("geosparql-plugin-graphdb-plugin.zip",
 					requiredPath(PLUGIN_ZIP_PROPERTY, "assembled plugin ZIP"))
 			.withFileFromPath("sis-data",

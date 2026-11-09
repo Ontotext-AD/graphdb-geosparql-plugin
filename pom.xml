@@ -25,13 +25,14 @@
 			requires a registered licence even for Free, so it cannot be used in
 			unattended public CI without licence provisioning.
 
-			The build and functional tests still target ${graphdb.version}; this
-			container smoke validates the assembled plugin archive, host loading,
-			HTTP startup, and external SIS data wiring on the last licence-free
-			GraphDB runtime.
+			The default build and functional tests target ${graphdb.version}; the
+			public-ci profile runs them on GraphDB 10.8.14 instead. This container
+			smoke validates the assembled plugin archive, host loading, HTTP
+			startup, and external SIS data wiring on the last licence-free GraphDB
+			runtime.
 		-->
-		<graphdb.packaging-smoke.graphdb-image>ontotext/graphdb:10.8.12</graphdb.packaging-smoke.graphdb-image>
-		<graphdb.packaging-smoke.java-image>eclipse-temurin:21.0.11_10-jdk-jammy</graphdb.packaging-smoke.java-image>
+		<graphdb.packaging-smoke.graphdb-image>ontotext/graphdb:10.8.14</graphdb.packaging-smoke.graphdb-image>
+		<graphdb.packaging-smoke.java-image>eclipse-temurin:25.0.5_8-jdk-jammy</graphdb.packaging-smoke.java-image>
 		<graphdb.packaging-smoke.plugin-zip>${project.build.directory}/${project.artifactId}-graphdb-plugin.zip</graphdb.packaging-smoke.plugin-zip>
 		<graphdb.packaging-smoke.sis-data-dir>${project.build.directory}/packaging-smoke</graphdb.packaging-smoke.sis-data-dir>
 
@@ -370,6 +371,55 @@
 	</dependencyManagement>
 
 	<profiles>
+		<profile>
+			<id>public-ci</id>
+			<!--
+				Builds and tests against GraphDB 10.8.14, which can be downloaded and run without credentials or a
+				licence. GraphDB 12.0.0-Trove4J-RC1 depends on ai.graphwise:license-common 1.0.0-TR3, which
+				Ontotext's Maven repository only serves to authenticated users, and GraphDB 12 needs a licence to
+				run the tests. While public CI uses this profile, main and test sources have to compile against both
+				GraphDB 10.8.14 (RDF4J 4) and GraphDB 12 (RDF4J 6). Remove the profile once GraphDB 12 can be built
+				and tested without credentials.
+			-->
+			<properties>
+				<graphdb.version>10.8.14</graphdb.version>
+			</properties>
+			<build>
+				<!--
+					GraphDB 10.8.14 uses Trove 2 and the plugin uses Trove 3. Both are net.sf.trove4j:trove4j, so a
+					regular dependency would replace Trove 3; adding Trove 2 to the test classpaths keeps both. Their
+					classes don't overlap, so Surefire's classpath conflict warning about them is expected.
+				-->
+				<plugins>
+					<plugin>
+						<groupId>org.apache.maven.plugins</groupId>
+						<artifactId>maven-surefire-plugin</artifactId>
+						<configuration>
+							<additionalClasspathDependencies>
+								<additionalClasspathDependency>
+									<groupId>net.sf.trove4j</groupId>
+									<artifactId>trove4j</artifactId>
+									<version>2.0.2</version>
+								</additionalClasspathDependency>
+							</additionalClasspathDependencies>
+						</configuration>
+					</plugin>
+					<plugin>
+						<groupId>org.apache.maven.plugins</groupId>
+						<artifactId>maven-failsafe-plugin</artifactId>
+						<configuration>
+							<additionalClasspathDependencies>
+								<additionalClasspathDependency>
+									<groupId>net.sf.trove4j</groupId>
+									<artifactId>trove4j</artifactId>
+									<version>2.0.2</version>
+								</additionalClasspathDependency>
+							</additionalClasspathDependencies>
+						</configuration>
+					</plugin>
+				</plugins>
+			</build>
+		</profile>
 		<profile>
 			<id>doclint-java8-disable</id>
 			<activation>
