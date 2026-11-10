@@ -1,9 +1,9 @@
 package com.ontotext.trree.geosparql;
 
-import org.eclipse.rdf4j.model.TripleTerm;
 import org.eclipse.rdf4j.model.Value;
 import org.eclipse.rdf4j.rio.RDFFormat;
 import org.junit.Assert;
+import org.junit.Assume;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -33,8 +33,15 @@ public class TestGeoSparqlPluginWithRDFStarData extends AbstractGeoSparqlPluginT
 					"  ?within rdf:reifies ?feature .\n" +
 					"}";
 
+	private Class<?> tripleTermType;
+
 	@Before
 	public void setupConn() throws Exception {
+		try {
+			tripleTermType = Class.forName("org.eclipse.rdf4j.model.TripleTerm");
+		} catch (ClassNotFoundException unavailable) {
+			Assume.assumeNoException("RDF triple-term queries require RDF4J 6", unavailable);
+		}
 		importData("geosparql-rdf-star-example.ttls", RDFFormat.TURTLE);
 		enablePlugin();
 	}
@@ -53,7 +60,7 @@ public class TestGeoSparqlPluginWithRDFStarData extends AbstractGeoSparqlPluginT
 		List<Value> result = executeSparqlQueryWithResult(query, "feature");
 		List<String> embeddedFeatures = new ArrayList<>();
 		for (Value value : result) {
-			if (value instanceof TripleTerm) {
+			if (tripleTermType.isInstance(value)) {
 				embeddedFeatures.add(value.stringValue());
 			}
 		}

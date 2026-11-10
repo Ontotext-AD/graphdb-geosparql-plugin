@@ -203,7 +203,7 @@ The repository includes an opt-in smoke test that packages the plugin and suppli
 mvn -Pgraphdb-packaging-smoke verify
 ```
 
-This test intentionally uses GraphDB 10.8.12 because GraphDB 10.8.x is the last generation that can start in unattended public CI without provisioning a separately issued licence; GraphDB 11+ requires a registered licence even for the Free edition. EPSG:3006 is outside the subset built into Apache SIS, so the test fails if the external EPSG database is missing. The smoke test checks assembled-plugin packaging and `SIS_DATA` wiring; it does not establish GraphDB 10.8 as the production target or replace testing in the target GraphDB 11 runtime.
+This test intentionally uses GraphDB 10.8.14 because GraphDB 10.8.x is the last generation that can start in unattended public CI without provisioning a separately issued licence; GraphDB 11+ requires a registered licence even for the Free edition. EPSG:3006 is outside the subset built into Apache SIS, so the test fails if the external EPSG database is missing. The smoke test checks assembled-plugin packaging and `SIS_DATA` wiring; it does not establish GraphDB 10.8 as the production target or replace testing in the target GraphDB 12 runtime.
 
 ### Target runtime check
 

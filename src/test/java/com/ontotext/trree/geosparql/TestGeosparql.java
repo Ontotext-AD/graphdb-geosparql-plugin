@@ -9,7 +9,6 @@ import com.ontotext.trree.geosparql.jena.JenaFunctionEvaluator;
 import com.ontotext.trree.geosparql.vocabulary.GeoConstants;
 import org.apache.commons.lang.Validate;
 import org.eclipse.rdf4j.common.exception.RDF4JException;
-import org.eclipse.rdf4j.common.iteration.CloseableIteration;
 import org.eclipse.rdf4j.model.IRI;
 import org.eclipse.rdf4j.model.Literal;
 import org.eclipse.rdf4j.model.Value;
@@ -17,6 +16,7 @@ import org.eclipse.rdf4j.model.ValueFactory;
 import org.eclipse.rdf4j.model.impl.SimpleValueFactory;
 import org.eclipse.rdf4j.query.QueryLanguage;
 import org.eclipse.rdf4j.query.TupleQuery;
+import org.eclipse.rdf4j.query.TupleQueryResult;
 import org.eclipse.rdf4j.query.algebra.evaluation.ValueExprEvaluationException;
 import org.eclipse.rdf4j.repository.RepositoryConnection;
 import org.eclipse.rdf4j.repository.RepositoryException;
@@ -68,15 +68,15 @@ public class TestGeosparql extends SingleRepositoryFunctionalTest {
 		return connection.getValueFactory();
 	}
 
-	public static int count(CloseableIteration<?> statements) {
+	public static int count(TupleQueryResult results) {
 		int result = 0;
 		try {
-			while (statements.hasNext()) {
+			while (results.hasNext()) {
 				++result;
-				statements.next();
+				results.next();
 			}
 		} finally {
-			statements.close();
+			results.close();
 		}
 		return result;
 	}
