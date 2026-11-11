@@ -378,7 +378,8 @@ public class LuceneGeoIndexer implements GeoSparqlIndexer {
 		if (boundSourceIndexGeometry == null || !boundSourceIndexGeometry.isSpatialCandidate()) {
 			return getCandidateEntitiesForQuery(new MatchNoDocsQuery("Empty source has no envelope intersections."));
 		}
-		Query envelopeIntersections = envelopeIntersectionsQuery(boundSourceIndexGeometry);
+		Query envelopeIntersections = LuceneGeoDocumentSchema.envelopeIntersectsQuery(
+				boundSourceIndexGeometry.indexEnvelope());
 		return getCandidateEntitiesForQuery(envelopeIntersections);
 	}
 

@@ -41,13 +41,13 @@ final class LuceneGeoDocumentSchema {
 	static final String FIELD_ID = "id";
 	/** Indexed terms for one CRS84 source envelope; absent on empty sentinels. */
 	static final String FIELD_SPATIAL_PREFIX = "geoData1";
-	/** Indexed exact lower X bound used only for safe envelope-containment pruning. */
+	/** Indexed exact lower X bound used for envelope intersection and containment pruning. */
 	static final String FIELD_ENVELOPE_MIN_X = "geoEnvelopeMinX";
-	/** Indexed exact upper X bound used only for safe envelope-containment pruning. */
+	/** Indexed exact upper X bound used for envelope intersection and containment pruning. */
 	static final String FIELD_ENVELOPE_MAX_X = "geoEnvelopeMaxX";
-	/** Indexed exact lower Y bound used only for safe envelope-containment pruning. */
+	/** Indexed exact lower Y bound used for envelope intersection and containment pruning. */
 	static final String FIELD_ENVELOPE_MIN_Y = "geoEnvelopeMinY";
-	/** Indexed exact upper Y bound used only for safe envelope-containment pruning. */
+	/** Indexed exact upper Y bound used for envelope intersection and containment pruning. */
 	static final String FIELD_ENVELOPE_MAX_Y = "geoEnvelopeMaxY";
 	/** Stored WKB for the complete native-CRS source geometry used to construct Jena exact-evaluation input. */
 	static final String FIELD_SOURCE_GEOMETRY = "geoData";
@@ -230,6 +230,24 @@ final class LuceneGeoDocumentSchema {
 
 	static Query sourceCrsQuery(String sourceCrsUri) {
 		return new TermQuery(new Term(FIELD_SOURCE_CRS, sourceCrsUri));
+	}
+
+	static Query envelopeIntersectsQuery(Envelope boundEnvelope) {
+		// Numeric point ranges distinguish signed zeros, while geometric coordinate comparisons do not.
+		double minX = boundEnvelope.getMinX() == 0.0 ? -0.0 : boundEnvelope.getMinX();
+		double maxX = boundEnvelope.getMaxX() == 0.0 ? 0.0 : boundEnvelope.getMaxX();
+		double minY = boundEnvelope.getMinY() == 0.0 ? -0.0 : boundEnvelope.getMinY();
+		double maxY = boundEnvelope.getMaxY() == 0.0 ? 0.0 : boundEnvelope.getMaxY();
+		return new BooleanQuery.Builder()
+				.add(DoublePoint.newRangeQuery(FIELD_ENVELOPE_MIN_X,
+						Double.NEGATIVE_INFINITY, maxX), BooleanClause.Occur.FILTER)
+				.add(DoublePoint.newRangeQuery(FIELD_ENVELOPE_MAX_X,
+						minX, Double.POSITIVE_INFINITY), BooleanClause.Occur.FILTER)
+				.add(DoublePoint.newRangeQuery(FIELD_ENVELOPE_MIN_Y,
+						Double.NEGATIVE_INFINITY, maxY), BooleanClause.Occur.FILTER)
+				.add(DoublePoint.newRangeQuery(FIELD_ENVELOPE_MAX_Y,
+						minY, Double.POSITIVE_INFINITY), BooleanClause.Occur.FILTER)
+				.build();
 	}
 
 	static Query envelopeWithinQuery(Envelope boundEnvelope) {
