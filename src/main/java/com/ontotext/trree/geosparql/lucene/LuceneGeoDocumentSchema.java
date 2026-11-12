@@ -89,6 +89,9 @@ final class LuceneGeoDocumentSchema {
 			"prefix-envelope-ordinate-preserving-source-wkb-envelope-marker-topology-dv-envelope-points-bounds-kind-indexed-source-crs";
 	/** Commit metadata key identifying the CRS transformation inputs used for candidate envelopes. */
 	static final String COMMIT_CRS_ENVIRONMENT_FINGERPRINT_KEY = "geosparql.crsEnvironmentFingerprint";
+	/** Optional commit capability enabling native CRS84 prefix-cover refinement after a full build. */
+	static final String COMMIT_NATIVE_PREFIX_COVER_KEY = "geosparql.nativeCrs84PrefixCover";
+	static final String COMMIT_NATIVE_PREFIX_COVER_VALUE = "convex-hull";
 	static final String SCHEMA_MISMATCH_MESSAGE =
 			"Existing GeoSPARQL Lucene index does not match the required schema v2 layout. "
 			+ "Jena-backed CRS-correct evaluation requires a full GeoSPARQL reindex. "
@@ -228,7 +231,8 @@ final class LuceneGeoDocumentSchema {
 	}
 
 	static Iterable<Map.Entry<String, String>> currentCompatibilityCommitData(
-			Iterable<Map.Entry<String, String>> existingCommitData, String crsEnvironmentFingerprint) {
+			Iterable<Map.Entry<String, String>> existingCommitData, String crsEnvironmentFingerprint,
+			boolean enableNativePrefixCover) {
 		Map<String, String> commitData = new LinkedHashMap<>();
 		if (existingCommitData != null) {
 			for (Map.Entry<String, String> entry : existingCommitData) {
@@ -238,7 +242,14 @@ final class LuceneGeoDocumentSchema {
 		commitData.put(COMMIT_SCHEMA_VERSION_KEY, COMMIT_SCHEMA_VERSION_VALUE);
 		commitData.put(COMMIT_SCHEMA_LAYOUT_KEY, COMMIT_SCHEMA_LAYOUT_VALUE);
 		commitData.put(COMMIT_CRS_ENVIRONMENT_FINGERPRINT_KEY, crsEnvironmentFingerprint);
+		if (enableNativePrefixCover) {
+			commitData.put(COMMIT_NATIVE_PREFIX_COVER_KEY, COMMIT_NATIVE_PREFIX_COVER_VALUE);
+		}
 		return commitData.entrySet();
+	}
+
+	static boolean hasNativePrefixCover(Map<String, String> commitData) {
+		return COMMIT_NATIVE_PREFIX_COVER_VALUE.equals(commitData.get(COMMIT_NATIVE_PREFIX_COVER_KEY));
 	}
 
 	static Query entityIdQuery(long entityId) {

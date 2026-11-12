@@ -52,6 +52,8 @@ import java.util.function.Supplier;
  * <p>During force reindex, writes are allowed after {@link #freshIndex()}, but
  * reads remain gated by the previously committed compatibility state until commit succeeds. Rollback or failed
  * commit restores that previous state, so an abandoned reindex cannot make this indexer trust an incompatible index.
+ * Native CRS84 prefix-cover refinement is enabled by an optional capability on the queried commit. Fresh builds and
+ * force reindexes publish that capability; incremental writes preserve the existing commit's lookup policy.
  *
  * <p>A GraphDB transaction publishes its Lucene commit before GraphDB completes the RDF transaction. Queries read the
  * latest Lucene commit, so until GraphDB reports the outcome they can observe index changes whose RDF statements are
@@ -378,6 +380,7 @@ public class LuceneGeoIndexer implements GeoSparqlIndexer {
 			return getCandidateEntitiesForQuery(new MatchNoDocsQuery("Empty source has no envelope intersections."));
 		}
 		Query envelopeIntersections = envelopeIntersectionsQuery(boundSourceIndexGeometry);
+		Query conservativeCovers = null;
 		if (boundSourceIndexGeometry.candidateBoundsKind() == CandidateBoundsKind.NATIVE_CRS84) {
 			var envelope = boundSourceIndexGeometry.indexEnvelope();
 			Query coverIntersections = strategy.makeQuery(new SpatialArgs(SpatialOperation.Intersects,
@@ -386,14 +389,11 @@ public class LuceneGeoIndexer implements GeoSparqlIndexer {
 					.add(new MatchAllDocsQuery(), BooleanClause.Occur.FILTER)
 					.add(LuceneGeoDocumentSchema.candidateBoundsKindQuery(CandidateBoundsKind.NATIVE_CRS84),
 							BooleanClause.Occur.MUST_NOT).build();
-			Query conservativeCovers = new BooleanQuery.Builder()
+			conservativeCovers = new BooleanQuery.Builder()
 					.add(coverIntersections, BooleanClause.Occur.SHOULD)
 					.add(nonNative, BooleanClause.Occur.SHOULD).setMinimumNumberShouldMatch(1).build();
-			envelopeIntersections = new BooleanQuery.Builder()
-					.add(envelopeIntersections, BooleanClause.Occur.FILTER)
-					.add(conservativeCovers, BooleanClause.Occur.FILTER).build();
 		}
-		return getCandidateEntitiesForQuery(envelopeIntersections);
+		return getCandidateEntitiesForQuery(envelopeIntersections, conservativeCovers);
 	}
 
 	@Override
@@ -568,11 +568,29 @@ public class LuceneGeoIndexer implements GeoSparqlIndexer {
 	}
 
 	private CloseableIterator<CandidateEntity> getCandidateEntitiesForQuery(Query query) {
+		return getCandidateEntitiesForQuery(query, null);
+	}
+
+	private CloseableIterator<CandidateEntity> getCandidateEntitiesForQuery(Query query, Query nativePrefixCover) {
+		IndexReader indexReader = null;
 		try {
-			IndexReader indexReader = openReader();
+			indexReader = openReader();
+			if (nativePrefixCover != null && LuceneGeoDocumentSchema.hasNativePrefixCover(
+					((DirectoryReader) indexReader).getIndexCommit().getUserData())) {
+				query = new BooleanQuery.Builder()
+						.add(query, BooleanClause.Occur.FILTER)
+						.add(nativePrefixCover, BooleanClause.Occur.FILTER).build();
+			}
 			IndexSearcher indexSearcher = new IndexSearcher(indexReader);
 			return new LuceneCandidateEntityIterator(indexSearcher, query);
-		} catch (IOException e) {
+		} catch (Exception e) {
+			if (indexReader != null) {
+				try {
+					indexReader.close();
+				} catch (IOException cleanupFailure) {
+					e.addSuppressed(cleanupFailure);
+				}
+			}
 			throw new PluginException("Unable to execute Lucene query.", e);
 		}
 	}
@@ -662,7 +680,8 @@ public class LuceneGeoIndexer implements GeoSparqlIndexer {
 			return;
 		}
 		indexWriter.setLiveCommitData(LuceneGeoDocumentSchema.currentCompatibilityCommitData(
-				indexWriter.getLiveCommitData(), currentCrsEnvironmentFingerprint));
+				indexWriter.getLiveCommitData(), currentCrsEnvironmentFingerprint,
+				schemaRebuildInProgress || preTransactionCommit == null || preTransactionCommit.getSegmentCount() == 0));
 	}
 
 	protected void restorePreTransactionCommit() throws IOException {

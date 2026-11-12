@@ -774,7 +774,7 @@ public class LuceneGeoSchemaTest {
 
 	private void markCurrentSchema(IndexWriter writer) {
 		writer.setLiveCommitData(LuceneGeoDocumentSchema.currentCompatibilityCommitData(
-				writer.getLiveCommitData(), "test-crs-environment"));
+				writer.getLiveCommitData(), "test-crs-environment", false));
 	}
 
     private IndexWriterConfig noMergeIndexWriterConfig() {
