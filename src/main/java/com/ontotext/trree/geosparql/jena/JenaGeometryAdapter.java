@@ -15,13 +15,24 @@ import org.eclipse.rdf4j.model.ValueFactory;
  * Exact relation semantics remain in the Jena evaluator rather than this conversion layer.
  */
 public final class JenaGeometryAdapter {
+	private static volatile boolean registriesInitialized;
+
 	private JenaGeometryAdapter() {
 	}
 
 	public static void initialize() {
 		JenaCalculationPrecision.configure();
-		SRSRegistry.setupDefaultSRS();
-		GeometryDatatype.registerDatatypes();
+		if (!registriesInitialized) {
+			initializeRegistries();
+		}
+	}
+
+	private static synchronized void initializeRegistries() {
+		if (!registriesInitialized) {
+			SRSRegistry.setupDefaultSRS();
+			GeometryDatatype.registerDatatypes();
+			registriesInitialized = true;
+		}
 	}
 
 	public static SourceGeometryLiteral toSourceGeometryLiteral(Literal literal) {
