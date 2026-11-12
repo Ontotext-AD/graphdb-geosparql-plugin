@@ -263,27 +263,42 @@ final class LuceneGeoDocumentSchema {
 				.build();
 	}
 
+	/** Matches envelopes strictly separated from the bound on at least one axis. */
+	static Query envelopeDisjointQuery(Envelope boundEnvelope) {
+		return new BooleanQuery.Builder()
+				.add(ordinateLessThanQuery(FIELD_ENVELOPE_MAX_X, boundEnvelope.getMinX()), BooleanClause.Occur.SHOULD)
+				.add(ordinateGreaterThanQuery(FIELD_ENVELOPE_MIN_X, boundEnvelope.getMaxX()), BooleanClause.Occur.SHOULD)
+				.add(ordinateLessThanQuery(FIELD_ENVELOPE_MAX_Y, boundEnvelope.getMinY()), BooleanClause.Occur.SHOULD)
+				.add(ordinateGreaterThanQuery(FIELD_ENVELOPE_MIN_Y, boundEnvelope.getMaxY()), BooleanClause.Occur.SHOULD)
+				.setMinimumNumberShouldMatch(1)
+				.build();
+	}
+
+	/** Matches envelopes extending beyond at least one side of the closed bound. */
+	static Query envelopeNotWithinQuery(Envelope boundEnvelope) {
+		return new BooleanQuery.Builder()
+				.add(ordinateLessThanQuery(FIELD_ENVELOPE_MIN_X, boundEnvelope.getMinX()), BooleanClause.Occur.SHOULD)
+				.add(ordinateGreaterThanQuery(FIELD_ENVELOPE_MAX_X, boundEnvelope.getMaxX()), BooleanClause.Occur.SHOULD)
+				.add(ordinateLessThanQuery(FIELD_ENVELOPE_MIN_Y, boundEnvelope.getMinY()), BooleanClause.Occur.SHOULD)
+				.add(ordinateGreaterThanQuery(FIELD_ENVELOPE_MAX_Y, boundEnvelope.getMaxY()), BooleanClause.Occur.SHOULD)
+				.setMinimumNumberShouldMatch(1)
+				.build();
+	}
+
+	private static Query ordinateLessThanQuery(String field, double bound) {
+		// Mathematical nextDown/nextUp exclude both signed zeros when the bound is zero.
+		return DoublePoint.newRangeQuery(field, Double.NEGATIVE_INFINITY, Math.nextDown(bound));
+	}
+
+	private static Query ordinateGreaterThanQuery(String field, double bound) {
+		return DoublePoint.newRangeQuery(field, Math.nextUp(bound), Double.POSITIVE_INFINITY);
+	}
+
 	private static Query envelopeOrdinateEqualsQuery(String field, double ordinate) {
 		return DoublePoint.newRangeQuery(field, ordinate == 0.0 ? -0.0 : ordinate,
 				ordinate == 0.0 ? 0.0 : ordinate);
 	}
 
-	static Query envelopeWithinQuery(Envelope boundEnvelope) {
-		return new BooleanQuery.Builder()
-				.add(DoublePoint.newRangeQuery(FIELD_ENVELOPE_MIN_X,
-						boundEnvelope.getMinX(), Double.POSITIVE_INFINITY),
-						BooleanClause.Occur.FILTER)
-				.add(DoublePoint.newRangeQuery(FIELD_ENVELOPE_MAX_X,
-						Double.NEGATIVE_INFINITY, boundEnvelope.getMaxX()),
-						BooleanClause.Occur.FILTER)
-				.add(DoublePoint.newRangeQuery(FIELD_ENVELOPE_MIN_Y,
-						boundEnvelope.getMinY(), Double.POSITIVE_INFINITY),
-						BooleanClause.Occur.FILTER)
-				.add(DoublePoint.newRangeQuery(FIELD_ENVELOPE_MAX_Y,
-						Double.NEGATIVE_INFINITY, boundEnvelope.getMaxY()),
-						BooleanClause.Occur.FILTER)
-				.build();
-	}
 
 	private static DimensionInfo sourceDimensionInfo(Document doc) {
 		Number coordinate = numericFieldValue(doc, FIELD_SOURCE_COORDINATE_DIMENSION);

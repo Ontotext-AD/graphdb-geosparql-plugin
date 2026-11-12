@@ -18,13 +18,9 @@ import org.apache.lucene.spatial.prefix.RecursivePrefixTreeStrategy;
 import org.apache.lucene.spatial.prefix.tree.GeohashPrefixTree;
 import org.apache.lucene.spatial.prefix.tree.QuadPrefixTree;
 import org.apache.lucene.spatial.prefix.tree.SpatialPrefixTree;
-import org.apache.lucene.spatial.query.SpatialArgs;
-import org.apache.lucene.spatial.query.SpatialOperation;
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.store.FSDirectory;
-import org.locationtech.jts.geom.Envelope;
 import org.locationtech.spatial4j.context.SpatialContext;
-import org.locationtech.spatial4j.shape.Rectangle;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -379,8 +375,7 @@ public class LuceneGeoIndexer implements GeoSparqlIndexer {
 		if (boundSourceIndexGeometry == null || !boundSourceIndexGeometry.isSpatialCandidate()) {
 			return getCandidateEntitiesForQuery(new MatchNoDocsQuery("Empty source has no envelope intersections."));
 		}
-		Query envelopeIntersections = LuceneGeoDocumentSchema.envelopeIntersectsQuery(
-				boundSourceIndexGeometry.indexEnvelope());
+		Query envelopeIntersections = envelopeIntersectionsQuery(boundSourceIndexGeometry);
 		return getCandidateEntitiesForQuery(envelopeIntersections);
 	}
 
@@ -443,9 +438,9 @@ public class LuceneGeoIndexer implements GeoSparqlIndexer {
 		 * separately because the CRS84 containment proof does not model that displacement.
 		 */
 		Query ordinaryUncertain = new BooleanQuery.Builder()
-				.add(envelopeIntersectionsQuery(boundSourceIndexGeometry), BooleanClause.Occur.FILTER)
-				.add(LuceneGeoDocumentSchema.envelopeWithinQuery(
-						boundSourceIndexGeometry.indexEnvelope()), BooleanClause.Occur.MUST_NOT)
+				.add(envelopeIntersections, BooleanClause.Occur.FILTER)
+				.add(LuceneGeoDocumentSchema.envelopeNotWithinQuery(
+						boundSourceIndexGeometry.indexEnvelope()), BooleanClause.Occur.FILTER)
 				.build();
 		return getCandidateEntitiesForQuery(ordinaryUncertain);
 	}
@@ -459,7 +454,7 @@ public class LuceneGeoIndexer implements GeoSparqlIndexer {
 					new MatchNoDocsQuery("Empty source has no envelope-disjoint partition."));
 		}
 		return getEnvelopeDisjointCandidatesForQuery(
-				envelopeDisjointQuery(envelopeIntersectionsQuery(boundSourceIndexGeometry)));
+				envelopeDisjointQuery(boundSourceIndexGeometry));
 	}
 
 	@Override
@@ -470,22 +465,24 @@ public class LuceneGeoIndexer implements GeoSparqlIndexer {
 			return getEnvelopeDisjointCandidatesForQuery(
 					new MatchNoDocsQuery("Empty source has no envelope-disjoint partition."));
 		}
-		Query envelopeIntersections = disjointCleanupSafeEnvelopeIntersectionsQuery(
-				boundSourceIndexGeometry, candidateIsSubject);
 		/*
 		 * Given direct containment for native CRS84 envelopes and the documented conservative-envelope engineering
-		 * assumption for SIS-transformed envelopes, prefix-tree Intersects is conservative for source geometries:
-		 * approximation may retain false positives but does not omit an envelope that intersects the bound. Its
-		 * complement therefore contains only envelope-separated source documents, which relation traversal can classify
-		 * without source payloads.
+		 * assumption for SIS-transformed envelopes, strict envelope separation proves source disjointness. Candidates
+		 * requiring mixed-CRS cleanup remain outside this proof and are exact-evaluated in their traversal phase.
 		 */
-		return getEnvelopeDisjointCandidatesForQuery(envelopeDisjointQuery(envelopeIntersections));
+		Query separated = new BooleanQuery.Builder()
+				.add(envelopeDisjointQuery(boundSourceIndexGeometry), BooleanClause.Occur.FILTER)
+				.add(disjointTransformCleanupCandidatesQuery(boundSourceIndexGeometry, candidateIsSubject),
+						BooleanClause.Occur.MUST_NOT)
+				.build();
+		return getEnvelopeDisjointCandidatesForQuery(separated);
 	}
 
-	private Query envelopeDisjointQuery(Query envelopeIntersections) {
+	private Query envelopeDisjointQuery(IndexGeometry boundSourceIndexGeometry) {
 		return new BooleanQuery.Builder()
 				.add(LuceneGeoDocumentSchema.hasEnvelopeQuery(true), BooleanClause.Occur.FILTER)
-				.add(envelopeIntersections, BooleanClause.Occur.MUST_NOT)
+				.add(LuceneGeoDocumentSchema.envelopeDisjointQuery(boundSourceIndexGeometry.indexEnvelope()),
+						BooleanClause.Occur.FILTER)
 				.build();
 	}
 
@@ -533,25 +530,8 @@ public class LuceneGeoIndexer implements GeoSparqlIndexer {
 
 	}
 
-	private Rectangle envelopeShape(IndexGeometry indexGeometry) {
-		Envelope envelope = indexGeometry.indexEnvelope();
-		return ctx.getShapeFactory().rect(
-				envelope.getMinX(), envelope.getMaxX(), envelope.getMinY(), envelope.getMaxY());
-	}
-
 	private Query envelopeIntersectionsQuery(IndexGeometry indexGeometry) {
-		return strategy.makeQuery(
-				new SpatialArgs(SpatialOperation.Intersects, envelopeShape(indexGeometry)));
-	}
-
-	private Query disjointCleanupSafeEnvelopeIntersectionsQuery(
-			IndexGeometry indexGeometry, boolean candidateIsSubject) {
-		return new BooleanQuery.Builder()
-				.add(envelopeIntersectionsQuery(indexGeometry), BooleanClause.Occur.SHOULD)
-				.add(disjointTransformCleanupCandidatesQuery(indexGeometry, candidateIsSubject),
-						BooleanClause.Occur.SHOULD)
-				.setMinimumNumberShouldMatch(1)
-				.build();
+		return LuceneGeoDocumentSchema.envelopeIntersectsQuery(indexGeometry.indexEnvelope());
 	}
 
 	private Query disjointTransformCleanupCandidatesQuery(

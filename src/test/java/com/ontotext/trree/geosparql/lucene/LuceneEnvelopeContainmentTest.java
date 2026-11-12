@@ -56,7 +56,7 @@ public class LuceneEnvelopeContainmentTest {
 			try (DirectoryReader reader = DirectoryReader.open(directory)) {
 				IndexSearcher searcher = new IndexSearcher(reader);
 				assertEquals(Set.of(1L, 2L, 3L, 4L), collectEntityIds(searcher,
-						LuceneGeoDocumentSchema.envelopeWithinQuery(new Envelope(-180, 180, -90, 90))));
+						LuceneGeoDocumentSchema.envelopeIntersectsQuery(new Envelope(-180, 180, -90, 90))));
 				for (int documentId = 0; documentId < reader.maxDoc(); documentId++) {
 					Document stored = reader.document(documentId);
 					assertFalse(stored.getFields().stream().anyMatch(field ->
