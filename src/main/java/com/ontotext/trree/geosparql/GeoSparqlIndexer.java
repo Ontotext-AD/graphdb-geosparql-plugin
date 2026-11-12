@@ -29,6 +29,8 @@ public interface GeoSparqlIndexer {
 
 	/**
 	 * Returns candidates whose CRS84 index envelopes intersect one bound source envelope.
+	 * Conservative prefix covers may refine native CRS84 candidates for non-disjoint evaluation. Omission from this
+	 * result does not itself prove disjointness; partitioned disjoint lookup retains its envelope proofs.
 	 *
 	 * @param boundSourceIndexGeometry derived index envelope for one bound source geometry literal
 	 * @return a closeable iterator over entity groups and their matching source geometry literal snapshots

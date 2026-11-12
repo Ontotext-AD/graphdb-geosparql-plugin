@@ -405,10 +405,10 @@ public class LuceneCandidateLookupTest {
 	}
 
 	@Test
-	public void envelopeLookupAllowsExpectedTopologyFalsePositives() throws Exception {
+	public void conservativeCoversAllowTopologyFalsePositives() throws Exception {
 		List<FalsePositiveFixture> fixtures = List.of(
 				new FalsePositiveFixture(
-						"POLYGON((0 0,0 10,3 10,3 3,10 3,10 0,0 0))", "POINT(8 8)"),
+						"POLYGON((0 0,0 10,3 10,3 3,10 3,10 0,0 0))", "POINT(5 5)"),
 				new FalsePositiveFixture(
 						"POLYGON((0 0,0 10,10 10,10 0,0 0),(4 4,6 4,6 6,4 6,4 4))",
 						"POINT(5 5)"),

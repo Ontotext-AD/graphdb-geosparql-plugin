@@ -23,7 +23,11 @@ import org.apache.lucene.spatial.SpatialStrategy;
 import org.apache.jena.geosparql.implementation.DimensionInfo;
 import org.locationtech.jts.geom.Envelope;
 import org.locationtech.spatial4j.context.SpatialContext;
+import org.locationtech.spatial4j.context.jts.JtsSpatialContext;
+import org.locationtech.spatial4j.context.jts.JtsSpatialContextFactory;
 import org.locationtech.spatial4j.shape.Rectangle;
+import org.locationtech.spatial4j.shape.Shape;
+import org.locationtech.spatial4j.shape.jts.JtsGeometry;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -35,11 +39,12 @@ import java.util.Map;
  * Lucene GeoSPARQL document schema v2.
  */
 final class LuceneGeoDocumentSchema {
+	private static final JtsSpatialContext PLANAR_COVER_CONTEXT = planarCoverContext();
 	/** Per-document GeoSPARQL Lucene schema version. */
 	static final int SCHEMA_VERSION = 2;
 	/** GraphDB entity id, stored for reconstruction and indexed/doc-valued for lookup and grouping. */
 	static final String FIELD_ID = "id";
-	/** Indexed terms for one CRS84 source envelope; absent on empty sentinels. */
+	/** Conservative CRS84 prefix cover; absent on empty sentinels. */
 	static final String FIELD_SPATIAL_PREFIX = "geoData1";
 	/** Indexed exact lower X bound used for envelope intersection and containment pruning. */
 	static final String FIELD_ENVELOPE_MIN_X = "geoEnvelopeMinX";
@@ -65,7 +70,7 @@ final class LuceneGeoDocumentSchema {
 	static final String FIELD_SOURCE_SPATIAL_DIMENSION = "geoSourceSpatialDimension";
 	/** Stored and doc-valued source topological dimension preserving relation-family applicability. */
 	static final String FIELD_SOURCE_TOPOLOGICAL_DIMENSION = "geoSourceTopologicalDimension";
-	/** Stored CRS URI used to derive the index envelope in geoData1; currently always CRS84. */
+	/** Stored CRS URI of numeric envelopes and prefix covers; currently always CRS84. */
 	static final String FIELD_INDEX_CRS = "geoIndexCrs";
 	/** Indexed and stored marker separating spatial envelope documents from non-spatial empty sentinels. */
 	static final String FIELD_HAS_ENVELOPE = "geoHasEnvelope";
@@ -120,7 +125,7 @@ final class LuceneGeoDocumentSchema {
 			Envelope envelope = geometry.indexEnvelope();
 			Rectangle shape = ctx.getShapeFactory().rect(
 					envelope.getMinX(), envelope.getMaxX(), envelope.getMinY(), envelope.getMaxY());
-			for (Field field : strategy.createIndexableFields(shape)) {
+			for (Field field : strategy.createIndexableFields(prefixCover(geometry, shape))) {
 				doc.add(field);
 			}
 			doc.add(new DoublePoint(FIELD_ENVELOPE_MIN_X, envelope.getMinX()));
@@ -147,6 +152,31 @@ final class LuceneGeoDocumentSchema {
 		doc.add(new StoredField(FIELD_INDEX_CRS, geometry.indexCrs()));
 
 		return doc;
+	}
+
+	private static JtsSpatialContext planarCoverContext() {
+		JtsSpatialContextFactory factory = new JtsSpatialContextFactory();
+		factory.geo = false;
+		return factory.newSpatialContext();
+	}
+
+	private static Shape prefixCover(IndexGeometry geometry, Rectangle envelope) {
+		if (geometry.candidateBoundsKind() != CandidateBoundsKind.NATIVE_CRS84) {
+			return envelope;
+		}
+		try {
+			// Native CRS84 topology is planar. Geographic wrapping would change the covered point set.
+			var hull = geometry.sourceGeometryLiteral().asGeometryWrapper().getXYGeometry().convexHull();
+			if (hull.isEmpty() || !hull.isValid()) {
+				return envelope;
+			}
+			JtsGeometry cover = new JtsGeometry(hull, PLANAR_COVER_CONTEXT, false, false);
+			cover.index();
+			return cover;
+		} catch (RuntimeException e) {
+			// Cover refinement is optional; a failure must retain conservative envelope candidates.
+			return envelope;
+		}
 	}
 
 	static SourceGeometryLiteral sourceGeometryLiteral(Document doc, SourceGeometryLiteralResolver sourceResolver) {

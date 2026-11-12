@@ -18,6 +18,8 @@ import org.apache.lucene.spatial.prefix.RecursivePrefixTreeStrategy;
 import org.apache.lucene.spatial.prefix.tree.GeohashPrefixTree;
 import org.apache.lucene.spatial.prefix.tree.QuadPrefixTree;
 import org.apache.lucene.spatial.prefix.tree.SpatialPrefixTree;
+import org.apache.lucene.spatial.query.SpatialArgs;
+import org.apache.lucene.spatial.query.SpatialOperation;
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.store.FSDirectory;
 import org.locationtech.spatial4j.context.SpatialContext;
@@ -32,8 +34,8 @@ import java.util.function.Supplier;
 /**
  * Lucene-backed GeoSPARQL candidate indexer.
  *
- * <p>The Lucene index stores one CRS84 source envelope for coarse candidate lookup, plus native-CRS source geometry
- * WKB and literal metadata for later CRS-aware exact evaluation. Each source geometry literal has one Lucene
+ * <p>The Lucene index stores one CRS84 source envelope and a conservative prefix cover for candidate lookup, plus
+ * native-CRS source geometry WKB and literal metadata for later CRS-aware exact evaluation. Each source geometry literal has one Lucene
  * document. Candidate queries group matching source documents by entity, while direct entity reads stream source
  * geometry literal snapshots. Returned iterators own their Lucene readers and are closed by their callers.
  *
@@ -376,6 +378,21 @@ public class LuceneGeoIndexer implements GeoSparqlIndexer {
 			return getCandidateEntitiesForQuery(new MatchNoDocsQuery("Empty source has no envelope intersections."));
 		}
 		Query envelopeIntersections = envelopeIntersectionsQuery(boundSourceIndexGeometry);
+		if (boundSourceIndexGeometry.candidateBoundsKind() == CandidateBoundsKind.NATIVE_CRS84) {
+			var envelope = boundSourceIndexGeometry.indexEnvelope();
+			Query coverIntersections = strategy.makeQuery(new SpatialArgs(SpatialOperation.Intersects,
+					ctx.makeRectangle(envelope.getMinX(), envelope.getMaxX(), envelope.getMinY(), envelope.getMaxY())));
+			Query nonNative = new BooleanQuery.Builder()
+					.add(new MatchAllDocsQuery(), BooleanClause.Occur.FILTER)
+					.add(LuceneGeoDocumentSchema.candidateBoundsKindQuery(CandidateBoundsKind.NATIVE_CRS84),
+							BooleanClause.Occur.MUST_NOT).build();
+			Query conservativeCovers = new BooleanQuery.Builder()
+					.add(coverIntersections, BooleanClause.Occur.SHOULD)
+					.add(nonNative, BooleanClause.Occur.SHOULD).setMinimumNumberShouldMatch(1).build();
+			envelopeIntersections = new BooleanQuery.Builder()
+					.add(envelopeIntersections, BooleanClause.Occur.FILTER)
+					.add(conservativeCovers, BooleanClause.Occur.FILTER).build();
+		}
 		return getCandidateEntitiesForQuery(envelopeIntersections);
 	}
 
