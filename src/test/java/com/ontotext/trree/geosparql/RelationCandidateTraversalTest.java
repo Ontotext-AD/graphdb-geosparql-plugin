@@ -26,6 +26,27 @@ public class RelationCandidateTraversalTest {
 	private static final Logger LOG = LoggerFactory.getLogger(RelationCandidateTraversalTest.class);
 
 	@Test
+	public void equalityRelationsUseEqualityLookupInBothBindingDirectionsAndRequireExactEvaluation() {
+		IndexGeometry bound = geometry("LINESTRING(0 0,2 2)");
+		for (GeoSparqlPropertyRelation relation : List.of(GeoSparqlPropertyRelation.SF_EQUALS,
+				GeoSparqlPropertyRelation.EH_EQUALS, GeoSparqlPropertyRelation.RCC8_EQ)) {
+			for (boolean boundSubject : new boolean[]{false, true}) {
+				TrackingGeoSparqlIndexer indexer = new TrackingGeoSparqlIndexer();
+				indexer.addEnvelopeCandidates(bound, candidate(1L, bound));
+				try (RelationCandidateTraversal traversal = new RelationCandidateTraversal(indexer, relation,
+						List.of(bound), boundSubject, LOG)) {
+					RelationCandidateTraversal.Candidate candidate = traversal.next();
+					assertEquals(RelationCandidateTraversal.MatchCertainty.REQUIRES_EXACT_EVALUATION,
+							candidate.matchCertainty());
+					assertSame(bound.sourceGeometryLiteral(), candidate.boundSourceGeometryLiteral().orElseThrow());
+					assertFalse(traversal.hasNext());
+				}
+				assertEquals(List.of(bound.sourceGeometryLiteral()), indexer.equalityLookupSources);
+			}
+		}
+	}
+
+	@Test
 	public void envelopeDisjointCandidateRequiresPositiveEntityId() {
 		assertThrows(IllegalArgumentException.class, () -> new EnvelopeDisjointCandidate(0L, Dimension.P));
 		assertThrows(IllegalArgumentException.class, () -> new EnvelopeDisjointCandidate(-1L, Dimension.P));
@@ -378,6 +399,7 @@ public class RelationCandidateTraversalTest {
 		private final Map<SourceGeometryLiteral, List<EnvelopeDisjointCandidate>> envelopeDisjointCandidates =
 				new LinkedHashMap<>();
 		private final List<SourceGeometryLiteral> envelopeLookupSources = new ArrayList<>();
+		private final List<SourceGeometryLiteral> equalityLookupSources = new ArrayList<>();
 		private final List<SourceGeometryLiteral> envelopeDisjointLookupSources = new ArrayList<>();
 		private final List<String> events = new ArrayList<>();
 		private List<CandidateEntity> fullScanCandidates = List.of();
@@ -396,6 +418,12 @@ public class RelationCandidateTraversalTest {
 		private void addEnvelopeDisjointCandidates(IndexGeometry bound,
 				EnvelopeDisjointCandidate... candidates) {
 			envelopeDisjointCandidates.put(bound.sourceGeometryLiteral(), List.of(candidates));
+		}
+
+		@Override
+		public CloseableIterator<CandidateEntity> getEnvelopeEqualityCandidates(IndexGeometry boundSourceIndexGeometry) {
+			equalityLookupSources.add(boundSourceIndexGeometry.sourceGeometryLiteral());
+			return getEnvelopeIntersections(boundSourceIndexGeometry);
 		}
 
 		@Override

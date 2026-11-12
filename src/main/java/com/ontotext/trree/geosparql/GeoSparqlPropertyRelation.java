@@ -14,14 +14,15 @@ import static com.ontotext.trree.geosparql.vocabulary.GeoConstants.*;
 /**
  * GeoSPARQL property relations exposed by GraphDB.
  *
- * <p>Non-disjoint relations use CRS84 index-envelope intersection for candidate lookup in both binding directions.
+ * <p>Non-disjoint relations use CRS84 index envelopes for candidate lookup in both binding directions. Equality
+ * requires equal envelopes for two native CRS84 sources; transformed sources retain envelope-intersection lookup.
  * Disjoint relations partition source documents into envelope-proven matches and uncertain candidates. Mixed-CRS
  * pairs whose cleanup occurs in another CRS are retained for disjoint exact evaluation because CRS84 envelopes cannot
  * safely classify them. Jena exact evaluation always preserves subject/object argument order.
  */
 public enum GeoSparqlPropertyRelation {
 	// Simple Features
-	SF_EQUALS(GEO_SF_EQUALS, GEOF_SF_EQUALS),
+	SF_EQUALS(GEO_SF_EQUALS, GEOF_SF_EQUALS, CandidateLookupPolicy.ENVELOPE_EQUALS),
 	SF_DISJOINT(GEO_SF_DISJOINT, GEOF_SF_DISJOINT, CandidateLookupPolicy.DISJOINT_PARTITIONED),
 	SF_INTERSECTS(GEO_SF_INTERSECTS, GEOF_SF_INTERSECTS),
 	SF_TOUCHES(GEO_SF_TOUCHES, GEOF_SF_TOUCHES),
@@ -31,7 +32,7 @@ public enum GeoSparqlPropertyRelation {
 	SF_CROSSES(GEO_SF_CROSSES, GEOF_SF_CROSSES),
 
 	// Egenhofer
-	EH_EQUALS(GEO_EH_EQUALS, GEOF_EH_EQUALS),
+	EH_EQUALS(GEO_EH_EQUALS, GEOF_EH_EQUALS, CandidateLookupPolicy.ENVELOPE_EQUALS),
 	EH_DISJOINT(GEO_EH_DISJOINT, GEOF_EH_DISJOINT, CandidateLookupPolicy.DISJOINT_PARTITIONED),
 	EH_MEET(GEO_EH_MEET, GEOF_EH_MEET),
 	EH_OVERLAP(GEO_EH_OVERLAP, GEOF_EH_OVERLAP),
@@ -41,7 +42,7 @@ public enum GeoSparqlPropertyRelation {
 	EH_CONTAINS(GEO_EH_CONTAINS, GEOF_EH_CONTAINS),
 
 	// RCC8
-	RCC8_EQ(GEO_RCC8_EQ, GEOF_RCC8_EQ),
+	RCC8_EQ(GEO_RCC8_EQ, GEOF_RCC8_EQ, CandidateLookupPolicy.ENVELOPE_EQUALS),
 	RCC8_DC(GEO_RCC8_DC, GEOF_RCC8_DC, CandidateLookupPolicy.DISJOINT_PARTITIONED),
 	RCC8_EC(GEO_RCC8_EC, GEOF_RCC8_EC),
 	RCC8_PO(GEO_RCC8_PO, GEOF_RCC8_PO),

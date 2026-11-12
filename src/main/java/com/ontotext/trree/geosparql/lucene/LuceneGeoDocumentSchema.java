@@ -250,6 +250,24 @@ final class LuceneGeoDocumentSchema {
 				.build();
 	}
 
+	static Query envelopeEqualsQuery(Envelope boundEnvelope) {
+		return new BooleanQuery.Builder()
+				.add(envelopeOrdinateEqualsQuery(FIELD_ENVELOPE_MIN_X, boundEnvelope.getMinX()),
+						BooleanClause.Occur.FILTER)
+				.add(envelopeOrdinateEqualsQuery(FIELD_ENVELOPE_MAX_X, boundEnvelope.getMaxX()),
+						BooleanClause.Occur.FILTER)
+				.add(envelopeOrdinateEqualsQuery(FIELD_ENVELOPE_MIN_Y, boundEnvelope.getMinY()),
+						BooleanClause.Occur.FILTER)
+				.add(envelopeOrdinateEqualsQuery(FIELD_ENVELOPE_MAX_Y, boundEnvelope.getMaxY()),
+						BooleanClause.Occur.FILTER)
+				.build();
+	}
+
+	private static Query envelopeOrdinateEqualsQuery(String field, double ordinate) {
+		return DoublePoint.newRangeQuery(field, ordinate == 0.0 ? -0.0 : ordinate,
+				ordinate == 0.0 ? 0.0 : ordinate);
+	}
+
 	static Query envelopeWithinQuery(Envelope boundEnvelope) {
 		return new BooleanQuery.Builder()
 				.add(DoublePoint.newRangeQuery(FIELD_ENVELOPE_MIN_X,

@@ -8,6 +8,7 @@ import com.ontotext.trree.geosparql.GeoSparqlIndexer;
 import com.ontotext.trree.geosparql.GeoSparqlPlugin;
 import com.ontotext.trree.geosparql.GeoSparqlTransactionMarker;
 import com.ontotext.trree.geosparql.jena.IndexGeometry;
+import com.ontotext.trree.geosparql.jena.CandidateBoundsKind;
 import com.ontotext.trree.geosparql.jena.SourceGeometryLiteral;
 import com.ontotext.trree.sdk.PluginException;
 import org.apache.lucene.index.*;
@@ -381,6 +382,31 @@ public class LuceneGeoIndexer implements GeoSparqlIndexer {
 		Query envelopeIntersections = LuceneGeoDocumentSchema.envelopeIntersectsQuery(
 				boundSourceIndexGeometry.indexEnvelope());
 		return getCandidateEntitiesForQuery(envelopeIntersections);
+	}
+
+	@Override
+	public CloseableIterator<CandidateEntity> getEnvelopeEqualityCandidates(IndexGeometry boundSourceIndexGeometry) {
+		assertReadableCurrentSchema();
+		if (boundSourceIndexGeometry == null
+				|| boundSourceIndexGeometry.candidateBoundsKind() != CandidateBoundsKind.NATIVE_CRS84) {
+			return getEnvelopeIntersections(boundSourceIndexGeometry);
+		}
+		Query nativeBounds = LuceneGeoDocumentSchema.candidateBoundsKindQuery(CandidateBoundsKind.NATIVE_CRS84);
+		Query nativeEquals = new BooleanQuery.Builder()
+				.add(nativeBounds, BooleanClause.Occur.FILTER)
+				.add(LuceneGeoDocumentSchema.envelopeEqualsQuery(boundSourceIndexGeometry.indexEnvelope()),
+						BooleanClause.Occur.FILTER)
+				.build();
+		Query transformedIntersections = new BooleanQuery.Builder()
+				.add(LuceneGeoDocumentSchema.envelopeIntersectsQuery(boundSourceIndexGeometry.indexEnvelope()),
+						BooleanClause.Occur.FILTER)
+				.add(nativeBounds, BooleanClause.Occur.MUST_NOT)
+				.build();
+		return getCandidateEntitiesForQuery(new BooleanQuery.Builder()
+				.add(nativeEquals, BooleanClause.Occur.SHOULD)
+				.add(transformedIntersections, BooleanClause.Occur.SHOULD)
+				.setMinimumNumberShouldMatch(1)
+				.build());
 	}
 
 	@Override

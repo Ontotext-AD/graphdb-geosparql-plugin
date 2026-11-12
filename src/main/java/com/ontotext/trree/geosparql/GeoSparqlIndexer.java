@@ -36,6 +36,14 @@ public interface GeoSparqlIndexer {
 	CloseableIterator<CandidateEntity> getEnvelopeIntersections(IndexGeometry boundSourceIndexGeometry);
 
 	/**
+	 * Returns uncertain equality candidates. Adapters may require equal envelopes for two native CRS84 sources;
+	 * transformed sources retain conservative envelope-intersection lookup. Every candidate needs exact evaluation.
+	 */
+	default CloseableIterator<CandidateEntity> getEnvelopeEqualityCandidates(IndexGeometry boundSourceIndexGeometry) {
+		return getEnvelopeIntersections(boundSourceIndexGeometry);
+	}
+
+	/**
 	 * Returns mixed-CRS source documents that a partitioned disjoint traversal must exact-evaluate because coordinate
 	 * cleanup in the target CRS prevents a safe definite envelope classification.
 	 */

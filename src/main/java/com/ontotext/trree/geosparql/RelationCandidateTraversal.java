@@ -109,7 +109,7 @@ final class RelationCandidateTraversal implements CloseableIterator<RelationCand
 			return TraversalPhase.DONE;
 		}
 		return switch (relation.getCandidateLookupPolicy()) {
-			case ENVELOPE_INTERSECTS -> TraversalPhase.ENVELOPE_INTERSECTIONS;
+			case ENVELOPE_INTERSECTS, ENVELOPE_EQUALS -> TraversalPhase.ENVELOPE_INTERSECTIONS;
 			case DISJOINT_PARTITIONED -> initialDisjointPhase();
 		};
 	}
@@ -281,9 +281,13 @@ final class RelationCandidateTraversal implements CloseableIterator<RelationCand
 					&& !boundSourceCanParticipateInDisjointPartition(currentBoundIndexGeometry)) {
 				continue;
 			}
-			currentExactCandidates = phase == TraversalPhase.UNCERTAIN_CANDIDATES
-					? indexer.getEnvelopeDisjointUncertainCandidates(currentBoundIndexGeometry)
-					: indexer.getEnvelopeIntersections(currentBoundIndexGeometry);
+			if (phase == TraversalPhase.UNCERTAIN_CANDIDATES) {
+				currentExactCandidates = indexer.getEnvelopeDisjointUncertainCandidates(currentBoundIndexGeometry);
+			} else if (relation.getCandidateLookupPolicy() == CandidateLookupPolicy.ENVELOPE_EQUALS) {
+				currentExactCandidates = indexer.getEnvelopeEqualityCandidates(currentBoundIndexGeometry);
+			} else {
+				currentExactCandidates = indexer.getEnvelopeIntersections(currentBoundIndexGeometry);
+			}
 			return true;
 		}
 		return false;
