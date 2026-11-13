@@ -28,7 +28,9 @@ import java.util.NoSuchElementException;
  */
 class LuceneCandidateEntityIterator implements CloseableIterator<CandidateEntity> {
 	private static final int PAGE_SIZE = 1000;
-	private static final Sort ENTITY_ID_SORT = entityIdSort();
+	private static final Sort ENTITY_ID_SORT = new Sort(new SortField(LuceneGeoDocumentSchema.FIELD_ID,
+			SortField.Type.LONG));
+	private static final Sort CONTINUATION_SORT = continuationSort();
 
 	private final IndexSearcher searcher;
 	private final Query query;
@@ -45,7 +47,7 @@ class LuceneCandidateEntityIterator implements CloseableIterator<CandidateEntity
 		this.query = query;
 	}
 
-	private static Sort entityIdSort() {
+	private static Sort continuationSort() {
 		SortField entityId = new SortField(LuceneGeoDocumentSchema.FIELD_ID, SortField.Type.LONG);
 		// The schema writes identical entity ids to the point and doc-values fields.
 		entityId.setCanUsePoints();
@@ -136,7 +138,8 @@ class LuceneCandidateEntityIterator implements CloseableIterator<CandidateEntity
 					.add(query, BooleanClause.Occur.FILTER)
 					.add(LuceneGeoDocumentSchema.entityIdsAtLeastQuery(lastEntityId), BooleanClause.Occur.FILTER)
 					.build();
-			topDocs = searcher.searchAfter(last, remaining, PAGE_SIZE, ENTITY_ID_SORT);
+			// Avoid point-comparator setup for lookups that fit on their first page.
+			topDocs = searcher.searchAfter(last, remaining, PAGE_SIZE, CONTINUATION_SORT);
 			idx = 0;
 			if (topDocs.scoreDocs.length == 0) {
 				exhausted = true;
