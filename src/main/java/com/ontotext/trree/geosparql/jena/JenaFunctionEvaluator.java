@@ -1,5 +1,6 @@
 package com.ontotext.trree.geosparql.jena;
 
+import com.ontotext.trree.geosparql.jena.query.GeometryWithin;
 import com.ontotext.trree.geosparql.vocabulary.GeoConstants;
 import org.apache.jena.geosparql.implementation.DimensionInfo;
 import org.apache.jena.geosparql.implementation.GeometryWrapper;
@@ -206,7 +207,7 @@ public final class JenaFunctionEvaluator {
 			return left.relate(right, RCC8IntersectionPattern.EXTERNALLY_CONNECTED);
 		}
 		if (GeoConstants.GEOF_SF_WITHIN.stringValue().equals(functionUri)) {
-			return left.within(right);
+			return GeometryWithin.calculate(left, right);
 		}
 		if (GeoConstants.GEOF_SF_CONTAINS.stringValue().equals(functionUri)) {
 			return left.contains(right);
