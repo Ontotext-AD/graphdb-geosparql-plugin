@@ -256,6 +256,10 @@ final class LuceneGeoDocumentSchema {
 		return LongPoint.newExactQuery(FIELD_ID, entityId);
 	}
 
+	static Query entityIdsAtLeastQuery(long entityId) {
+		return LongPoint.newRangeQuery(FIELD_ID, entityId, Long.MAX_VALUE);
+	}
+
 	static Query allDocumentsQuery() {
 		return new MatchAllDocsQuery();
 	}

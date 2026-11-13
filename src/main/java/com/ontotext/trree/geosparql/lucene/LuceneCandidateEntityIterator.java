@@ -5,9 +5,11 @@ import com.ontotext.trree.geosparql.CloseableIterator;
 import com.ontotext.trree.geosparql.jena.SourceGeometryLiteral;
 import com.ontotext.trree.sdk.PluginException;
 import org.apache.lucene.document.Document;
+import org.apache.lucene.search.BooleanClause;
+import org.apache.lucene.search.BooleanQuery;
+import org.apache.lucene.search.FieldDoc;
 import org.apache.lucene.search.IndexSearcher;
 import org.apache.lucene.search.Query;
-import org.apache.lucene.search.ScoreDoc;
 import org.apache.lucene.search.Sort;
 import org.apache.lucene.search.SortField;
 import org.apache.lucene.search.TopDocs;
@@ -26,8 +28,7 @@ import java.util.NoSuchElementException;
  */
 class LuceneCandidateEntityIterator implements CloseableIterator<CandidateEntity> {
 	private static final int PAGE_SIZE = 1000;
-	private static final Sort ENTITY_ID_SORT = new Sort(new SortField(LuceneGeoDocumentSchema.FIELD_ID,
-			SortField.Type.LONG));
+	private static final Sort ENTITY_ID_SORT = entityIdSort();
 
 	private final IndexSearcher searcher;
 	private final Query query;
@@ -42,6 +43,13 @@ class LuceneCandidateEntityIterator implements CloseableIterator<CandidateEntity
 	LuceneCandidateEntityIterator(IndexSearcher searcher, Query query) {
 		this.searcher = searcher;
 		this.query = query;
+	}
+
+	private static Sort entityIdSort() {
+		SortField entityId = new SortField(LuceneGeoDocumentSchema.FIELD_ID, SortField.Type.LONG);
+		// The schema writes identical entity ids to the point and doc-values fields.
+		entityId.setCanUsePoints();
+		return new Sort(entityId);
 	}
 
 	@Override
@@ -121,8 +129,14 @@ class LuceneCandidateEntityIterator implements CloseableIterator<CandidateEntity
 			return false;
 		}
 		try {
-			ScoreDoc last = topDocs.scoreDocs[topDocs.scoreDocs.length - 1];
-			topDocs = searcher.searchAfter(last, query, PAGE_SIZE, ENTITY_ID_SORT);
+			FieldDoc last = (FieldDoc) topDocs.scoreDocs[topDocs.scoreDocs.length - 1];
+			long lastEntityId = (Long) last.fields[0];
+			// Include the last entity because its source documents may span pages.
+			Query remaining = new BooleanQuery.Builder()
+					.add(query, BooleanClause.Occur.FILTER)
+					.add(LuceneGeoDocumentSchema.entityIdsAtLeastQuery(lastEntityId), BooleanClause.Occur.FILTER)
+					.build();
+			topDocs = searcher.searchAfter(last, remaining, PAGE_SIZE, ENTITY_ID_SORT);
 			idx = 0;
 			if (topDocs.scoreDocs.length == 0) {
 				exhausted = true;
