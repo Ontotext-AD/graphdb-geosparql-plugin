@@ -3,7 +3,6 @@ package com.ontotext.trree.geosparql.lucene;
 import com.ontotext.trree.geosparql.jena.CandidateBoundsKind;
 import com.ontotext.trree.geosparql.jena.IndexGeometry;
 import com.ontotext.trree.geosparql.jena.SourceGeometryLiteral;
-import com.ontotext.trree.geosparql.jena.query.GeometryWithin;
 import org.apache.jena.geosparql.implementation.GeometryWrapper;
 import org.apache.lucene.search.BooleanClause;
 import org.apache.lucene.search.BooleanQuery;
@@ -63,7 +62,7 @@ final class NativeCrs84DisjointPruning {
 				+ x + " " + maxY + "," + x + " " + y + "))");
 		IndexGeometry indexRectangle = IndexGeometry.fromSourceGeometryLiteral(rectangle);
 		if (indexRectangle.isEnvelopeCoveringRectangle()
-				&& GeometryWithin.calculate(rectangle.asGeometryWrapper(), bound)) {
+				&& rectangle.asGeometryWrapper().within(bound)) {
 			// Use the certified geometry's parsed coordinates for the numeric containment query.
 			rectangles.add(indexRectangle.indexEnvelope());
 			return;

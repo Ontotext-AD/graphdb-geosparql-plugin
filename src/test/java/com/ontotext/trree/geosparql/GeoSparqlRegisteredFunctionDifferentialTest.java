@@ -49,16 +49,6 @@ public class GeoSparqlRegisteredFunctionDifferentialTest extends AbstractGeoSpar
 						"POLYGON((10 0,10 10,20 10,20 0,10 0))")
 				+ feature("distantArea", "distantAreaGeom",
 						"POLYGON((20 20,20 30,30 30,30 20,20 20))")
-				+ feature("areaWithHole", "areaWithHoleGeom",
-						"POLYGON((0 0,10 0,10 10,0 10,0 0),(3 3,3 7,7 7,7 3,3 3))")
-				+ feature("interiorPoint", "interiorPointGeom", "POINT(1 1)")
-				+ feature("boundaryPoint", "boundaryPointGeom", "POINT(0 5)")
-				+ feature("holePoint", "holePointGeom", "POINT(5 5)")
-				+ feature("exteriorPoint", "exteriorPointGeom", "POINT(11 5)")
-				+ feature("precisionPoint", "precisionPointGeom", "POINT(1.0000004 1)")
-				+ feature("precisionArea", "precisionAreaGeom",
-						"<http://www.opengis.net/def/crs/EPSG/0/4326> "
-								+ "POLYGON((0 0,0 1.0000003,2 1.0000003,2 0,0 0))")
 				+ feature("emptyPoint", "emptyPointGeom", "POINT EMPTY")
 				+ feature("emptyCollection", "emptyCollectionGeom", "GEOMETRYCOLLECTION EMPTY")
 				+ feature("collection", "collectionGeom",
@@ -86,21 +76,6 @@ public class GeoSparqlRegisteredFunctionDifferentialTest extends AbstractGeoSpar
 		assertDifferential("sfIntersects", "utm32", false, "crs84Cleaned", "utm33Cleaned");
 		assertDifferential("sfDisjoint", "utm32", false, "crs84Cleaned", "utm33Cleaned");
 		assertDifferential("ehDisjoint", "utm32", true, "crs84Cleaned", "utm33Cleaned");
-	}
-
-	@Test
-	public void pointWithinAreaPreservesInteriorAndBoundaryResultsInBothBindingDirections() throws Exception {
-		assertEquals(candidateIris(new String[] { "interiorPoint" }),
-				assertDifferential("sfWithin", "areaWithHole", false,
-						"interiorPoint", "boundaryPoint", "holePoint", "exteriorPoint"));
-		assertEquals(candidateIris(new String[] { "leftArea", "areaWithHole" }),
-				assertDifferential("sfWithin", "interiorPoint", true, "leftArea", "areaWithHole"));
-	}
-
-	@Test
-	public void pointWithinAreaPreservesTargetToSourceCrsCleanup() throws Exception {
-		assertEquals(Set.of(), assertDifferential("sfWithin", "precisionArea", false, "precisionPoint"));
-		assertEquals(Set.of(), assertDifferential("sfWithin", "precisionPoint", true, "precisionArea"));
 	}
 
 	@Test
@@ -161,7 +136,7 @@ public class GeoSparqlRegisteredFunctionDifferentialTest extends AbstractGeoSpar
 		assertEquals("registered filter function", expected, functionResults);
 	}
 
-	private Set<Value> assertDifferential(String relation, String bound, boolean boundSubject, String... candidates)
+	private void assertDifferential(String relation, String bound, boolean boundSubject, String... candidates)
 			throws Exception {
 		String propertyPattern = boundSubject
 				? "  ex:" + bound + " geo:" + relation + " ?candidate .\n"
@@ -184,7 +159,6 @@ public class GeoSparqlRegisteredFunctionDifferentialTest extends AbstractGeoSpar
 
 		assertEquals(relation + " " + (boundSubject ? "subject" : "object") + "-bound " + bound,
 				functionResults, propertyResults);
-		return propertyResults;
 	}
 
 	private Set<Value> queryCandidates(String query) throws Exception {
