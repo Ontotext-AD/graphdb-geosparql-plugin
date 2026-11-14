@@ -4,6 +4,7 @@ import com.ontotext.test.TemporaryLocalFolder;
 import com.ontotext.trree.geosparql.GeoSparqlConfig;
 import com.ontotext.trree.geosparql.GeoSparqlPlugin;
 import com.ontotext.trree.geosparql.TestIndexGeometries;
+import com.ontotext.trree.geosparql.jena.IndexGeometry;
 import org.apache.lucene.index.DirectoryReader;
 import org.apache.lucene.index.FilterDirectoryReader;
 import org.apache.lucene.index.FilterLeafReader;
@@ -32,28 +33,10 @@ public class LuceneCandidatePagingTest {
 
     @Test
     public void candidatePagesDoNotRereadTheLowestEntityId() throws Exception {
-        GeoSparqlPlugin parent = new GeoSparqlPlugin();
-        GeoSparqlConfig config = new GeoSparqlConfig();
-        config.setPrefixTree(GeoSparqlConfig.PrefixTree.QUAD);
-        config.setPrecision(11);
-        config.updateCurrentSettings();
-        parent.setConfig(config);
-        parent.setLogger(LoggerFactory.getLogger(LuceneCandidatePagingTest.class));
-        parent.setDataDir(Files.createDirectories(tmpFolder.getRoot().toPath().resolve("entity-pages")).toFile());
-        IdReadCountingIndexer indexer = new IdReadCountingIndexer(parent);
-        indexer.initialize();
-
+        IdReadCountingIndexer indexer = createIndexer("entity-pages");
         int entityCount = 10000;
-        List<Long> insertionOrder = new ArrayList<>(entityCount);
-        for (long id = 1; id <= entityCount; id++) insertionOrder.add(id);
-        Collections.shuffle(insertionOrder, new Random(1847));
         var geometry = TestIndexGeometries.fromWkt("POINT(0 0)");
-        indexer.begin();
-        for (long id : insertionOrder) {
-            indexer.indexGeometryList(id, ignored -> "geometry", List.of(geometry));
-        }
-        indexer.commit();
-        indexer.complete();
+        indexInShuffledOrder(indexer, entityCount, List.of(geometry));
 
         indexer.idReads.set(0);
         indexer.lowestIdReads.set(0);
@@ -69,6 +52,53 @@ public class LuceneCandidatePagingTest {
         assertTrue("Candidate paging reread the lowest entity id " + indexer.lowestIdReads.get()
                         + " times (" + indexer.idReads.get() + " total id reads)",
                 indexer.lowestIdReads.get() <= 3);
+    }
+
+    @Test
+    public void entitiesWithSeveralSourcesStayCompleteAcrossContinuationPages() throws Exception {
+        IdReadCountingIndexer indexer = createIndexer("multi-source-pages");
+        // Three documents per entity place page boundaries inside entities on every continuation page.
+        int entityCount = 4000;
+        indexInShuffledOrder(indexer, entityCount, List.of(TestIndexGeometries.fromWkt("POINT(0 0)"),
+                TestIndexGeometries.fromWkt("POINT(0 1)"), TestIndexGeometries.fromWkt("POINT(1 0)")));
+
+        long expectedId = 1;
+        try (var candidates = indexer.getEnvelopeIntersections(
+                TestIndexGeometries.fromWkt("POLYGON((-1 -1,-1 2,2 2,2 -1,-1 -1))"))) {
+            while (candidates.hasNext()) {
+                var candidate = candidates.next();
+                assertEquals(expectedId++, candidate.entityId());
+                assertEquals(3, candidate.matchingSourceGeometryLiterals().size());
+            }
+        }
+        assertEquals(entityCount + 1L, expectedId);
+    }
+
+    private IdReadCountingIndexer createIndexer(String name) throws Exception {
+        GeoSparqlPlugin parent = new GeoSparqlPlugin();
+        GeoSparqlConfig config = new GeoSparqlConfig();
+        config.setPrefixTree(GeoSparqlConfig.PrefixTree.QUAD);
+        config.setPrecision(11);
+        config.updateCurrentSettings();
+        parent.setConfig(config);
+        parent.setLogger(LoggerFactory.getLogger(LuceneCandidatePagingTest.class));
+        parent.setDataDir(Files.createDirectories(tmpFolder.getRoot().toPath().resolve(name)).toFile());
+        IdReadCountingIndexer indexer = new IdReadCountingIndexer(parent);
+        indexer.initialize();
+        return indexer;
+    }
+
+    private static void indexInShuffledOrder(IdReadCountingIndexer indexer, int entityCount,
+            List<IndexGeometry> geometries) throws Exception {
+        List<Long> insertionOrder = new ArrayList<>(entityCount);
+        for (long id = 1; id <= entityCount; id++) insertionOrder.add(id);
+        Collections.shuffle(insertionOrder, new Random(1847));
+        indexer.begin();
+        for (long id : insertionOrder) {
+            indexer.indexGeometryList(id, ignored -> "geometry", geometries);
+        }
+        indexer.commit();
+        indexer.complete();
     }
 
     private static final class IdReadCountingIndexer extends LuceneGeoIndexer {
