@@ -28,6 +28,8 @@ import org.locationtech.spatial4j.context.jts.JtsSpatialContextFactory;
 import org.locationtech.spatial4j.shape.Rectangle;
 import org.locationtech.spatial4j.shape.Shape;
 import org.locationtech.spatial4j.shape.jts.JtsGeometry;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -39,6 +41,7 @@ import java.util.Map;
  * Lucene GeoSPARQL document schema v2.
  */
 final class LuceneGeoDocumentSchema {
+	private static final Logger LOGGER = LoggerFactory.getLogger(LuceneGeoDocumentSchema.class);
 	private static final JtsSpatialContext PLANAR_COVER_CONTEXT = planarCoverContext();
 	/** Per-document GeoSPARQL Lucene schema version. */
 	static final int SCHEMA_VERSION = 2;
@@ -181,6 +184,7 @@ final class LuceneGeoDocumentSchema {
 			return cover;
 		} catch (RuntimeException e) {
 			// Cover refinement is optional; a failure must retain conservative envelope candidates.
+			LOGGER.debug("Using the envelope prefix cover because the convex hull cover is unavailable", e);
 			return envelope;
 		}
 	}

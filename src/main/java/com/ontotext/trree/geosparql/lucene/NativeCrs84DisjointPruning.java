@@ -12,12 +12,15 @@ import org.locationtech.jts.geom.Envelope;
 import org.locationtech.jts.geom.Polygon;
 import org.opengis.referencing.operation.TransformException;
 import org.opengis.util.FactoryException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
 import java.util.List;
 
 /** Removes native CRS84 sources contained by rectangles that Jena certifies inside the bound polygon. */
 final class NativeCrs84DisjointPruning {
+	private static final Logger LOGGER = LoggerFactory.getLogger(NativeCrs84DisjointPruning.class);
 	private static final int MAX_BOUND_POINTS = 256;
 	private static final int MAX_DEPTH = 4;
 	private static final int MAX_CELLS = 64;
@@ -46,6 +49,7 @@ final class NativeCrs84DisjointPruning {
 			return cover.retainUncertain(candidates);
 		} catch (FactoryException | TransformException | RuntimeException e) {
 			// Certification is optional. Unavailable topology leaves the complete candidate query intact.
+			LOGGER.debug("Keeping all disjoint candidates because interior rectangles cannot be certified", e);
 			return candidates;
 		}
 	}
