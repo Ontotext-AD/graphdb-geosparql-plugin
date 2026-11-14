@@ -88,6 +88,20 @@ public class LuceneEnvelopeIntersectionTest {
         assertEquals(List.of(1L, 2L, 4L, 5L), collect(indexer.getEnvelopeIntersections(west)));
     }
 
+    @Test
+    public void envelopesReachingTheSamePolarCapRemainIntersectionCandidates() throws Exception {
+        StoredReadCountingIndexer indexer = createIndexer("polar-cap", GeoSparqlConfig.PrefixTree.QUAD, 11);
+        IndexGeometry south = transformed(new Envelope(10, 20, -90, -89.9995));
+        IndexGeometry north = transformed(new Envelope(100, 110, 89.9995, 90));
+        index(indexer, List.of(south,
+                transformed(new Envelope(100, 110, -89.9999, -89.9998)),
+                transformed(new Envelope(100, 110, -89.99, -89.98)),
+                north));
+
+        assertEquals(List.of(1L, 2L), collect(indexer.getEnvelopeIntersections(south)));
+        assertEquals(List.of(4L), collect(indexer.getEnvelopeIntersections(north)));
+    }
+
     private StoredReadCountingIndexer createIndexer(String name, GeoSparqlConfig.PrefixTree tree, int precision)
             throws Exception {
         GeoSparqlPlugin parent = new GeoSparqlPlugin();

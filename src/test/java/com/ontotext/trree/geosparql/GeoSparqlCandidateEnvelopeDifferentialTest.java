@@ -638,6 +638,48 @@ public class GeoSparqlCandidateEnvelopeDifferentialTest {
 		}
 	}
 
+	/**
+	 * Meridians converge at a pole. Within metres of it, Jena's cleanup of a coordinate transformed into a projected
+	 * CRS spans more longitude than the widening of an index envelope, so a CRS84 point on a different meridian can be
+	 * placed on the edge of a projected area. Each area has an edge on the named meridian.
+	 */
+	@Test
+	public void sourcesRoundedTogetherNearAPoleAgreeWithEntityLevelReference() throws Exception {
+		String southernEdgeOnAntimeridian = "<" + ANTARCTIC_POLAR_STEREOGRAPHIC
+				+ "> POLYGON((0 -200,10 -200,10 -0.5,0 -0.5,0 -200))";
+		String southernEdgeOnPrimeMeridian = "<" + ANTARCTIC_POLAR_STEREOGRAPHIC
+				+ "> POLYGON((0 0.5,10 0.5,10 200,0 200,0 0.5))";
+		String northernEdgeOnCentralMeridian = "<" + ARCTIC_POLAR_STEREOGRAPHIC
+				+ "> POLYGON((0 -200,10 -200,10 -0.5,0 -0.5,0 -200))";
+		assertRoundedTogetherNearPole("south-antimeridian", southernEdgeOnAntimeridian, -180, 1, -89.99999);
+		assertRoundedTogetherNearPole("south-prime-meridian", southernEdgeOnPrimeMeridian, 0, -1, -89.99999);
+		assertRoundedTogetherNearPole("north-central-meridian", northernEdgeOnCentralMeridian, -45, -1, 89.99999);
+	}
+
+	private void assertRoundedTogetherNearPole(String name, String areaWkt, double edgeLongitude, int direction,
+			double latitude) throws Exception {
+		Map<Long, List<IndexGeometry>> sources = new LinkedHashMap<>();
+		sources.put(1L, geometries(areaWkt));
+		sources.put(2L, geometries("POINT(" + (edgeLongitude + direction * 2e-6) + " " + latitude + ")"));
+		sources.put(3L, geometries("POINT(" + (edgeLongitude + direction * 1e-5) + " " + latitude + ")"));
+		sources.put(4L, geometries("POINT(" + (edgeLongitude + direction * 1e-3) + " " + latitude + ")"));
+		SourceGeometryLiteral area = sources.get(1L).get(0).sourceGeometryLiteral();
+		for (long rounded : new long[] { 2L, 3L }) {
+			assertTrue(name + " area must intersect source " + rounded, GeoSparqlPropertyRelation.SF_INTERSECTS.evaluate(
+					area, sources.get(rounded).get(0).sourceGeometryLiteral()));
+		}
+		assertFalse(name, GeoSparqlPropertyRelation.SF_INTERSECTS.evaluate(
+				area, sources.get(4L).get(0).sourceGeometryLiteral()));
+
+		Fixture fixture = createFixture("near-pole-" + name, sources);
+		for (GeoSparqlPropertyRelation relation : GeoSparqlPropertyRelation.values()) {
+			for (long boundEntityId : fixture.sources.keySet()) {
+				assertIndexedEqualsReference(fixture, relation, 0, boundEntityId);
+				assertIndexedEqualsReference(fixture, relation, boundEntityId, 0);
+			}
+		}
+	}
+
 	@Test
 	public void envelopeContainedNonMatchesAreNotExactDisjoint() throws Exception {
 		Map<Long, List<IndexGeometry>> sources = new LinkedHashMap<>();

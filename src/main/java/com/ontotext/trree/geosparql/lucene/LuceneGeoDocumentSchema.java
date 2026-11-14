@@ -84,6 +84,9 @@ final class LuceneGeoDocumentSchema {
 	/** Ends of the CRS84 longitude range, which name the same meridian. */
 	private static final double MINIMUM_LONGITUDE = -180.0;
 	private static final double MAXIMUM_LONGITUDE = 180.0;
+	/** Latitudes of the poles, where every meridian meets. */
+	private static final double SOUTH_POLE_LATITUDE = -90.0;
+	private static final double NORTH_POLE_LATITUDE = 90.0;
 	/** Commit metadata key used for the constant-time index-level schema compatibility check. */
 	static final String COMMIT_SCHEMA_VERSION_KEY = "geosparql.luceneSchemaVersion";
 	/** Commit metadata value for the required schema version. */
@@ -300,13 +303,13 @@ final class LuceneGeoDocumentSchema {
 				.add(DoublePoint.newRangeQuery(FIELD_ENVELOPE_MAX_Y,
 						minY, Double.POSITIVE_INFINITY), BooleanClause.Occur.FILTER)
 				.build();
-		Query acrossAntimeridian = envelopeMeetsAcrossAntimeridianQuery(boundEnvelope);
-		if (acrossAntimeridian == null) {
+		Query meetingDespiteLongitude = envelopeMeetsDespiteLongitudeQuery(boundEnvelope);
+		if (meetingDespiteLongitude == null) {
 			return overlapping;
 		}
 		return new BooleanQuery.Builder()
 				.add(overlapping, BooleanClause.Occur.SHOULD)
-				.add(acrossAntimeridian, BooleanClause.Occur.SHOULD)
+				.add(meetingDespiteLongitude, BooleanClause.Occur.SHOULD)
 				.setMinimumNumberShouldMatch(1)
 				.build();
 	}
@@ -326,7 +329,7 @@ final class LuceneGeoDocumentSchema {
 
 	/**
 	 * Matches envelopes strictly separated from the bound on at least one axis, except those meeting it across the
-	 * antimeridian.
+	 * antimeridian or at a pole.
 	 */
 	static Query envelopeDisjointQuery(Envelope boundEnvelope) {
 		Query separated = new BooleanQuery.Builder()
@@ -336,14 +339,58 @@ final class LuceneGeoDocumentSchema {
 				.add(ordinateGreaterThanQuery(FIELD_ENVELOPE_MIN_Y, boundEnvelope.getMaxY()), BooleanClause.Occur.SHOULD)
 				.setMinimumNumberShouldMatch(1)
 				.build();
-		Query acrossAntimeridian = envelopeMeetsAcrossAntimeridianQuery(boundEnvelope);
-		if (acrossAntimeridian == null) {
+		Query meetingDespiteLongitude = envelopeMeetsDespiteLongitudeQuery(boundEnvelope);
+		if (meetingDespiteLongitude == null) {
 			return separated;
 		}
 		return new BooleanQuery.Builder()
 				.add(separated, BooleanClause.Occur.FILTER)
-				.add(acrossAntimeridian, BooleanClause.Occur.MUST_NOT)
+				.add(meetingDespiteLongitude, BooleanClause.Occur.MUST_NOT)
 				.build();
+	}
+
+	/**
+	 * Matches envelopes that can meet the bound although their longitude ranges are apart, or returns null for a
+	 * bound away from the antimeridian and the poles.
+	 */
+	private static Query envelopeMeetsDespiteLongitudeQuery(Envelope boundEnvelope) {
+		Query acrossAntimeridian = envelopeMeetsAcrossAntimeridianQuery(boundEnvelope);
+		Query atPole = envelopeMeetsAtPoleQuery(boundEnvelope);
+		if (acrossAntimeridian == null || atPole == null) {
+			return acrossAntimeridian == null ? atPole : acrossAntimeridian;
+		}
+		return new BooleanQuery.Builder()
+				.add(acrossAntimeridian, BooleanClause.Occur.SHOULD)
+				.add(atPole, BooleanClause.Occur.SHOULD)
+				.setMinimumNumberShouldMatch(1)
+				.build();
+	}
+
+	/**
+	 * Matches envelopes that reach the same polar cap as the bound, or returns null for a bound away from the poles.
+	 *
+	 * <p>Meridians converge at a pole. Within {@link IndexGeometry#POLAR_CAP} of it, Jena's cleanup of a coordinate
+	 * transformed into a projected CRS can place sources from different meridians at one position, so longitude
+	 * does not separate envelopes there.
+	 */
+	private static Query envelopeMeetsAtPoleQuery(Envelope boundEnvelope) {
+		double southernCap = SOUTH_POLE_LATITUDE + IndexGeometry.POLAR_CAP;
+		double northernCap = NORTH_POLE_LATITUDE - IndexGeometry.POLAR_CAP;
+		boolean boundReachesSouthernCap = boundEnvelope.getMinY() <= southernCap;
+		boolean boundReachesNorthernCap = boundEnvelope.getMaxY() >= northernCap;
+		if (!boundReachesSouthernCap && !boundReachesNorthernCap) {
+			return null;
+		}
+		BooleanQuery.Builder sameCap = new BooleanQuery.Builder().setMinimumNumberShouldMatch(1);
+		if (boundReachesSouthernCap) {
+			sameCap.add(DoublePoint.newRangeQuery(FIELD_ENVELOPE_MIN_Y,
+					Double.NEGATIVE_INFINITY, southernCap), BooleanClause.Occur.SHOULD);
+		}
+		if (boundReachesNorthernCap) {
+			sameCap.add(DoublePoint.newRangeQuery(FIELD_ENVELOPE_MAX_Y,
+					northernCap, Double.POSITIVE_INFINITY), BooleanClause.Occur.SHOULD);
+		}
+		return sameCap.build();
 	}
 
 	/**

@@ -167,6 +167,20 @@ public class LuceneDisjointEnvelopeLookupTest {
 		assertEquals(Set.of(1L, 4L), uncertain(indexer.getEnvelopeDisjointUncertainCandidates(bound)));
 	}
 
+	@Test
+	public void envelopesReachingTheSamePolarCapAreUncertainInsteadOfDefiniteMatches() throws Exception {
+		LuceneGeoIndexer indexer = createIndexer("polar-cap", GeoSparqlConfig.PrefixTree.QUAD, 11);
+		index(indexer, List.of(
+				transformed(new Envelope(100, 110, -89.9999, -89.9998)),
+				transformed(new Envelope(100, 110, -89.99, -89.98)),
+				transformed(new Envelope(100, 110, 89.9995, 90))));
+		IndexGeometry bound = transformed(new Envelope(10, 20, -90, -89.9995));
+
+		assertEquals(Set.of(2L, 3L), definite(indexer.getEnvelopeDisjointCandidates(bound, true)));
+		assertEquals(Set.of(2L, 3L), definite(indexer.getEnvelopeDisjointCandidates(bound)));
+		assertEquals(Set.of(1L), uncertain(indexer.getEnvelopeDisjointUncertainCandidates(bound)));
+	}
+
 	private LuceneGeoIndexer createIndexer(String name, GeoSparqlConfig.PrefixTree tree, int precision)
 			throws Exception {
 		GeoSparqlPlugin parent = new GeoSparqlPlugin();

@@ -39,6 +39,12 @@ public final class IndexGeometry {
 	 * continue on the other side of that meridian is not stored. One cleanup step covers the clamped widening.
 	 */
 	public static final double ANTIMERIDIAN_MARGIN = 2 * JenaCalculationPrecision.maximumCleanupDisplacement();
+	/**
+	 * Latitude distance from a pole, about 110 metres, within which longitude does not separate index envelopes.
+	 * Meridians converge at a pole. Inside this cap, Jena's cleanup of a coordinate transformed into a metre-based
+	 * projected CRS spans more longitude than the cleanup widening of an index envelope.
+	 */
+	public static final double POLAR_CAP = 0.001;
 	private static final Logger LOGGER = LoggerFactory.getLogger(IndexGeometry.class);
 	private static final ConservativeCrs84EnvelopeProjector ENVELOPE_PROJECTOR =
 			new ConservativeCrs84EnvelopeProjector();
