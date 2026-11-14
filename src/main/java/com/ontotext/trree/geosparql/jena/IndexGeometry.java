@@ -33,6 +33,12 @@ import java.util.Optional;
  */
 public final class IndexGeometry {
 	public static final String INDEX_CRS = SRS_URI.DEFAULT_WKT_CRS84;
+	/**
+	 * Longitude distance from +180 or -180 within which an index envelope is treated as reaching the antimeridian.
+	 * A transformed envelope is clamped to the CRS84 longitude range after cleanup widening, so widening that would
+	 * continue on the other side of that meridian is not stored. One cleanup step covers the clamped widening.
+	 */
+	public static final double ANTIMERIDIAN_MARGIN = 2 * JenaCalculationPrecision.maximumCleanupDisplacement();
 	private static final Logger LOGGER = LoggerFactory.getLogger(IndexGeometry.class);
 	private static final ConservativeCrs84EnvelopeProjector ENVELOPE_PROJECTOR =
 			new ConservativeCrs84EnvelopeProjector();

@@ -7,6 +7,8 @@ import com.ontotext.trree.geosparql.GeoSparqlConfig;
 import com.ontotext.trree.geosparql.GeoSparqlPlugin;
 import com.ontotext.trree.geosparql.TestIndexGeometries;
 import com.ontotext.trree.geosparql.jena.IndexGeometry;
+import com.ontotext.trree.geosparql.jena.IndexGeometryFixtures;
+import com.ontotext.trree.geosparql.jena.SourceGeometryLiteral;
 import org.apache.lucene.index.DirectoryReader;
 import org.apache.lucene.index.FilterDirectoryReader;
 import org.apache.lucene.index.FilterLeafReader;
@@ -15,6 +17,7 @@ import org.apache.lucene.index.LeafReader;
 import org.apache.lucene.index.StoredFieldVisitor;
 import org.junit.Rule;
 import org.junit.Test;
+import org.locationtech.jts.geom.Envelope;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
@@ -71,6 +74,20 @@ public class LuceneEnvelopeIntersectionTest {
         }
     }
 
+    @Test
+    public void envelopesMeetingAcrossTheAntimeridianRemainIntersectionCandidates() throws Exception {
+        StoredReadCountingIndexer indexer = createIndexer("antimeridian", GeoSparqlConfig.PrefixTree.QUAD, 11);
+        IndexGeometry east = transformed(new Envelope(170, 180, -10, 10));
+        IndexGeometry west = transformed(new Envelope(-180, -170, -10, 10));
+        index(indexer, List.of(east, west,
+                transformed(new Envelope(-180, -170, 20, 30)),
+                transformed(new Envelope(-179, -170, -10, 10)),
+                transformed(new Envelope(-180 + 1e-7, -170, -10, 10))));
+
+        assertEquals(List.of(1L, 2L, 5L), collect(indexer.getEnvelopeIntersections(east)));
+        assertEquals(List.of(1L, 2L, 4L, 5L), collect(indexer.getEnvelopeIntersections(west)));
+    }
+
     private StoredReadCountingIndexer createIndexer(String name, GeoSparqlConfig.PrefixTree tree, int precision)
             throws Exception {
         GeoSparqlPlugin parent = new GeoSparqlPlugin();
@@ -108,6 +125,11 @@ public class LuceneEnvelopeIntersectionTest {
 
     private static IndexGeometry geometry(String wkt) {
         return TestIndexGeometries.fromWkt(wkt);
+    }
+
+    private static IndexGeometry transformed(Envelope indexEnvelope) {
+        return IndexGeometryFixtures.withIndexEnvelope(SourceGeometryLiteral.fromWkt(
+                "<http://www.opengis.net/def/crs/EPSG/0/3857> POINT(0 0)"), indexEnvelope);
     }
 
     private static final class StoredReadCountingIndexer extends LuceneGeoIndexer {

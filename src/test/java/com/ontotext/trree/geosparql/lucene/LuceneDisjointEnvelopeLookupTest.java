@@ -152,6 +152,21 @@ public class LuceneDisjointEnvelopeLookupTest {
 		}
 	}
 
+	@Test
+	public void envelopesMeetingAcrossTheAntimeridianAreUncertainInsteadOfDefiniteMatches() throws Exception {
+		LuceneGeoIndexer indexer = createIndexer("antimeridian", GeoSparqlConfig.PrefixTree.QUAD, 11);
+		index(indexer, List.of(
+				transformed(new Envelope(-180, -170, -10, 10)),
+				transformed(new Envelope(-180, -170, 20, 30)),
+				transformed(new Envelope(-179, -170, -10, 10)),
+				transformed(new Envelope(-180 + 1e-7, -170, -10, 10))));
+		IndexGeometry bound = transformed(new Envelope(170, 180, -10, 10));
+
+		assertEquals(Set.of(2L, 3L), definite(indexer.getEnvelopeDisjointCandidates(bound, true)));
+		assertEquals(Set.of(2L, 3L), definite(indexer.getEnvelopeDisjointCandidates(bound)));
+		assertEquals(Set.of(1L, 4L), uncertain(indexer.getEnvelopeDisjointUncertainCandidates(bound)));
+	}
+
 	private LuceneGeoIndexer createIndexer(String name, GeoSparqlConfig.PrefixTree tree, int precision)
 			throws Exception {
 		GeoSparqlPlugin parent = new GeoSparqlPlugin();
@@ -198,5 +213,10 @@ public class LuceneDisjointEnvelopeLookupTest {
 
 	private static IndexGeometry geometry(String wkt) {
 		return TestIndexGeometries.fromWkt(wkt);
+	}
+
+	private static IndexGeometry transformed(Envelope indexEnvelope) {
+		return IndexGeometryFixtures.withIndexEnvelope(SourceGeometryLiteral.fromWkt(
+				"<http://www.opengis.net/def/crs/EPSG/0/3857> POINT(0 0)"), indexEnvelope);
 	}
 }

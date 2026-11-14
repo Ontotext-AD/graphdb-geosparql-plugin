@@ -78,6 +78,9 @@ final class LuceneGeoDocumentSchema {
 	static final String FIELD_CANDIDATE_BOUNDS_KIND = "geoCandidateBoundsKind";
 	static final String HAS_ENVELOPE_VALUE = "1";
 	static final String NO_ENVELOPE_VALUE = "0";
+	/** Ends of the CRS84 longitude range, which name the same meridian. */
+	private static final double MINIMUM_LONGITUDE = -180.0;
+	private static final double MAXIMUM_LONGITUDE = 180.0;
 	/** Commit metadata key used for the constant-time index-level schema compatibility check. */
 	static final String COMMIT_SCHEMA_VERSION_KEY = "geosparql.luceneSchemaVersion";
 	/** Commit metadata value for the required schema version. */
@@ -283,7 +286,7 @@ final class LuceneGeoDocumentSchema {
 		double maxX = boundEnvelope.getMaxX() == 0.0 ? 0.0 : boundEnvelope.getMaxX();
 		double minY = boundEnvelope.getMinY() == 0.0 ? -0.0 : boundEnvelope.getMinY();
 		double maxY = boundEnvelope.getMaxY() == 0.0 ? 0.0 : boundEnvelope.getMaxY();
-		return new BooleanQuery.Builder()
+		Query overlapping = new BooleanQuery.Builder()
 				.add(DoublePoint.newRangeQuery(FIELD_ENVELOPE_MIN_X,
 						Double.NEGATIVE_INFINITY, maxX), BooleanClause.Occur.FILTER)
 				.add(DoublePoint.newRangeQuery(FIELD_ENVELOPE_MAX_X,
@@ -292,6 +295,15 @@ final class LuceneGeoDocumentSchema {
 						Double.NEGATIVE_INFINITY, maxY), BooleanClause.Occur.FILTER)
 				.add(DoublePoint.newRangeQuery(FIELD_ENVELOPE_MAX_Y,
 						minY, Double.POSITIVE_INFINITY), BooleanClause.Occur.FILTER)
+				.build();
+		Query acrossAntimeridian = envelopeMeetsAcrossAntimeridianQuery(boundEnvelope);
+		if (acrossAntimeridian == null) {
+			return overlapping;
+		}
+		return new BooleanQuery.Builder()
+				.add(overlapping, BooleanClause.Occur.SHOULD)
+				.add(acrossAntimeridian, BooleanClause.Occur.SHOULD)
+				.setMinimumNumberShouldMatch(1)
 				.build();
 	}
 
@@ -308,14 +320,60 @@ final class LuceneGeoDocumentSchema {
 				.build();
 	}
 
-	/** Matches envelopes strictly separated from the bound on at least one axis. */
+	/**
+	 * Matches envelopes strictly separated from the bound on at least one axis, except those meeting it across the
+	 * antimeridian.
+	 */
 	static Query envelopeDisjointQuery(Envelope boundEnvelope) {
-		return new BooleanQuery.Builder()
+		Query separated = new BooleanQuery.Builder()
 				.add(ordinateLessThanQuery(FIELD_ENVELOPE_MAX_X, boundEnvelope.getMinX()), BooleanClause.Occur.SHOULD)
 				.add(ordinateGreaterThanQuery(FIELD_ENVELOPE_MIN_X, boundEnvelope.getMaxX()), BooleanClause.Occur.SHOULD)
 				.add(ordinateLessThanQuery(FIELD_ENVELOPE_MAX_Y, boundEnvelope.getMinY()), BooleanClause.Occur.SHOULD)
 				.add(ordinateGreaterThanQuery(FIELD_ENVELOPE_MIN_Y, boundEnvelope.getMaxY()), BooleanClause.Occur.SHOULD)
 				.setMinimumNumberShouldMatch(1)
+				.build();
+		Query acrossAntimeridian = envelopeMeetsAcrossAntimeridianQuery(boundEnvelope);
+		if (acrossAntimeridian == null) {
+			return separated;
+		}
+		return new BooleanQuery.Builder()
+				.add(separated, BooleanClause.Occur.FILTER)
+				.add(acrossAntimeridian, BooleanClause.Occur.MUST_NOT)
+				.build();
+	}
+
+	/**
+	 * Matches envelopes that meet the bound across the antimeridian, or returns null for a bound away from it.
+	 *
+	 * <p>Longitudes +180 and -180 are one meridian, and exact evaluation in a projected CRS treats it as continuous.
+	 * Envelopes that end within {@link IndexGeometry#ANTIMERIDIAN_MARGIN} of opposite ends of the longitude range
+	 * therefore meet when their closed latitude ranges overlap.
+	 */
+	private static Query envelopeMeetsAcrossAntimeridianQuery(Envelope boundEnvelope) {
+		double westernEnd = MINIMUM_LONGITUDE + IndexGeometry.ANTIMERIDIAN_MARGIN;
+		double easternEnd = MAXIMUM_LONGITUDE - IndexGeometry.ANTIMERIDIAN_MARGIN;
+		boolean boundReachesEasternEnd = boundEnvelope.getMaxX() >= easternEnd;
+		boolean boundReachesWesternEnd = boundEnvelope.getMinX() <= westernEnd;
+		if (!boundReachesEasternEnd && !boundReachesWesternEnd) {
+			return null;
+		}
+		BooleanQuery.Builder oppositeEnd = new BooleanQuery.Builder().setMinimumNumberShouldMatch(1);
+		if (boundReachesEasternEnd) {
+			oppositeEnd.add(DoublePoint.newRangeQuery(FIELD_ENVELOPE_MIN_X,
+					Double.NEGATIVE_INFINITY, westernEnd), BooleanClause.Occur.SHOULD);
+		}
+		if (boundReachesWesternEnd) {
+			oppositeEnd.add(DoublePoint.newRangeQuery(FIELD_ENVELOPE_MAX_X,
+					easternEnd, Double.POSITIVE_INFINITY), BooleanClause.Occur.SHOULD);
+		}
+		double minY = boundEnvelope.getMinY() == 0.0 ? -0.0 : boundEnvelope.getMinY();
+		double maxY = boundEnvelope.getMaxY() == 0.0 ? 0.0 : boundEnvelope.getMaxY();
+		return new BooleanQuery.Builder()
+				.add(oppositeEnd.build(), BooleanClause.Occur.FILTER)
+				.add(DoublePoint.newRangeQuery(FIELD_ENVELOPE_MIN_Y,
+						Double.NEGATIVE_INFINITY, maxY), BooleanClause.Occur.FILTER)
+				.add(DoublePoint.newRangeQuery(FIELD_ENVELOPE_MAX_Y,
+						minY, Double.POSITIVE_INFINITY), BooleanClause.Occur.FILTER)
 				.build();
 	}
 

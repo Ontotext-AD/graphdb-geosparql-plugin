@@ -75,6 +75,8 @@ public class GeoSparqlCandidateEnvelopeDifferentialTest {
 	private static final String UTM_33N = "http://www.opengis.net/def/crs/EPSG/0/32633";
 	private static final String UTM_34N = "http://www.opengis.net/def/crs/EPSG/0/32634";
 	private static final String WEB_MERCATOR = "http://www.opengis.net/def/crs/EPSG/0/3857";
+	private static final String ANTARCTIC_POLAR_STEREOGRAPHIC = "http://www.opengis.net/def/crs/EPSG/0/3031";
+	private static final String UTM_1N = "http://www.opengis.net/def/crs/EPSG/0/32601";
 	private static final String LAMBERT_93 = "http://www.opengis.net/def/crs/EPSG/0/2154";
 	private static final String WGS84_3D = "http://www.opengis.net/def/crs/EPSG/0/4979";
 	private static final String GDA2020_3D = "http://www.opengis.net/def/crs/EPSG/0/7843";
@@ -561,6 +563,42 @@ public class GeoSparqlCandidateEnvelopeDifferentialTest {
 		assertTrue(disjointCleanupHits(cleanupFixture, distantEpsg4979, true).contains(1L));
 		assertEquals(Set.of(),
 				runIndexed(cleanupFixture, GeoSparqlPropertyRelation.SF_DISJOINT, 0, 2L));
+	}
+
+	/**
+	 * Longitudes +180 and -180 are one meridian. A projected source that reaches it is exact-evaluated in its own
+	 * CRS, where that meridian is continuous, while its CRS84 index envelope ends at one side of the longitude range.
+	 * The Antarctic polygons share the projected edge {@code x = 0}, which is that meridian.
+	 */
+	@Test
+	public void sourcesMeetingAcrossTheAntimeridianAgreeWithEntityLevelReference() throws Exception {
+		Map<Long, List<IndexGeometry>> sources = new LinkedHashMap<>();
+		sources.put(1L, geometries("<" + ANTARCTIC_POLAR_STEREOGRAPHIC
+				+ "> POLYGON((0 -2000000,100000 -2000000,100000 -1000000,0 -1000000,0 -2000000))"));
+		sources.put(2L, geometries("POLYGON((-180 -75,-175 -75,-175 -72,-180 -72,-180 -75))"));
+		sources.put(3L, geometries("<" + ANTARCTIC_POLAR_STEREOGRAPHIC + "> POINT(-0.0 -1500000)"));
+		sources.put(4L, geometries("POINT(" + Math.nextUp(-180.0) + " -73)"));
+		sources.put(5L, geometries("<" + UTM_1N + "> POINT(166021.443081 0)"));
+		sources.put(6L, geometries("POINT(180 0)"));
+		sources.put(7L, geometries("<" + ANTARCTIC_POLAR_STEREOGRAPHIC
+				+ "> POLYGON((-100000 -2000000,0 -2000000,0 -1000000,-100000 -1000000,-100000 -2000000))"));
+		Fixture fixture = createFixture("antimeridian", sources);
+
+		IndexGeometry polarArea = sources.get(1L).get(0);
+		assertEquals(180.0, polarArea.indexEnvelope().getMaxX(), 0.0);
+		assertEquals(-180.0, sources.get(2L).get(0).indexEnvelope().getMinX(), 0.0);
+		for (long touching : new long[] { 2L, 3L, 4L }) {
+			assertTrue("Antarctic area must intersect source " + touching,
+					GeoSparqlPropertyRelation.SF_INTERSECTS.evaluate(polarArea.sourceGeometryLiteral(),
+							sources.get(touching).get(0).sourceGeometryLiteral()));
+		}
+
+		for (GeoSparqlPropertyRelation relation : GeoSparqlPropertyRelation.values()) {
+			for (long boundEntityId : fixture.sources.keySet()) {
+				assertIndexedEqualsReference(fixture, relation, 0, boundEntityId);
+				assertIndexedEqualsReference(fixture, relation, boundEntityId, 0);
+			}
+		}
 	}
 
 	@Test
