@@ -8,6 +8,12 @@ import com.ontotext.trree.geosparql.GeoSparqlConfig;
 import com.ontotext.trree.geosparql.GeoSparqlPlugin;
 import com.ontotext.trree.geosparql.TestIndexGeometries;
 import com.ontotext.trree.geosparql.jena.IndexGeometry;
+import com.ontotext.trree.geosparql.jena.CandidateBoundsKind;
+import com.ontotext.trree.geosparql.jena.IndexGeometryFixtures;
+import com.ontotext.trree.geosparql.jena.SourceGeometryLiteral;
+import org.apache.lucene.search.MatchAllDocsQuery;
+import org.apache.lucene.search.Query;
+import org.locationtech.jts.geom.Envelope;
 import org.junit.Rule;
 import org.junit.Test;
 import org.slf4j.LoggerFactory;
@@ -18,6 +24,7 @@ import java.util.List;
 import java.util.Set;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertSame;
 
 public class LuceneDisjointEnvelopeLookupTest {
 	@Rule
@@ -52,6 +59,58 @@ public class LuceneDisjointEnvelopeLookupTest {
 		assertEquals(Set.of(3L, 4L, 6L, 7L), definite(indexer.getEnvelopeDisjointCandidates(bound, true)));
 		assertEquals(Set.of(), uncertain(indexer.getEnvelopeDisjointUncertainCandidates(bound)));
 		assertEquals(Set.of(5L), uncertain(indexer.getNonSpatialCandidates()));
+	}
+
+	@Test
+	public void nonRectangularBoundPrunesContainedSourcesAndRetainsDisjointCandidates() throws Exception {
+		for (GeoSparqlConfig.PrefixTree tree : GeoSparqlConfig.PrefixTree.values()) {
+			LuceneGeoIndexer indexer = createIndexer("interior-rectangles-" + tree, tree, 1);
+			index(indexer, List.of(geometry("POINT(1 1)"), geometry("POINT(15 15)"),
+					geometry("POINT(0 8)"), geometry("POINT(-1 -1)"), geometry("POINT EMPTY")));
+			IndexGeometry bound = geometry("POLYGON((0 0,16 0,16 8,8 16,0 16,0 0))");
+
+			assertEquals(Set.of(2L), uncertain(indexer.getEnvelopeDisjointUncertainCandidates(bound)));
+			assertEquals(Set.of(4L), definite(indexer.getEnvelopeDisjointCandidates(bound, true)));
+			assertEquals(Set.of(5L), uncertain(indexer.getNonSpatialCandidates()));
+		}
+	}
+
+	@Test
+	public void interiorPruningRetainsTransformedAndWorldFallbackSources() throws Exception {
+		LuceneGeoIndexer indexer = createIndexer("interior-non-native", GeoSparqlConfig.PrefixTree.QUAD, 11);
+		SourceGeometryLiteral fallback = SourceGeometryLiteral.fromWkt(
+				"<http://www.opengis.net/def/crs/EPSG/0/3857> POINT(2000000 1000000)");
+		index(indexer, List.of(geometry("POINT(1 1)"),
+				geometry("<http://www.opengis.net/def/crs/EPSG/0/3857> POINT(100000 100000)"),
+				IndexGeometryFixtures.withIndexEnvelope(fallback, new Envelope(-180, 180, -90, 90),
+						CandidateBoundsKind.WORLD_FALLBACK, "unrepresentable-rectangle")));
+
+		assertEquals(Set.of(2L, 3L), uncertain(indexer.getEnvelopeDisjointUncertainCandidates(
+				geometry("POLYGON((0 0,16 0,16 8,8 16,0 16,0 0))"))));
+	}
+
+	@Test
+	public void ineligibleBoundsRetainTheCompleteCandidateQuery() {
+		Query candidates = new MatchAllDocsQuery();
+		for (String wkt : List.of("POINT(1 1)", "POLYGON EMPTY",
+				"MULTIPOLYGON(((0 0,2 0,2 2,0 0)))",
+				"GEOMETRYCOLLECTION(POLYGON((0 0,2 0,2 2,0 0)))",
+				"POLYGON((0 0,4 4,0 4,4 0,0 0))",
+				"<http://www.opengis.net/def/crs/EPSG/0/3857> POLYGON((0 0,100000 0,0 100000,0 0))")) {
+			assertSame(wkt, candidates, NativeCrs84DisjointPruning.prune(geometry(wkt), candidates));
+		}
+	}
+
+	@Test
+	public void complexPolygonBoundsRetainTheCompleteCandidateQuery() {
+		StringBuilder polygon = new StringBuilder("POLYGON((12 8");
+		for (int i = 1; i < 300; i++) {
+			double angle = i * 2 * Math.PI / 300;
+			polygon.append(',').append(8 + 4 * Math.cos(angle)).append(' ').append(8 + 4 * Math.sin(angle));
+		}
+		polygon.append(",12 8))");
+		Query candidates = new MatchAllDocsQuery();
+		assertSame(candidates, NativeCrs84DisjointPruning.prune(geometry(polygon.toString()), candidates));
 	}
 
 	@Test

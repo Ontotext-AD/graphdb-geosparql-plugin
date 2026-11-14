@@ -443,7 +443,8 @@ public class LuceneGeoIndexer implements GeoSparqlIndexer {
 		}
 		Query envelopeIntersections = envelopeIntersectionsQuery(boundSourceIndexGeometry);
 		if (!boundSourceIndexGeometry.isEnvelopeCoveringRectangle()) {
-			return getCandidateEntitiesForQuery(envelopeIntersections);
+			return getCandidateEntitiesForQuery(
+					NativeCrs84DisjointPruning.prune(boundSourceIndexGeometry, envelopeIntersections));
 		}
 		/*
 		 * A native CRS84 source lies inside its source-derived index envelope. A transformed source is treated as lying

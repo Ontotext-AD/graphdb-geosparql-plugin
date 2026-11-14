@@ -2,6 +2,8 @@ package com.ontotext.trree.geosparql;
 
 import com.ontotext.test.TemporaryLocalFolder;
 import com.ontotext.trree.geosparql.jena.IndexGeometry;
+import com.ontotext.trree.geosparql.jena.CandidateBoundsKind;
+import com.ontotext.trree.geosparql.jena.IndexGeometryFixtures;
 import com.ontotext.trree.geosparql.jena.SourceGeometryLiteral;
 import com.ontotext.trree.geosparql.lucene.LuceneGeoIndexer;
 import com.ontotext.trree.sdk.Entities;
@@ -11,6 +13,7 @@ import org.eclipse.rdf4j.model.impl.SimpleValueFactory;
 import org.junit.Rule;
 import org.junit.Test;
 import org.slf4j.LoggerFactory;
+import org.locationtech.jts.geom.Envelope;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -19,6 +22,7 @@ import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Random;
 import java.util.Set;
 
 import static org.junit.Assert.assertEquals;
@@ -46,6 +50,71 @@ public class GeoSparqlDisjointDifferentialTest {
 			assertEquals(relation + " subject-bound",
 					runReference(fixture, relation, BOUND, 0),
 					runPartitioned(fixture, relation, BOUND, 0));
+		}
+	}
+
+	@Test
+	public void interiorRectanglePruningMatchesExhaustiveEvaluationAcrossPolygonShapes() throws Exception {
+		List<String> bounds = List.of(
+				"POLYGON((0 0,6 0,0 6,0 0))",
+				"POLYGON((0 0,6 0,6 2,2 2,2 6,0 6,0 0))",
+				"POLYGON((0 0,6 0,6 6,0 6,0 0),(2 2,2 4,4 4,4 2,2 2))",
+				"POLYGON((3 0,6 3,3 6,0 3,3 0))",
+				"POLYGON((1 1,1.000000000000001 1,1.000000000000001 6,1 6,1 1))");
+		Map<Long, List<IndexGeometry>> sources = new HashMap<>();
+		List<String> sourceWkts = new ArrayList<>(List.of(
+				"POINT(0 0)", "POINT(-0.0 0.0)", "POINT(0.0 -0.0)", "POINT(3 3)", "POINT(6 0)",
+				"POINT EMPTY", "LINESTRING EMPTY", "POLYGON EMPTY", "GEOMETRYCOLLECTION EMPTY",
+				"LINESTRING(-1 3,7 3)", "LINESTRING(3 -1,3 7)",
+				"POLYGON((0 0,6 0,6 6,0 6,0 0))", "POLYGON((2.5 2.5,3.5 2.5,3.5 3.5,2.5 3.5,2.5 2.5))",
+				"MULTIPOINT((0 0),(8 8))", "GEOMETRYCOLLECTION(POINT(1 1),LINESTRING(3 -1,3 7))",
+				"MULTIPOLYGON(((0 0,1 0,1 1,0 1,0 0)),((8 8,9 8,9 9,8 9,8 8)))",
+				"<http://www.opengis.net/def/crs/EPSG/0/3857> POINT(100000 100000)"));
+		for (double x : List.of(Math.nextDown(2.0), 2.0, Math.nextUp(2.0),
+				Math.nextDown(4.0), 4.0, Math.nextUp(4.0))) {
+			sourceWkts.add("POINT(" + x + " " + (6 - x) + ")");
+		}
+		Random random = new Random(4427);
+		for (int i = 0; i < 40; i++) {
+			sourceWkts.add("POINT(" + (-1 + random.nextDouble() * 12) + " "
+					+ (-1 + random.nextDouble() * 12) + ")");
+		}
+		for (int i = 0; i < sourceWkts.size(); i++) {
+			sources.put(i + 1L, geometries(sourceWkts.get(i)));
+		}
+		sources.put(80L, geometries("POINT(1 1)", "POINT(5 5)"));
+		SourceGeometryLiteral fallback = SourceGeometryLiteral.fromWkt(
+				"<http://www.opengis.net/def/crs/EPSG/0/3857> POINT(2000000 1000000)");
+		sources.put(81L, List.of(IndexGeometryFixtures.withIndexEnvelope(fallback,
+				new Envelope(-180, 180, -90, 90), CandidateBoundsKind.WORLD_FALLBACK,
+				"unrepresentable-rectangle")));
+		for (int i = 0; i < bounds.size(); i++) {
+			sources.put(BOUND, geometries(bounds.get(i)));
+			Fixture fixture = createFixture("interior-rectangle-shape-" + i, sources);
+			for (GeoSparqlPropertyRelation relation : List.of(GeoSparqlPropertyRelation.SF_DISJOINT,
+					GeoSparqlPropertyRelation.EH_DISJOINT, GeoSparqlPropertyRelation.RCC8_DC)) {
+				assertEquals(relation + " object-bound shape " + i,
+						runReference(fixture, relation, 0, BOUND), runPartitioned(fixture, relation, 0, BOUND));
+				assertEquals(relation + " subject-bound shape " + i,
+						runReference(fixture, relation, BOUND, 0), runPartitioned(fixture, relation, BOUND, 0));
+			}
+		}
+	}
+
+	@Test
+	public void interiorPruningIsLocalToEachBoundAndEachCandidateSource() throws Exception {
+		Map<Long, List<IndexGeometry>> sources = new HashMap<>();
+		sources.put(BOUND, geometries("POLYGON((0 0,6 0,0 6,0 0))",
+				"POLYGON((10 10,16 10,10 16,10 10))"));
+		sources.put(1L, geometries("POINT(1 1)", "POINT(5 5)"));
+		sources.put(2L, geometries("POLYGON((1 1,2 1,1 2,1 1))",
+				"POLYGON((11 11,12 11,11 12,11 11))"));
+		sources.put(3L, geometries("POINT(11 11)"));
+		Fixture fixture = createFixture("interior-rectangles-multiple-sources", sources);
+		for (GeoSparqlPropertyRelation relation : List.of(GeoSparqlPropertyRelation.SF_DISJOINT,
+				GeoSparqlPropertyRelation.EH_DISJOINT, GeoSparqlPropertyRelation.RCC8_DC)) {
+			assertEquals(runReference(fixture, relation, 0, BOUND), runPartitioned(fixture, relation, 0, BOUND));
+			assertEquals(runReference(fixture, relation, BOUND, 0), runPartitioned(fixture, relation, BOUND, 0));
 		}
 	}
 

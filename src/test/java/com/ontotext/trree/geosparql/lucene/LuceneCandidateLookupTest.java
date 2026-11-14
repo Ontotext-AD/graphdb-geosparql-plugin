@@ -438,7 +438,7 @@ public class LuceneCandidateLookupTest {
 	}
 
 	@Test
-	public void ineligibleHoledBoundKeepsOverlappingEnvelopeDisjointCandidatesUncertain() throws Exception {
+	public void holedBoundRetainsDisjointSourcesInsideTheHole() throws Exception {
 		LuceneGeoIndexer indexer = createIndexer("disjoint-holed-bound");
 		IndexGeometry holedPolygon = geometry(
 				"POLYGON((0 0,0 10,10 10,10 0,0 0),(4 4,6 4,6 6,4 6,4 4))");
