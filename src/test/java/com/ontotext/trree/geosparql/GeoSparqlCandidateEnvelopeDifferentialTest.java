@@ -77,6 +77,8 @@ public class GeoSparqlCandidateEnvelopeDifferentialTest {
 	private static final String WEB_MERCATOR = "http://www.opengis.net/def/crs/EPSG/0/3857";
 	private static final String ANTARCTIC_POLAR_STEREOGRAPHIC = "http://www.opengis.net/def/crs/EPSG/0/3031";
 	private static final String UTM_1N = "http://www.opengis.net/def/crs/EPSG/0/32601";
+	private static final String UTM_60N = "http://www.opengis.net/def/crs/EPSG/0/32660";
+	private static final String ARCTIC_POLAR_STEREOGRAPHIC = "http://www.opengis.net/def/crs/EPSG/0/3413";
 	private static final String LAMBERT_93 = "http://www.opengis.net/def/crs/EPSG/0/2154";
 	private static final String WGS84_3D = "http://www.opengis.net/def/crs/EPSG/0/4979";
 	private static final String GDA2020_3D = "http://www.opengis.net/def/crs/EPSG/0/7843";
@@ -597,6 +599,41 @@ public class GeoSparqlCandidateEnvelopeDifferentialTest {
 			for (long boundEntityId : fixture.sources.keySet()) {
 				assertIndexedEqualsReference(fixture, relation, 0, boundEntityId);
 				assertIndexedEqualsReference(fixture, relation, boundEntityId, 0);
+			}
+		}
+	}
+
+	/**
+	 * Each projected point is Jena's own transformation of a CRS84 point on the antimeridian. Exact evaluation relates
+	 * it to both CRS84 spellings of that position, whichever end of the longitude range its index envelope reaches.
+	 */
+	@Test
+	public void projectedPointsOnTheAntimeridianMatchBothCrs84LongitudeSigns() throws Exception {
+		Map<String, Double> latitudes = new LinkedHashMap<>();
+		latitudes.put(ANTARCTIC_POLAR_STEREOGRAPHIC, -75.0);
+		latitudes.put(ARCTIC_POLAR_STEREOGRAPHIC, 75.0);
+		latitudes.put(UTM_1N, 45.0);
+		latitudes.put(UTM_60N, 45.0);
+		for (Map.Entry<String, Double> entry : latitudes.entrySet()) {
+			String crs = entry.getKey();
+			SourceGeometryLiteral east = SourceGeometryLiteral.fromWkt("POINT(180 " + entry.getValue() + ")");
+			SourceGeometryLiteral west = SourceGeometryLiteral.fromWkt("POINT(-180 " + entry.getValue() + ")");
+			Coordinate projected = east.asGeometryWrapper().transform(crs).getXYGeometry().getCoordinate();
+			SourceGeometryLiteral onAntimeridian = SourceGeometryLiteral.fromWkt(
+					"<" + crs + "> POINT(" + projected.x + " " + projected.y + ")");
+			assertTrue(crs, GeoSparqlPropertyRelation.SF_INTERSECTS.evaluate(onAntimeridian, east));
+			assertTrue(crs, GeoSparqlPropertyRelation.SF_INTERSECTS.evaluate(onAntimeridian, west));
+
+			Map<Long, List<IndexGeometry>> sources = new LinkedHashMap<>();
+			sources.put(1L, List.of(IndexGeometry.fromSourceGeometryLiteral(onAntimeridian)));
+			sources.put(2L, List.of(IndexGeometry.fromSourceGeometryLiteral(east)));
+			sources.put(3L, List.of(IndexGeometry.fromSourceGeometryLiteral(west)));
+			Fixture fixture = createFixture("antimeridian-point-" + crs.substring(crs.lastIndexOf('/') + 1), sources);
+			for (GeoSparqlPropertyRelation relation : GeoSparqlPropertyRelation.values()) {
+				for (long boundEntityId : fixture.sources.keySet()) {
+					assertIndexedEqualsReference(fixture, relation, 0, boundEntityId);
+					assertIndexedEqualsReference(fixture, relation, boundEntityId, 0);
+				}
 			}
 		}
 	}
