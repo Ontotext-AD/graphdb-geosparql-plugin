@@ -11,6 +11,7 @@ import org.apache.lucene.document.LongPoint;
 import org.apache.lucene.document.NumericDocValuesField;
 import org.apache.lucene.document.StoredField;
 import org.apache.lucene.document.StringField;
+import org.apache.lucene.index.IndexReader;
 import org.apache.lucene.index.IndexableField;
 import org.apache.lucene.index.IndexOptions;
 import org.apache.lucene.index.Term;
@@ -30,6 +31,7 @@ import org.locationtech.spatial4j.shape.jts.JtsGeometry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.LinkedHashMap;
@@ -292,6 +294,12 @@ final class LuceneGeoDocumentSchema {
 	/** Matches the documents that carry native hull cells. */
 	static Query hasNativeHullCellsQuery() {
 		return new TermQuery(new Term(FIELD_HAS_NATIVE_HULL_CELLS, HAS_NATIVE_HULL_CELLS_VALUE));
+	}
+
+	/** Whether the reader holds a source whose index envelope is transformed or a world fallback. */
+	static boolean hasNonNativeBounds(IndexReader reader) throws IOException {
+		return reader.docFreq(new Term(FIELD_CANDIDATE_BOUNDS_KIND, CandidateBoundsKind.TRANSFORMED.name())) > 0
+				|| reader.docFreq(new Term(FIELD_CANDIDATE_BOUNDS_KIND, CandidateBoundsKind.WORLD_FALLBACK.name())) > 0;
 	}
 
 	static Query sourceCrsQuery(String sourceCrsUri) {

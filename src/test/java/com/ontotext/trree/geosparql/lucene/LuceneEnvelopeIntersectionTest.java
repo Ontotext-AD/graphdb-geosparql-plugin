@@ -48,6 +48,24 @@ public class LuceneEnvelopeIntersectionTest {
         }
     }
 
+    /**
+     * Exact evaluation of a mixed-CRS pair can relate sources whose index envelopes are apart, so a pair with a
+     * transformed side stays a candidate whenever the prefix cells of the two envelopes meet. All three envelopes
+     * lie in one cell of the default grid.
+     */
+    @Test
+    public void transformedEnvelopesInThePrefixCellsOfTheBoundRemainIntersectionCandidates() throws Exception {
+        StoredReadCountingIndexer indexer = createIndexer("prefix-cells", GeoSparqlConfig.PrefixTree.QUAD, 11);
+        IndexGeometry transformedBesideThePoint = transformed(new Envelope(10.012, 10.013, 10.012, 10.013));
+        index(indexer, List.of(
+                geometry("POLYGON((10.009 10.009,10.011 10.009,10.011 10.011,10.009 10.011,10.009 10.009))"),
+                geometry("POLYGON((10.012 10.012,10.013 10.012,10.013 10.013,10.012 10.013,10.012 10.012))"),
+                transformedBesideThePoint));
+
+        assertEquals(List.of(1L, 3L), collect(indexer.getEnvelopeIntersections(geometry("POINT(10.01 10.01)"))));
+        assertEquals(List.of(1L, 2L, 3L), collect(indexer.getEnvelopeIntersections(transformedBesideThePoint)));
+    }
+
     @Test
     public void closedEnvelopeIntersectionsRetainBoundarySources() throws Exception {
         StoredReadCountingIndexer indexer = createIndexer("boundaries", GeoSparqlConfig.PrefixTree.QUAD, 11);

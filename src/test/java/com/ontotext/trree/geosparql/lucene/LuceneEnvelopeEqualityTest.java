@@ -69,6 +69,21 @@ public class LuceneEnvelopeEqualityTest {
 		assertEquals(List.of(1L, 2L, 3L, 4L), ids(collect(indexer.getEnvelopeEqualityCandidates(bound))));
 	}
 
+	/**
+	 * The transformed envelope and the native line ending beside it are apart from the bound's envelope but lie in
+	 * one prefix cell of the default grid with the bound's end point.
+	 */
+	@Test
+	public void nativeBoundsRetainTransformedCandidatesInTheirPrefixCells() throws Exception {
+		IndexGeometry bound = geometry("LINESTRING(0 0,2 2)");
+		LuceneGeoIndexer indexer = index(List.of(bound,
+				IndexGeometryFixtures.withIndexEnvelope(SourceGeometryLiteral.fromWkt(
+						"<" + EPSG_4326 + "> POINT(2.0015 2.0015)"), new Envelope(2.001, 2.002, 2.001, 2.002)),
+				geometry("LINESTRING(2.001 2.001,2.002 2.002)")));
+
+		assertEquals(List.of(1L, 2L), ids(collect(indexer.getEnvelopeEqualityCandidates(bound))));
+	}
+
 	@Test
 	public void transformedBoundsRetainConservativeIntersectionCandidates() throws Exception {
 		IndexGeometry bound = geometry("<" + EPSG_4326 + "> LINESTRING(0 0,2 2)");

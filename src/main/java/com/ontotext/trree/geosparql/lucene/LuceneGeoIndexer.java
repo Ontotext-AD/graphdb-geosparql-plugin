@@ -384,17 +384,24 @@ public class LuceneGeoIndexer implements GeoSparqlIndexer {
 			return getCandidateEntitiesForQuery(new MatchNoDocsQuery("Empty source has no envelope intersections."));
 		}
 		Query envelopeIntersections = envelopeIntersectionsQuery(boundSourceIndexGeometry);
+		Query prefixCellIntersections = prefixCellIntersectionsQuery(strategy, boundSourceIndexGeometry);
 		if (boundSourceIndexGeometry.candidateBoundsKind() != CandidateBoundsKind.NATIVE_CRS84) {
-			return getCandidateEntitiesForQuery(envelopeIntersections);
+			// Every pair has a transformed or world-fallback side, so the prefix cells keep each of them.
+			return getCandidateEntitiesForQuery(new BooleanQuery.Builder()
+					.add(envelopeIntersections, BooleanClause.Occur.SHOULD)
+					.add(prefixCellIntersections, BooleanClause.Occur.SHOULD)
+					.setMinimumNumberShouldMatch(1).build());
 		}
 		// A native CRS84 source that meets the native CRS84 bound has a hull cell among the cells of the bound's envelope.
 		Query hullCellsApart = new BooleanQuery.Builder()
 				.add(LuceneGeoDocumentSchema.hasNativeHullCellsQuery(), BooleanClause.Occur.FILTER)
 				.add(prefixCellIntersectionsQuery(nativeHullStrategy, boundSourceIndexGeometry),
 						BooleanClause.Occur.MUST_NOT).build();
-		return getCandidateEntitiesForQuery(new BooleanQuery.Builder()
+		Query candidates = new BooleanQuery.Builder()
 				.add(envelopeIntersections, BooleanClause.Occur.FILTER)
-				.add(hullCellsApart, BooleanClause.Occur.MUST_NOT).build());
+				.add(hullCellsApart, BooleanClause.Occur.MUST_NOT).build();
+		return getCandidateEntities(reader ->
+				withNonNativePrefixCellCandidates(reader, candidates, prefixCellIntersections));
 	}
 
 	@Override
@@ -415,11 +422,14 @@ public class LuceneGeoIndexer implements GeoSparqlIndexer {
 						BooleanClause.Occur.FILTER)
 				.add(nativeBounds, BooleanClause.Occur.MUST_NOT)
 				.build();
-		return getCandidateEntitiesForQuery(new BooleanQuery.Builder()
+		Query equalityCandidates = new BooleanQuery.Builder()
 				.add(nativeEquals, BooleanClause.Occur.SHOULD)
 				.add(transformedIntersections, BooleanClause.Occur.SHOULD)
 				.setMinimumNumberShouldMatch(1)
-				.build());
+				.build();
+		Query prefixCellIntersections = prefixCellIntersectionsQuery(strategy, boundSourceIndexGeometry);
+		return getCandidateEntities(reader ->
+				withNonNativePrefixCellCandidates(reader, equalityCandidates, prefixCellIntersections));
 	}
 
 	@Override
@@ -560,6 +570,30 @@ public class LuceneGeoIndexer implements GeoSparqlIndexer {
 				envelope.getMinX(), envelope.getMaxX(), envelope.getMinY(), envelope.getMaxY())));
 	}
 
+	/**
+	 * Adds the transformed and world-fallback sources whose prefix cells meet the bound's.
+	 *
+	 * <p>Jena evaluates a mixed-CRS pair in the subject's CRS, where a transformed edge is a straight line between
+	 * transformed vertices and can leave the CRS84 index envelope of its source. Sources whose index envelopes are
+	 * apart can therefore be related, and the coarser prefix cells of the two envelopes keep such a pair as a
+	 * candidate. A pair of native CRS84 sources is evaluated without transformation, so a reader holding only those
+	 * keeps the given query.
+	 */
+	private Query withNonNativePrefixCellCandidates(IndexReader reader, Query candidates,
+			Query prefixCellIntersections) throws IOException {
+		if (!LuceneGeoDocumentSchema.hasNonNativeBounds(reader)) {
+			return candidates;
+		}
+		Query nonNativeInPrefixCells = new BooleanQuery.Builder()
+				.add(prefixCellIntersections, BooleanClause.Occur.FILTER)
+				.add(LuceneGeoDocumentSchema.candidateBoundsKindQuery(CandidateBoundsKind.NATIVE_CRS84),
+						BooleanClause.Occur.MUST_NOT).build();
+		return new BooleanQuery.Builder()
+				.add(candidates, BooleanClause.Occur.SHOULD)
+				.add(nonNativeInPrefixCells, BooleanClause.Occur.SHOULD)
+				.setMinimumNumberShouldMatch(1).build();
+	}
+
 	private Query disjointTransformCleanupCandidatesQuery(
 			IndexGeometry boundSourceIndexGeometry, boolean candidateIsSubject) {
 		String boundSourceCrs = boundSourceIndexGeometry.sourceGeometryLiteral().effectiveCrsUri();
@@ -577,9 +611,14 @@ public class LuceneGeoIndexer implements GeoSparqlIndexer {
 	}
 
 	private CloseableIterator<CandidateEntity> getCandidateEntitiesForQuery(Query query) {
+		return getCandidateEntities(reader -> query);
+	}
+
+	private CloseableIterator<CandidateEntity> getCandidateEntities(ReaderCandidateQuery candidateQuery) {
 		IndexReader indexReader = null;
 		try {
 			indexReader = openReader();
+			Query query = candidateQuery.forReader(indexReader);
 			IndexSearcher indexSearcher = new IndexSearcher(indexReader);
 			return new LuceneCandidateEntityIterator(indexSearcher, query);
 		} catch (Exception e) {
@@ -592,6 +631,12 @@ public class LuceneGeoIndexer implements GeoSparqlIndexer {
 			}
 			throw new PluginException("Unable to execute Lucene query.", e);
 		}
+	}
+
+	/** Builds a candidate query from the reader that executes it, so the query fits the sources of that commit. */
+	@FunctionalInterface
+	private interface ReaderCandidateQuery {
+		Query forReader(IndexReader reader) throws IOException;
 	}
 
 	private CloseableIterator<EnvelopeDisjointCandidate> getEnvelopeDisjointCandidatesForQuery(Query query) {

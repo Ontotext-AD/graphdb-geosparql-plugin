@@ -77,6 +77,7 @@ public class GeoSparqlCandidateEnvelopeDifferentialTest {
 	private static final String WEB_MERCATOR = "http://www.opengis.net/def/crs/EPSG/0/3857";
 	private static final String ANTARCTIC_POLAR_STEREOGRAPHIC = "http://www.opengis.net/def/crs/EPSG/0/3031";
 	private static final String UTM_1N = "http://www.opengis.net/def/crs/EPSG/0/32601";
+	private static final String UTM_31N = "http://www.opengis.net/def/crs/EPSG/0/32631";
 	private static final String UTM_60N = "http://www.opengis.net/def/crs/EPSG/0/32660";
 	private static final String ARCTIC_POLAR_STEREOGRAPHIC = "http://www.opengis.net/def/crs/EPSG/0/3413";
 	private static final String LAMBERT_93 = "http://www.opengis.net/def/crs/EPSG/0/2154";
@@ -672,6 +673,56 @@ public class GeoSparqlCandidateEnvelopeDifferentialTest {
 				area, sources.get(4L).get(0).sourceGeometryLiteral()));
 
 		Fixture fixture = createFixture("near-pole-" + name, sources);
+		for (GeoSparqlPropertyRelation relation : GeoSparqlPropertyRelation.values()) {
+			for (long boundEntityId : fixture.sources.keySet()) {
+				assertIndexedEqualsReference(fixture, relation, 0, boundEntityId);
+				assertIndexedEqualsReference(fixture, relation, boundEntityId, 0);
+			}
+		}
+	}
+
+	/**
+	 * Jena evaluates a relation in the subject's CRS and joins the transformed vertices of a CRS84 polygon with
+	 * straight lines there. Where the projection curves a parallel or a meridian, such a line lies outside the
+	 * polygon's CRS84 edge, so a projected source beyond the polygon's index envelope can be within the evaluated
+	 * polygon. Each projected point is Jena's transformation of the named CRS84 position.
+	 *
+	 * <p>The corner (2.5 52.03125) of the last polygon lies on a row boundary of the default prefix grid. The edge
+	 * falling east of it stays below that boundary, so only the polygon's index envelope reaches the row above it
+	 * at the longitude of the point.
+	 */
+	@Test
+	public void projectedSourcesWithinTheStraightEdgesOfATransformedCrs84PolygonAgreeWithEntityLevelReference()
+			throws Exception {
+		assertProjectedPointWithinTransformedPolygon("utm-one-degree", UTM_31N,
+				"POLYGON((2.5 51,3.5 51,3.5 52,2.5 52,2.5 51))", "3 52.0001");
+		assertProjectedPointWithinTransformedPolygon("utm-tenth-of-a-degree", UTM_31N,
+				"POLYGON((2.95 51.9,3.05 51.9,3.05 52,2.95 52,2.95 51.9))", "3 52.000005");
+		assertProjectedPointWithinTransformedPolygon("lambert-conic", LAMBERT_93,
+				"POLYGON((2.5 46,3.5 46,3.5 47,2.5 47,2.5 46))", "3 47.0001");
+		assertProjectedPointWithinTransformedPolygon("utm-beside-antimeridian", UTM_60N,
+				"POLYGON((-180 40,-175 40,-175 50,-180 50,-180 40))", "179.995 45");
+		assertProjectedPointWithinTransformedPolygon("polar-stereographic", ANTARCTIC_POLAR_STEREOGRAPHIC,
+				"POLYGON((80 -89.9,90 -89.9,90 -89.5,80 -89.5,80 -89.9))", "85 -89.9001");
+		assertProjectedPointWithinTransformedPolygon("utm-corner-on-a-grid-row", UTM_31N,
+				"POLYGON((2.5 51,3.5 51,3.5 52.031,2.5 52.03125,2.5 51))", "3 52.0315");
+	}
+
+	private void assertProjectedPointWithinTransformedPolygon(String name, String projectedCrs, String polygonWkt,
+			String crs84Position) throws Exception {
+		Coordinate projected = SourceGeometryLiteral.fromWkt("POINT(" + crs84Position + ")").asGeometryWrapper()
+				.transform(projectedCrs).getXYGeometry().getCoordinate();
+		Map<Long, List<IndexGeometry>> sources = new LinkedHashMap<>();
+		sources.put(1L, geometries("<" + projectedCrs + "> POINT(" + projected.x + " " + projected.y + ")"));
+		sources.put(2L, geometries(polygonWkt));
+		IndexGeometry point = sources.get(1L).get(0);
+		IndexGeometry polygon = sources.get(2L).get(0);
+		assertFalse(name + " index envelopes must be apart",
+				point.indexEnvelope().intersects(polygon.indexEnvelope()));
+		assertTrue(name + " point must be within the polygon", GeoSparqlPropertyRelation.SF_WITHIN.evaluate(
+				point.sourceGeometryLiteral(), polygon.sourceGeometryLiteral()));
+
+		Fixture fixture = createFixture("transformed-polygon-" + name, sources);
 		for (GeoSparqlPropertyRelation relation : GeoSparqlPropertyRelation.values()) {
 			for (long boundEntityId : fixture.sources.keySet()) {
 				assertIndexedEqualsReference(fixture, relation, 0, boundEntityId);

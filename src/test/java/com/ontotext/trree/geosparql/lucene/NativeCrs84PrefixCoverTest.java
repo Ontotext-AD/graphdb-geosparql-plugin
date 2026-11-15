@@ -4,6 +4,7 @@ import com.ontotext.test.TemporaryLocalFolder;
 import com.ontotext.trree.geosparql.GeoSparqlConfig;
 import com.ontotext.trree.geosparql.GeoSparqlPlugin;
 import com.ontotext.trree.geosparql.jena.IndexGeometry;
+import com.ontotext.trree.geosparql.jena.IndexGeometryFixtures;
 import com.ontotext.trree.geosparql.jena.JenaGeometryAdapter;
 import com.ontotext.trree.geosparql.jena.SourceGeometryLiteral;
 import org.apache.lucene.document.Field;
@@ -79,8 +80,12 @@ public class NativeCrs84PrefixCoverTest {
     }
 
     private Set<Long> candidates(LuceneGeoIndexer indexer, String wkt) throws Exception {
+        return candidates(indexer, geometry(wkt));
+    }
+
+    private Set<Long> candidates(LuceneGeoIndexer indexer, IndexGeometry bound) throws Exception {
         var result = new LinkedHashSet<Long>();
-        try (var iterator = indexer.getEnvelopeIntersections(geometry(wkt))) {
+        try (var iterator = indexer.getEnvelopeIntersections(bound)) {
             while (iterator.hasNext()) {
                 result.add(iterator.next().entityId());
             }
@@ -122,6 +127,20 @@ public class NativeCrs84PrefixCoverTest {
             var indexer = indexer(setting, TRIANGLE);
             assertEquals(Set.of(1L), candidates(indexer, "<" + EPSG4326 + "> POINT(7 7)"));
         }
+    }
+
+    /**
+     * Exact evaluation can relate a mixed-CRS pair whose index envelopes are apart, so a native CRS84 source stays a
+     * candidate for a transformed bound in every prefix cell of its index envelope. The bound lies in the default
+     * grid cell holding the triangle's empty envelope corner (8 8).
+     */
+    @Test
+    public void transformedBoundsFindNativeSourcesInThePrefixCellsOfTheirEnvelopes() throws Exception {
+        var indexer = indexer(new Setting(GeoSparqlConfig.PrefixTree.QUAD, 11), TRIANGLE);
+        var bound = IndexGeometryFixtures.withIndexEnvelope(SourceGeometryLiteral.fromWkt(
+                "<http://www.opengis.net/def/crs/EPSG/0/3857> POINT(0 0)"), new Envelope(8.001, 8.002, 8.001, 8.002));
+
+        assertEquals(Set.of(1L), candidates(indexer, bound));
     }
 
     @Test
