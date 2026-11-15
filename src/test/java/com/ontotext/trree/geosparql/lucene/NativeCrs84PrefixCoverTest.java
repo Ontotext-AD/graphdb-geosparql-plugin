@@ -6,6 +6,7 @@ import com.ontotext.trree.geosparql.GeoSparqlPlugin;
 import com.ontotext.trree.geosparql.jena.IndexGeometry;
 import com.ontotext.trree.geosparql.jena.JenaGeometryAdapter;
 import com.ontotext.trree.geosparql.jena.SourceGeometryLiteral;
+import org.apache.lucene.document.Field;
 import org.apache.lucene.index.DirectoryReader;
 import org.apache.lucene.index.IndexWriter;
 import org.apache.lucene.index.IndexWriterConfig;
@@ -18,6 +19,7 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.locationtech.jts.geom.Envelope;
 import org.locationtech.spatial4j.context.SpatialContext;
+import org.locationtech.spatial4j.shape.Shape;
 import org.slf4j.LoggerFactory;
 
 import java.nio.file.Files;
@@ -26,6 +28,8 @@ import java.util.List;
 import java.util.Set;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
 public class NativeCrs84PrefixCoverTest {
@@ -141,29 +145,74 @@ public class NativeCrs84PrefixCoverTest {
     }
 
     @Test
-    public void envelopePrefixDocumentsRemainConservativeCandidates() throws Exception {
-        var setting = new Setting(GeoSparqlConfig.PrefixTree.QUAD, 11);
-        var indexer = indexer(setting, TRIANGLE);
+    public void sourcesWhoseHullCellsCannotBeGeneratedKeepOnlyTheirEnvelopeCells() {
         var context = SpatialContext.GEO;
-        var strategy = new RecursivePrefixTreeStrategy(
-                new QuadPrefixTree(context, 11), LuceneGeoDocumentSchema.FIELD_SPATIAL_PREFIX);
-        var source = geometry(TRIANGLE);
-        var document = LuceneGeoDocumentSchema.toDocument(1L, source, strategy, context);
-        try (var reader = (DirectoryReader) indexer.openReader()) {
-            var searcher = new IndexSearcher(reader);
-            assertEquals(1, searcher.count(LuceneGeoDocumentSchema.envelopeIntersectsQuery(
-                    new Envelope(7, 7, 7, 7))));
-            document.removeFields(LuceneGeoDocumentSchema.FIELD_SPATIAL_PREFIX);
-            for (var prefix : strategy.createIndexableFields(context.makeRectangle(0, 8, 0, 8))) {
-                document.add(prefix);
+        var grid = new QuadPrefixTree(context, 11);
+        var strategy = new RecursivePrefixTreeStrategy(grid, LuceneGeoDocumentSchema.FIELD_SPATIAL_PREFIX);
+        var failingHullStrategy = new RecursivePrefixTreeStrategy(
+                grid, LuceneGeoDocumentSchema.FIELD_NATIVE_HULL_PREFIX) {
+            @Override
+            public Field[] createIndexableFields(Shape shape) {
+                throw new IllegalStateException("Cells cannot be generated for " + shape);
             }
+        };
+
+        var document = LuceneGeoDocumentSchema.toDocument(
+                1L, geometry(TRIANGLE), strategy, failingHullStrategy, context);
+
+        assertNotNull(document.getField(LuceneGeoDocumentSchema.FIELD_SPATIAL_PREFIX));
+        assertNull(document.getField(LuceneGeoDocumentSchema.FIELD_NATIVE_HULL_PREFIX));
+        assertNull(document.getField(LuceneGeoDocumentSchema.FIELD_HAS_NATIVE_HULL_CELLS));
+    }
+
+    /**
+     * A hull that fills its envelope separates no bound that the numeric envelope ranges admit, so a point, an
+     * axis-parallel line and a rectangle carry no hull cells.
+     */
+    @Test
+    public void onlySourcesWhoseHullLeavesPartOfTheirEnvelopeEmptyCarryHullCells() {
+        var context = SpatialContext.GEO;
+        var grid = new QuadPrefixTree(context, 11);
+        var strategy = new RecursivePrefixTreeStrategy(grid, LuceneGeoDocumentSchema.FIELD_SPATIAL_PREFIX);
+        var hullStrategy = new RecursivePrefixTreeStrategy(grid, LuceneGeoDocumentSchema.FIELD_NATIVE_HULL_PREFIX);
+        for (var wkt : List.of("POINT(1 1)", "MULTIPOINT((1 1),(1 1))", "LINESTRING(0 1,8 1)",
+                "LINESTRING(1 0,1 4,1 8)", "POLYGON((0 0,8 0,8 8,0 8,0 0))")) {
+            var document = LuceneGeoDocumentSchema.toDocument(1L, geometry(wkt), strategy, hullStrategy, context);
+            assertNotNull(wkt, document.getField(LuceneGeoDocumentSchema.FIELD_SPATIAL_PREFIX));
+            assertNull(wkt, document.getField(LuceneGeoDocumentSchema.FIELD_NATIVE_HULL_PREFIX));
+            assertNull(wkt, document.getField(LuceneGeoDocumentSchema.FIELD_HAS_NATIVE_HULL_CELLS));
+        }
+        for (var wkt : List.of(TRIANGLE, "LINESTRING(0 0,8 8)", "MULTIPOINT((0 0),(8 8))")) {
+            var document = LuceneGeoDocumentSchema.toDocument(1L, geometry(wkt), strategy, hullStrategy, context);
+            assertNotNull(wkt, document.getField(LuceneGeoDocumentSchema.FIELD_SPATIAL_PREFIX));
+            assertNotNull(wkt, document.getField(LuceneGeoDocumentSchema.FIELD_NATIVE_HULL_PREFIX));
+            assertNotNull(wkt, document.getField(LuceneGeoDocumentSchema.FIELD_HAS_NATIVE_HULL_CELLS));
+        }
+    }
+
+    /** A source indexed without hull cells is found through its envelope beside a source that carries them. */
+    @Test
+    public void sourcesWithoutHullCellsRemainEnvelopeCandidates() throws Exception {
+        var indexer = indexer(new Setting(GeoSparqlConfig.PrefixTree.QUAD, 11), TRIANGLE);
+        var context = SpatialContext.GEO;
+        var grid = new QuadPrefixTree(context, 11);
+        var strategy = new RecursivePrefixTreeStrategy(grid, LuceneGeoDocumentSchema.FIELD_SPATIAL_PREFIX);
+        var hullStrategy = new RecursivePrefixTreeStrategy(grid, LuceneGeoDocumentSchema.FIELD_NATIVE_HULL_PREFIX);
+        var source = geometry(TRIANGLE);
+        var withoutHullCells = LuceneGeoDocumentSchema.toDocument(1L, source, strategy, hullStrategy, context);
+        withoutHullCells.removeFields(LuceneGeoDocumentSchema.FIELD_NATIVE_HULL_PREFIX);
+        withoutHullCells.removeFields(LuceneGeoDocumentSchema.FIELD_HAS_NATIVE_HULL_CELLS);
+        try (var reader = (DirectoryReader) indexer.openReader()) {
+            assertEquals(1, new IndexSearcher(reader).count(LuceneGeoDocumentSchema.envelopeIntersectsQuery(
+                    new Envelope(7, 7, 7, 7))));
             try (var writer = new IndexWriter(reader.directory(), new IndexWriterConfig())) {
                 writer.deleteDocuments(LuceneGeoDocumentSchema.entityIdQuery(1L));
-                writer.addDocument(document);
-                writer.addDocument(LuceneGeoDocumentSchema.toDocument(2L, source, strategy, context));
+                writer.addDocument(withoutHullCells);
+                writer.addDocument(LuceneGeoDocumentSchema.toDocument(2L, source, strategy, hullStrategy, context));
             }
         }
         assertEquals(Set.of(1L), candidates(indexer, "POINT(7 7)"));
+
         indexer.begin();
         indexer.indexGeometryList(1L, Object::toString, List.of(source));
         indexer.commit();

@@ -26,7 +26,6 @@ import org.locationtech.spatial4j.context.SpatialContext;
 import org.locationtech.spatial4j.context.jts.JtsSpatialContext;
 import org.locationtech.spatial4j.context.jts.JtsSpatialContextFactory;
 import org.locationtech.spatial4j.shape.Rectangle;
-import org.locationtech.spatial4j.shape.Shape;
 import org.locationtech.spatial4j.shape.jts.JtsGeometry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -47,8 +46,12 @@ final class LuceneGeoDocumentSchema {
 	static final int SCHEMA_VERSION = 2;
 	/** GraphDB entity id, stored for reconstruction and indexed/doc-valued for lookup and grouping. */
 	static final String FIELD_ID = "id";
-	/** Conservative CRS84 prefix cover; absent on empty sentinels. */
+	/** Prefix cells of the CRS84 index envelope; absent on empty sentinels. */
 	static final String FIELD_SPATIAL_PREFIX = "geoData1";
+	/** Prefix cells of the planar convex hull of a native CRS84 source; absent where no hull was indexed. */
+	static final String FIELD_NATIVE_HULL_PREFIX = "geoNativeHullCells";
+	/** Indexed marker present on exactly the documents that carry native hull cells. */
+	static final String FIELD_HAS_NATIVE_HULL_CELLS = "geoHasNativeHullCells";
 	/** Indexed exact lower X bound used for envelope intersection and containment pruning. */
 	static final String FIELD_ENVELOPE_MIN_X = "geoEnvelopeMinX";
 	/** Indexed exact upper X bound used for envelope intersection and containment pruning. */
@@ -81,6 +84,7 @@ final class LuceneGeoDocumentSchema {
 	static final String FIELD_CANDIDATE_BOUNDS_KIND = "geoCandidateBoundsKind";
 	static final String HAS_ENVELOPE_VALUE = "1";
 	static final String NO_ENVELOPE_VALUE = "0";
+	static final String HAS_NATIVE_HULL_CELLS_VALUE = "1";
 	/** Ends of the CRS84 longitude range, which name the same meridian. */
 	private static final double MINIMUM_LONGITUDE = -180.0;
 	private static final double MAXIMUM_LONGITUDE = 180.0;
@@ -98,9 +102,6 @@ final class LuceneGeoDocumentSchema {
 			"prefix-envelope-ordinate-preserving-source-wkb-envelope-marker-topology-dv-envelope-points-bounds-kind-indexed-source-crs";
 	/** Commit metadata key identifying the CRS transformation inputs used for candidate envelopes. */
 	static final String COMMIT_CRS_ENVIRONMENT_FINGERPRINT_KEY = "geosparql.crsEnvironmentFingerprint";
-	/** Optional commit capability enabling native CRS84 prefix-cover refinement after a full build. */
-	static final String COMMIT_NATIVE_PREFIX_COVER_KEY = "geosparql.nativeCrs84PrefixCover";
-	static final String COMMIT_NATIVE_PREFIX_COVER_VALUE = "convex-hull";
 	static final String SCHEMA_MISMATCH_MESSAGE =
 			"Existing GeoSPARQL Lucene index does not match the required schema v2 layout. "
 			+ "Jena-backed CRS-correct evaluation requires a full GeoSPARQL reindex. "
@@ -110,20 +111,20 @@ final class LuceneGeoDocumentSchema {
 	}
 
 	static List<Document> toDocuments(long entityId, List<IndexGeometry> geometries,
-			SpatialStrategy strategy, SpatialContext ctx) {
+			SpatialStrategy strategy, SpatialStrategy nativeHullStrategy, SpatialContext ctx) {
 		Map<SourceGeometryLiteral, IndexGeometry> distinctSources = new LinkedHashMap<>();
 		for (IndexGeometry geometry : geometries) {
 			distinctSources.putIfAbsent(geometry.sourceGeometryLiteral(), geometry);
 		}
 		List<Document> documents = new ArrayList<>(distinctSources.size());
 		for (IndexGeometry geometry : distinctSources.values()) {
-			documents.add(toDocument(entityId, geometry, strategy, ctx));
+			documents.add(toDocument(entityId, geometry, strategy, nativeHullStrategy, ctx));
 		}
 		return documents;
 	}
 
 	static Document toDocument(long entityId, IndexGeometry geometry,
-			SpatialStrategy strategy, SpatialContext ctx) {
+			SpatialStrategy strategy, SpatialStrategy nativeHullStrategy, SpatialContext ctx) {
 		SourceGeometryLiteral source = geometry.sourceGeometryLiteral();
 		byte[] sourceGeometryWkb = SourceGeometryWkbCodec.encode(source);
 		DimensionInfo dimensions = source.asGeometryWrapper().getDimensionInfo();
@@ -137,9 +138,10 @@ final class LuceneGeoDocumentSchema {
 			Envelope envelope = geometry.indexEnvelope();
 			Rectangle shape = ctx.getShapeFactory().rect(
 					envelope.getMinX(), envelope.getMaxX(), envelope.getMinY(), envelope.getMaxY());
-			for (Field field : strategy.createIndexableFields(prefixCover(geometry, shape))) {
+			for (Field field : strategy.createIndexableFields(shape)) {
 				doc.add(field);
 			}
+			addNativeHullCells(doc, geometry, nativeHullStrategy);
 			doc.add(new DoublePoint(FIELD_ENVELOPE_MIN_X, envelope.getMinX()));
 			doc.add(new DoublePoint(FIELD_ENVELOPE_MAX_X, envelope.getMaxX()));
 			doc.add(new DoublePoint(FIELD_ENVELOPE_MIN_Y, envelope.getMinY()));
@@ -172,24 +174,36 @@ final class LuceneGeoDocumentSchema {
 		return factory.newSpatialContext();
 	}
 
-	private static Shape prefixCover(IndexGeometry geometry, Rectangle envelope) {
+	/**
+	 * Adds the prefix cells of the planar convex hull of a native CRS84 source and the marker identifying documents
+	 * that carry them. A source gets neither, and remains an envelope candidate, when its hull is unavailable or
+	 * fills its envelope: the hull of a point, an axis-parallel line or a rectangle separates no bound that the
+	 * numeric envelope ranges admit.
+	 */
+	private static void addNativeHullCells(Document doc, IndexGeometry geometry, SpatialStrategy nativeHullStrategy) {
 		if (geometry.candidateBoundsKind() != CandidateBoundsKind.NATIVE_CRS84) {
-			return envelope;
+			return;
 		}
+		Field[] hullCells;
 		try {
 			// Native CRS84 topology is planar. Geographic wrapping would change the covered point set.
 			var hull = geometry.sourceGeometryLiteral().asGeometryWrapper().getXYGeometry().convexHull();
-			if (hull.isEmpty() || !hull.isValid()) {
-				return envelope;
+			boolean fillsEnvelope = hull.getEnvelopeInternal().getArea() == 0 || hull.isRectangle();
+			if (hull.isEmpty() || !hull.isValid() || fillsEnvelope) {
+				return;
 			}
 			JtsGeometry cover = new JtsGeometry(hull, PLANAR_COVER_CONTEXT, false, false);
 			cover.index();
-			return cover;
+			hullCells = nativeHullStrategy.createIndexableFields(cover);
 		} catch (RuntimeException e) {
-			// Cover refinement is optional; a failure must retain conservative envelope candidates.
-			LOGGER.debug("Using the envelope prefix cover because the convex hull cover is unavailable", e);
-			return envelope;
+			// Hull cells are an optional refinement; a source without them remains an envelope candidate.
+			LOGGER.debug("Indexing a native CRS84 source without convex hull cells", e);
+			return;
 		}
+		for (Field cell : hullCells) {
+			doc.add(cell);
+		}
+		doc.add(new StringField(FIELD_HAS_NATIVE_HULL_CELLS, HAS_NATIVE_HULL_CELLS_VALUE, Field.Store.NO));
 	}
 
 	static SourceGeometryLiteral sourceGeometryLiteral(Document doc, SourceGeometryLiteralResolver sourceResolver) {
@@ -241,8 +255,7 @@ final class LuceneGeoDocumentSchema {
 	}
 
 	static Iterable<Map.Entry<String, String>> currentCompatibilityCommitData(
-			Iterable<Map.Entry<String, String>> existingCommitData, String crsEnvironmentFingerprint,
-			boolean enableNativePrefixCover) {
+			Iterable<Map.Entry<String, String>> existingCommitData, String crsEnvironmentFingerprint) {
 		Map<String, String> commitData = new LinkedHashMap<>();
 		if (existingCommitData != null) {
 			for (Map.Entry<String, String> entry : existingCommitData) {
@@ -252,14 +265,7 @@ final class LuceneGeoDocumentSchema {
 		commitData.put(COMMIT_SCHEMA_VERSION_KEY, COMMIT_SCHEMA_VERSION_VALUE);
 		commitData.put(COMMIT_SCHEMA_LAYOUT_KEY, COMMIT_SCHEMA_LAYOUT_VALUE);
 		commitData.put(COMMIT_CRS_ENVIRONMENT_FINGERPRINT_KEY, crsEnvironmentFingerprint);
-		if (enableNativePrefixCover) {
-			commitData.put(COMMIT_NATIVE_PREFIX_COVER_KEY, COMMIT_NATIVE_PREFIX_COVER_VALUE);
-		}
 		return commitData.entrySet();
-	}
-
-	static boolean hasNativePrefixCover(Map<String, String> commitData) {
-		return COMMIT_NATIVE_PREFIX_COVER_VALUE.equals(commitData.get(COMMIT_NATIVE_PREFIX_COVER_KEY));
 	}
 
 	static Query entityIdQuery(long entityId) {
@@ -281,6 +287,11 @@ final class LuceneGeoDocumentSchema {
 
 	static Query candidateBoundsKindQuery(CandidateBoundsKind kind) {
 		return new TermQuery(new Term(FIELD_CANDIDATE_BOUNDS_KIND, kind.name()));
+	}
+
+	/** Matches the documents that carry native hull cells. */
+	static Query hasNativeHullCellsQuery() {
+		return new TermQuery(new Term(FIELD_HAS_NATIVE_HULL_CELLS, HAS_NATIVE_HULL_CELLS_VALUE));
 	}
 
 	static Query sourceCrsQuery(String sourceCrsUri) {

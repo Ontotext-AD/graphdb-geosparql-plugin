@@ -62,12 +62,15 @@ public class LuceneGeoSchemaTest {
 	private IndexGeometry sampleGeometry;
 	private SpatialContext testSpatialContext;
 	private SpatialStrategy testSpatialStrategy;
+	private SpatialStrategy testNativeHullStrategy;
 
 	@Before
 	public void init() {
 		testSpatialContext = SpatialContext.GEO;
 		testSpatialStrategy = new RecursivePrefixTreeStrategy(
 				new QuadPrefixTree(testSpatialContext, 11), LuceneGeoDocumentSchema.FIELD_SPATIAL_PREFIX);
+		testNativeHullStrategy = new RecursivePrefixTreeStrategy(
+				new QuadPrefixTree(testSpatialContext, 11), LuceneGeoDocumentSchema.FIELD_NATIVE_HULL_PREFIX);
 		sampleGeometry = TestIndexGeometries.fromWkt("POINT(1 2)");
 	}
 
@@ -159,7 +162,7 @@ public class LuceneGeoSchemaTest {
 
 	private Document currentSchemaDocument(long entityId, IndexGeometry geometry) {
 		return LuceneGeoDocumentSchema.toDocument(entityId, geometry,
-				testSpatialStrategy, testSpatialContext);
+				testSpatialStrategy, testNativeHullStrategy, testSpatialContext);
 	}
 
     @Test
@@ -774,7 +777,7 @@ public class LuceneGeoSchemaTest {
 
 	private void markCurrentSchema(IndexWriter writer) {
 		writer.setLiveCommitData(LuceneGeoDocumentSchema.currentCompatibilityCommitData(
-				writer.getLiveCommitData(), "test-crs-environment", false));
+				writer.getLiveCommitData(), "test-crs-environment"));
 	}
 
     private IndexWriterConfig noMergeIndexWriterConfig() {

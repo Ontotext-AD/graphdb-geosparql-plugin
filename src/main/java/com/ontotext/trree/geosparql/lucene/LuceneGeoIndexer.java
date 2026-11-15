@@ -34,8 +34,10 @@ import java.util.function.Supplier;
 /**
  * Lucene-backed GeoSPARQL candidate indexer.
  *
- * <p>The Lucene index stores one CRS84 source envelope and a conservative prefix cover for candidate lookup, plus
- * native-CRS source geometry WKB and literal metadata for later CRS-aware exact evaluation. Each source geometry literal has one Lucene
+ * <p>The Lucene index stores one CRS84 source envelope and its prefix cells for candidate lookup, plus
+ * native-CRS source geometry WKB and literal metadata for later CRS-aware exact evaluation. A native CRS84 source
+ * also stores the prefix cells of its planar convex hull, which refine lookup for a native CRS84 bound; a source
+ * without them is looked up by its envelope alone. Each source geometry literal has one Lucene
  * document. Candidate queries group matching source documents by entity, while direct entity reads stream source
  * geometry literal snapshots. Returned iterators own their Lucene readers and are closed by their callers.
  *
@@ -52,8 +54,6 @@ import java.util.function.Supplier;
  * <p>During force reindex, writes are allowed after {@link #freshIndex()}, but
  * reads remain gated by the previously committed compatibility state until commit succeeds. Rollback or failed
  * commit restores that previous state, so an abandoned reindex cannot make this indexer trust an incompatible index.
- * Native CRS84 prefix-cover refinement is enabled by an optional capability on the queried commit. Fresh builds and
- * force reindexes publish that capability; incremental writes preserve the existing commit's lookup policy.
  *
  * <p>A GraphDB transaction publishes its Lucene commit before GraphDB completes the RDF transaction. Queries read the
  * latest Lucene commit, so until GraphDB reports the outcome they can observe index changes whose RDF statements are
@@ -67,6 +67,7 @@ public class LuceneGeoIndexer implements GeoSparqlIndexer {
 	private SpatialContext ctx;
 
     private SpatialStrategy strategy;
+    private SpatialStrategy nativeHullStrategy;
     private Path indexDir;
 
     private Directory directory;
@@ -136,6 +137,8 @@ public class LuceneGeoIndexer implements GeoSparqlIndexer {
 		}
 
 		this.strategy = new RecursivePrefixTreeStrategy(grid, LuceneGeoDocumentSchema.FIELD_SPATIAL_PREFIX);
+		this.nativeHullStrategy = new RecursivePrefixTreeStrategy(
+				grid, LuceneGeoDocumentSchema.FIELD_NATIVE_HULL_PREFIX);
 	}
 
 	@Override
@@ -339,7 +342,7 @@ public class LuceneGeoIndexer implements GeoSparqlIndexer {
 		assertWritableCurrentSchema();
 		try {
 			List<org.apache.lucene.document.Document> documents = LuceneGeoDocumentSchema.toDocuments(
-					subject, geometries, strategy, ctx);
+					subject, geometries, strategy, nativeHullStrategy, ctx);
 			deleteEntityDocuments(subject);
 			if (!documents.isEmpty()) {
 				addEntityDocuments(documents);
@@ -354,7 +357,8 @@ public class LuceneGeoIndexer implements GeoSparqlIndexer {
 	public void appendGeometry(long subject, Function<Long, String> subjectMapper, IndexGeometry geometry) {
 		assertWritableCurrentSchema();
 		try {
-			addEntityDocument(LuceneGeoDocumentSchema.toDocument(subject, geometry, strategy, ctx));
+			addEntityDocument(LuceneGeoDocumentSchema.toDocument(
+					subject, geometry, strategy, nativeHullStrategy, ctx));
 			compatibilityMetadataPending = true;
 		} catch (Exception e) {
 			throw luceneMutationFailure(subject, subjectMapper, e);
@@ -380,20 +384,17 @@ public class LuceneGeoIndexer implements GeoSparqlIndexer {
 			return getCandidateEntitiesForQuery(new MatchNoDocsQuery("Empty source has no envelope intersections."));
 		}
 		Query envelopeIntersections = envelopeIntersectionsQuery(boundSourceIndexGeometry);
-		Query conservativeCovers = null;
-		if (boundSourceIndexGeometry.candidateBoundsKind() == CandidateBoundsKind.NATIVE_CRS84) {
-			var envelope = boundSourceIndexGeometry.indexEnvelope();
-			Query coverIntersections = strategy.makeQuery(new SpatialArgs(SpatialOperation.Intersects,
-					ctx.makeRectangle(envelope.getMinX(), envelope.getMaxX(), envelope.getMinY(), envelope.getMaxY())));
-			Query nonNative = new BooleanQuery.Builder()
-					.add(new MatchAllDocsQuery(), BooleanClause.Occur.FILTER)
-					.add(LuceneGeoDocumentSchema.candidateBoundsKindQuery(CandidateBoundsKind.NATIVE_CRS84),
-							BooleanClause.Occur.MUST_NOT).build();
-			conservativeCovers = new BooleanQuery.Builder()
-					.add(coverIntersections, BooleanClause.Occur.SHOULD)
-					.add(nonNative, BooleanClause.Occur.SHOULD).setMinimumNumberShouldMatch(1).build();
+		if (boundSourceIndexGeometry.candidateBoundsKind() != CandidateBoundsKind.NATIVE_CRS84) {
+			return getCandidateEntitiesForQuery(envelopeIntersections);
 		}
-		return getCandidateEntitiesForQuery(envelopeIntersections, conservativeCovers);
+		// A native CRS84 source that meets the native CRS84 bound has a hull cell among the cells of the bound's envelope.
+		Query hullCellsApart = new BooleanQuery.Builder()
+				.add(LuceneGeoDocumentSchema.hasNativeHullCellsQuery(), BooleanClause.Occur.FILTER)
+				.add(prefixCellIntersectionsQuery(nativeHullStrategy, boundSourceIndexGeometry),
+						BooleanClause.Occur.MUST_NOT).build();
+		return getCandidateEntitiesForQuery(new BooleanQuery.Builder()
+				.add(envelopeIntersections, BooleanClause.Occur.FILTER)
+				.add(hullCellsApart, BooleanClause.Occur.MUST_NOT).build());
 	}
 
 	@Override
@@ -552,6 +553,13 @@ public class LuceneGeoIndexer implements GeoSparqlIndexer {
 		return LuceneGeoDocumentSchema.envelopeIntersectsQuery(indexGeometry.indexEnvelope());
 	}
 
+	/** Matches sources with one of the strategy's prefix cells among the cells of the bound's index envelope. */
+	private Query prefixCellIntersectionsQuery(SpatialStrategy prefixCells, IndexGeometry indexGeometry) {
+		var envelope = indexGeometry.indexEnvelope();
+		return prefixCells.makeQuery(new SpatialArgs(SpatialOperation.Intersects, ctx.getShapeFactory().rect(
+				envelope.getMinX(), envelope.getMaxX(), envelope.getMinY(), envelope.getMaxY())));
+	}
+
 	private Query disjointTransformCleanupCandidatesQuery(
 			IndexGeometry boundSourceIndexGeometry, boolean candidateIsSubject) {
 		String boundSourceCrs = boundSourceIndexGeometry.sourceGeometryLiteral().effectiveCrsUri();
@@ -569,19 +577,9 @@ public class LuceneGeoIndexer implements GeoSparqlIndexer {
 	}
 
 	private CloseableIterator<CandidateEntity> getCandidateEntitiesForQuery(Query query) {
-		return getCandidateEntitiesForQuery(query, null);
-	}
-
-	private CloseableIterator<CandidateEntity> getCandidateEntitiesForQuery(Query query, Query nativePrefixCover) {
 		IndexReader indexReader = null;
 		try {
 			indexReader = openReader();
-			if (nativePrefixCover != null && LuceneGeoDocumentSchema.hasNativePrefixCover(
-					((DirectoryReader) indexReader).getIndexCommit().getUserData())) {
-				query = new BooleanQuery.Builder()
-						.add(query, BooleanClause.Occur.FILTER)
-						.add(nativePrefixCover, BooleanClause.Occur.FILTER).build();
-			}
 			IndexSearcher indexSearcher = new IndexSearcher(indexReader);
 			return new LuceneCandidateEntityIterator(indexSearcher, query);
 		} catch (Exception e) {
@@ -681,8 +679,7 @@ public class LuceneGeoIndexer implements GeoSparqlIndexer {
 			return;
 		}
 		indexWriter.setLiveCommitData(LuceneGeoDocumentSchema.currentCompatibilityCommitData(
-				indexWriter.getLiveCommitData(), currentCrsEnvironmentFingerprint,
-				schemaRebuildInProgress || preTransactionCommit == null || preTransactionCommit.getSegmentCount() == 0));
+				indexWriter.getLiveCommitData(), currentCrsEnvironmentFingerprint));
 	}
 
 	protected void restorePreTransactionCommit() throws IOException {
