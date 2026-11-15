@@ -29,6 +29,17 @@ import java.util.EnumSet;
 final class SourceGeometryWkbCodec {
 	private static final GeometryFactory WKB_WRITE_GEOMETRY_FACTORY = new GeometryFactory(
 			new PrecisionModel(), 0, PackedCoordinateSequenceFactory.DOUBLE_FACTORY);
+	private static final GeometryFactory WKB_READ_GEOMETRY_FACTORY = new GeometryFactory(
+			new PrecisionModel(), 0, new PackedCoordinateSequenceFactory(PackedCoordinateSequenceFactory.DOUBLE) {
+				private static final long serialVersionUID = 1L;
+
+				@Override
+				public CoordinateSequence create(int size, int dimension, int measures) {
+					// Jena reserves ordinate 2 for Z, so measured WKB retains packed ordinate handling.
+					return measures == 0 ? new CustomCoordinateSequence(size, dimension)
+							: super.create(size, dimension, measures);
+				}
+			});
 
 	private SourceGeometryWkbCodec() {
 	}
@@ -96,7 +107,7 @@ final class SourceGeometryWkbCodec {
 
 	static Geometry decode(byte[] bytes) {
 		try {
-			Geometry decoded = new WKBReader(WKB_WRITE_GEOMETRY_FACTORY).read(bytes);
+			Geometry decoded = new WKBReader(WKB_READ_GEOMETRY_FACTORY).read(bytes);
 			return toJenaCoordinateSequences(decoded);
 		} catch (ParseException | RuntimeException e) {
 			throw new PluginException(LuceneGeoDocumentSchema.SCHEMA_MISMATCH_MESSAGE, e);
@@ -108,6 +119,9 @@ final class SourceGeometryWkbCodec {
 		return editor.edit(geometry, new GeometryEditor.CoordinateSequenceOperation() {
 			@Override
 			public CoordinateSequence edit(CoordinateSequence source, Geometry component) {
+				if (source instanceof CustomCoordinateSequence) {
+					return source;
+				}
 				CoordinateSequenceDimensions dimensions = coordinateSequenceDimensions(source);
 				CustomCoordinateSequence target = new CustomCoordinateSequence(source.size(), dimensions);
 				for (int i = 0; i < source.size(); i++) {

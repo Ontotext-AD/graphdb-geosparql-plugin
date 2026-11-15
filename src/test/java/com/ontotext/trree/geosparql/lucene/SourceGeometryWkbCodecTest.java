@@ -16,6 +16,7 @@ import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.util.List;
 
+import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
@@ -46,6 +47,37 @@ public class SourceGeometryWkbCodecTest {
 		assertPointRoundTrip("POINT Z(1 2 3)", 3, 3, 3, Double.NaN);
 		assertPointRoundTrip("POINT M(1 2 4)", 3, 2, Double.NaN, 4);
 		assertPointRoundTrip("POINT ZM(1 2 3 4)", 4, 3, 3, 4);
+	}
+
+	@Test
+	public void sourceWkbPreservesNativePrecisionAcrossGeometryTypes() {
+		for (String lexical : List.of(
+				"POINT(-0.0 0.12345678901234567)",
+				"LINESTRING(0.12345678901234567 1.2345678901234567,2.345678901234567 3.456789012345678)",
+				"LINESTRING Z(0.12345678901234567 1.2345678901234567 4.123456789012345,2 3 5)",
+				"POLYGON((0 0,4.123456789012345 0,4.123456789012345 4,0 4,0 0),"
+						+ "(1 1,1 2,2 2,2 1,1 1))",
+				"MULTIPOINT((0.12345678901234567 1),(2 3))",
+				"MULTILINESTRING((0 0,1.1234567890123457 1),(2 2,3 3))",
+				"MULTIPOLYGON(((0 0,1 0,1 1,0 0)),((2 2,3 2,3 3,2 2)))",
+				"GEOMETRYCOLLECTION(POINT(0.12345678901234567 1),"
+						+ "POLYGON((0 0,4 0,4 4,0 4,0 0),(1 1,1 2,2 2,2 1,1 1)))")) {
+			assertStableSourceWkb(lexical);
+		}
+	}
+
+	@Test
+	public void sourceWkbPreservesMeasuredComponentsAndEmptyGeometries() {
+		for (String lexical : List.of(
+				"LINESTRING M(0 0 4.123456789012345,1 1 5)",
+				"LINESTRING ZM(0 0 3.123456789012345 4.123456789012345,1 1 5 6)",
+				"MULTIPOINT ZM((1 2 3 4),(5 6 7 8))",
+				"MULTILINESTRING M((0 0 4,1 1 5),(2 2 6,3 3 7))",
+				"GEOMETRYCOLLECTION ZM(POINT ZM(1 2 3 4),LINESTRING ZM(0 0 1 2,1 1 3 4))",
+				"POINT EMPTY", "POINT M EMPTY", "LINESTRING EMPTY", "POLYGON EMPTY",
+				"MULTIPOINT EMPTY", "MULTIPOLYGON EMPTY", "GEOMETRYCOLLECTION EMPTY")) {
+			assertStableSourceWkb(lexical);
+		}
 	}
 
 	@Test
@@ -140,6 +172,19 @@ public class SourceGeometryWkbCodecTest {
 		return SourceGeometryLiteral.fromStoredGeometry(original.lexicalForm(), original.datatype(),
 				original.effectiveCrsUri(), SourceGeometryWkbCodec.decode(SourceGeometryWkbCodec.encode(original)),
 				original.asGeometryWrapper().getDimensionInfo());
+	}
+
+	private void assertStableSourceWkb(String lexical) {
+		SourceGeometryLiteral original = SourceGeometryLiteral.fromWkt(lexical);
+		SourceGeometryLiteral restored = roundTrip(original);
+		assertEquals(lexical, restored.lexicalForm());
+		assertEquals(original.datatype(), restored.datatype());
+		assertEquals(original.effectiveCrsUri(), restored.effectiveCrsUri());
+		assertEquals(original.asGeometryWrapper().getDimensionInfo(),
+				restored.asGeometryWrapper().getDimensionInfo());
+		assertEquals(original.asGeometryWrapper().getXYGeometry().getGeometryType(),
+				restored.asGeometryWrapper().getXYGeometry().getGeometryType());
+		assertArrayEquals(lexical, SourceGeometryWkbCodec.encode(original), SourceGeometryWkbCodec.encode(restored));
 	}
 
 	private void assertForceReindexMessage(PluginException exception) {
