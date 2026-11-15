@@ -6,7 +6,6 @@ import com.ontotext.trree.geosparql.jena.SourceGeometryLiteral;
 import org.apache.jena.geosparql.implementation.GeometryWrapper;
 import org.apache.lucene.search.BooleanClause;
 import org.apache.lucene.search.BooleanQuery;
-import org.apache.lucene.search.MatchAllDocsQuery;
 import org.apache.lucene.search.Query;
 import org.locationtech.jts.geom.Envelope;
 import org.locationtech.jts.geom.Polygon;
@@ -90,24 +89,20 @@ final class NativeCrs84DisjointPruning {
 			return candidates;
 		}
 		Query nativeSources = LuceneGeoDocumentSchema.candidateBoundsKindQuery(CandidateBoundsKind.NATIVE_CRS84);
-		BooleanQuery.Builder nativeRemainder = new BooleanQuery.Builder()
-				.add(nativeSources, BooleanClause.Occur.FILTER);
+		BooleanQuery.Builder contained = new BooleanQuery.Builder().setMinimumNumberShouldMatch(1);
 		/*
 		 * For a non-empty native CRS84 source S, S is contained by its envelope E. If E lies inside a certified
 		 * rectangle R and Jena establishes R within the bound B, then S is contained by B and cannot be disjoint.
 		 * Closed containment includes touching boundaries. Transformed envelopes do not participate in this proof.
 		 */
 		for (Envelope rectangle : rectangles) {
-			nativeRemainder.add(LuceneGeoDocumentSchema.envelopeNotWithinQuery(rectangle), BooleanClause.Occur.FILTER);
+			contained.add(LuceneGeoDocumentSchema.envelopeWithinQuery(rectangle), BooleanClause.Occur.SHOULD);
 		}
-		Query nonNative = new BooleanQuery.Builder()
-				.add(new MatchAllDocsQuery(), BooleanClause.Occur.FILTER)
-				.add(nativeSources, BooleanClause.Occur.MUST_NOT).build();
-		Query remainder = new BooleanQuery.Builder()
-				.add(nativeRemainder.build(), BooleanClause.Occur.SHOULD)
-				.add(nonNative, BooleanClause.Occur.SHOULD).setMinimumNumberShouldMatch(1).build();
+		Query containedNativeSources = new BooleanQuery.Builder()
+				.add(nativeSources, BooleanClause.Occur.FILTER)
+				.add(contained.build(), BooleanClause.Occur.FILTER).build();
 		return new BooleanQuery.Builder()
 				.add(candidates, BooleanClause.Occur.FILTER)
-				.add(remainder, BooleanClause.Occur.FILTER).build();
+				.add(containedNativeSources, BooleanClause.Occur.MUST_NOT).build();
 	}
 }

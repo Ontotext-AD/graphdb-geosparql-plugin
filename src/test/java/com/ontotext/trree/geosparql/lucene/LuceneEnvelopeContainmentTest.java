@@ -4,6 +4,7 @@ import com.ontotext.trree.geosparql.GeoSparqlPropertyRelation;
 import com.ontotext.trree.geosparql.TestIndexGeometries;
 import com.ontotext.trree.geosparql.jena.IndexGeometry;
 import org.apache.lucene.document.Document;
+import org.apache.lucene.document.DoublePoint;
 import org.apache.lucene.index.DirectoryReader;
 import org.apache.lucene.index.IndexWriter;
 import org.apache.lucene.index.IndexWriterConfig;
@@ -63,6 +64,50 @@ public class LuceneEnvelopeContainmentTest {
 					Document stored = reader.document(documentId);
 					assertFalse(stored.getFields().stream().anyMatch(field ->
 							field.name().startsWith("geoEnvelope")));
+				}
+			}
+		}
+	}
+
+	@Test
+	public void containedEnvelopeQueriesIncludeClosedBoundariesAndEqualSignedZeros() throws Exception {
+		List<Envelope> envelopes = List.of(
+				new Envelope(0, 1, 0, 1), new Envelope(0, 0, 0, 0),
+				new Envelope(-0.0, -0.0, 0, 0), new Envelope(0, 0, -0.0, -0.0),
+				new Envelope(-0.0, -0.0, -0.0, -0.0),
+				new Envelope(Math.nextDown(0.0), 0, 0, 0),
+				new Envelope(0, Math.nextUp(1.0), 0, 1),
+				new Envelope(0, 1, Math.nextDown(0.0), 1),
+				new Envelope(0, 1, 0, Math.nextUp(1.0)),
+				new Envelope(-1, 2, -1, 2));
+		try (Directory directory = new ByteBuffersDirectory();
+				IndexWriter writer = new IndexWriter(directory, new IndexWriterConfig())) {
+			for (Envelope envelope : envelopes) {
+				Document document = new Document();
+				document.add(new DoublePoint(LuceneGeoDocumentSchema.FIELD_ENVELOPE_MIN_X, envelope.getMinX()));
+				document.add(new DoublePoint(LuceneGeoDocumentSchema.FIELD_ENVELOPE_MAX_X, envelope.getMaxX()));
+				document.add(new DoublePoint(LuceneGeoDocumentSchema.FIELD_ENVELOPE_MIN_Y, envelope.getMinY()));
+				document.add(new DoublePoint(LuceneGeoDocumentSchema.FIELD_ENVELOPE_MAX_Y, envelope.getMaxY()));
+				writer.addDocument(document);
+			}
+			writer.addDocument(new Document());
+			writer.commit();
+			try (DirectoryReader reader = DirectoryReader.open(directory)) {
+				IndexSearcher searcher = new IndexSearcher(reader);
+				for (Envelope bound : List.of(new Envelope(0, 1, 0, 1),
+						new Envelope(-0.0, -0.0, -0.0, -0.0), new Envelope(-1, 2, -1, 2))) {
+					Set<Integer> expected = new HashSet<>();
+					for (int i = 0; i < envelopes.size(); i++) {
+						if (bound.covers(envelopes.get(i))) {
+							expected.add(i);
+						}
+					}
+					Set<Integer> actual = new HashSet<>();
+					for (ScoreDoc hit : searcher.search(LuceneGeoDocumentSchema.envelopeWithinQuery(bound),
+							reader.maxDoc()).scoreDocs) {
+						actual.add(hit.doc);
+					}
+					assertEquals(bound.toString(), expected, actual);
 				}
 			}
 		}

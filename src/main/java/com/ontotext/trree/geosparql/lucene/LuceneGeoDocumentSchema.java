@@ -447,6 +447,24 @@ final class LuceneGeoDocumentSchema {
 				.build();
 	}
 
+	/** Matches envelopes contained by the closed bound, treating signed zeros as equal. */
+	static Query envelopeWithinQuery(Envelope boundEnvelope) {
+		double minX = boundEnvelope.getMinX() == 0.0 ? -0.0 : boundEnvelope.getMinX();
+		double maxX = boundEnvelope.getMaxX() == 0.0 ? 0.0 : boundEnvelope.getMaxX();
+		double minY = boundEnvelope.getMinY() == 0.0 ? -0.0 : boundEnvelope.getMinY();
+		double maxY = boundEnvelope.getMaxY() == 0.0 ? 0.0 : boundEnvelope.getMaxY();
+		return new BooleanQuery.Builder()
+				.add(DoublePoint.newRangeQuery(FIELD_ENVELOPE_MIN_X,
+						minX, Double.POSITIVE_INFINITY), BooleanClause.Occur.FILTER)
+				.add(DoublePoint.newRangeQuery(FIELD_ENVELOPE_MAX_X,
+						Double.NEGATIVE_INFINITY, maxX), BooleanClause.Occur.FILTER)
+				.add(DoublePoint.newRangeQuery(FIELD_ENVELOPE_MIN_Y,
+						minY, Double.POSITIVE_INFINITY), BooleanClause.Occur.FILTER)
+				.add(DoublePoint.newRangeQuery(FIELD_ENVELOPE_MAX_Y,
+						Double.NEGATIVE_INFINITY, maxY), BooleanClause.Occur.FILTER)
+				.build();
+	}
+
 	/** Matches envelopes extending beyond at least one side of the closed bound. */
 	static Query envelopeNotWithinQuery(Envelope boundEnvelope) {
 		return new BooleanQuery.Builder()
