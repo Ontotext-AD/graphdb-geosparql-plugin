@@ -11,6 +11,8 @@ import com.ontotext.trree.geosparql.jena.IndexGeometry;
 import com.ontotext.trree.geosparql.jena.CandidateBoundsKind;
 import com.ontotext.trree.geosparql.jena.IndexGeometryFixtures;
 import com.ontotext.trree.geosparql.jena.SourceGeometryLiteral;
+import org.apache.lucene.index.MultiReader;
+import org.apache.lucene.search.IndexSearcher;
 import org.apache.lucene.search.MatchAllDocsQuery;
 import org.apache.lucene.search.Query;
 import org.locationtech.jts.geom.Envelope;
@@ -18,7 +20,9 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.slf4j.LoggerFactory;
 
+import java.io.IOException;
 import java.nio.file.Files;
+import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
@@ -76,6 +80,23 @@ public class LuceneDisjointEnvelopeLookupTest {
 	}
 
 	@Test
+	public void interiorPruningRetainsAllCandidatesWhenAtMostHalfCanBeExcluded() throws Exception {
+		for (int outsideCount : new int[]{1, 2}) {
+			LuceneGeoIndexer indexer = createIndexer("low-reduction-" + outsideCount,
+					GeoSparqlConfig.PrefixTree.QUAD, 11);
+			List<IndexGeometry> sources = new ArrayList<>();
+			sources.add(geometry("POINT(1 1)"));
+			for (int i = 0; i < outsideCount; i++) {
+				sources.add(geometry("POINT(15 15)"));
+			}
+			index(indexer, sources);
+			Set<Long> expected = outsideCount == 1 ? Set.of(1L, 2L) : Set.of(1L, 2L, 3L);
+			assertEquals(expected, uncertain(indexer.getEnvelopeDisjointUncertainCandidates(
+					geometry("POLYGON((0 0,16 0,16 8,8 16,0 16,0 0))"))));
+		}
+	}
+
+	@Test
 	public void interiorPruningRetainsTransformedAndWorldFallbackSources() throws Exception {
 		LuceneGeoIndexer indexer = createIndexer("interior-non-native", GeoSparqlConfig.PrefixTree.QUAD, 11);
 		SourceGeometryLiteral fallback = SourceGeometryLiteral.fromWkt(
@@ -90,19 +111,22 @@ public class LuceneDisjointEnvelopeLookupTest {
 	}
 
 	@Test
-	public void ineligibleBoundsRetainTheCompleteCandidateQuery() {
-		Query candidates = new MatchAllDocsQuery();
-		for (String wkt : List.of("POINT(1 1)", "POLYGON EMPTY",
-				"MULTIPOLYGON(((0 0,2 0,2 2,0 0)))",
-				"GEOMETRYCOLLECTION(POLYGON((0 0,2 0,2 2,0 0)))",
-				"POLYGON((0 0,4 4,0 4,4 0,0 0))",
-				"<http://www.opengis.net/def/crs/EPSG/0/3857> POLYGON((0 0,100000 0,0 100000,0 0))")) {
-			assertSame(wkt, candidates, NativeCrs84DisjointPruning.prune(geometry(wkt), candidates));
+	public void ineligibleBoundsRetainTheCompleteCandidateQuery() throws Exception {
+		try (MultiReader reader = new MultiReader()) {
+			IndexSearcher searcher = new IndexSearcher(reader);
+			Query candidates = new MatchAllDocsQuery();
+			for (String wkt : List.of("POINT(1 1)", "POLYGON EMPTY",
+					"MULTIPOLYGON(((0 0,2 0,2 2,0 0)))",
+					"GEOMETRYCOLLECTION(POLYGON((0 0,2 0,2 2,0 0)))",
+					"POLYGON((0 0,4 4,0 4,4 0,0 0))",
+					"<http://www.opengis.net/def/crs/EPSG/0/3857> POLYGON((0 0,100000 0,0 100000,0 0))")) {
+				assertSame(wkt, candidates, NativeCrs84DisjointPruning.prune(geometry(wkt), candidates, searcher));
+			}
 		}
 	}
 
 	@Test
-	public void complexPolygonBoundsRetainTheCompleteCandidateQuery() {
+	public void complexPolygonBoundsRetainTheCompleteCandidateQuery() throws Exception {
 		StringBuilder polygon = new StringBuilder("POLYGON((12 8");
 		for (int i = 1; i < 300; i++) {
 			double angle = i * 2 * Math.PI / 300;
@@ -110,7 +134,35 @@ public class LuceneDisjointEnvelopeLookupTest {
 		}
 		polygon.append(",12 8))");
 		Query candidates = new MatchAllDocsQuery();
-		assertSame(candidates, NativeCrs84DisjointPruning.prune(geometry(polygon.toString()), candidates));
+		try (MultiReader reader = new MultiReader()) {
+			assertSame(candidates, NativeCrs84DisjointPruning.prune(
+					geometry(polygon.toString()), candidates, new IndexSearcher(reader)));
+		}
+	}
+
+	@Test
+	public void unavailableCandidateCountsRetainTheCompleteQuery() throws Exception {
+		try (MultiReader reader = new MultiReader()) {
+			IndexSearcher searcher = new IndexSearcher(reader) {
+				@Override
+				public int count(Query query) throws IOException {
+					throw new IOException("Candidate counts are unavailable");
+				}
+			};
+			Query candidates = new MatchAllDocsQuery();
+			assertSame(candidates, NativeCrs84DisjointPruning.prune(
+					geometry("POLYGON((0 0,16 0,16 8,8 16,0 16,0 0))"), candidates, searcher));
+		}
+	}
+
+	@Test
+	public void emptyCandidateCountsRetainTheCompleteQuery() throws Exception {
+		try (MultiReader reader = new MultiReader()) {
+			Query candidates = new MatchAllDocsQuery();
+			assertSame(candidates, NativeCrs84DisjointPruning.prune(
+					geometry("POLYGON((0 0,16 0,16 8,8 16,0 16,0 0))"),
+					candidates, new IndexSearcher(reader)));
+		}
 	}
 
 	@Test

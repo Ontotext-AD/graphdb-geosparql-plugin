@@ -7,6 +7,7 @@ import org.apache.jena.geosparql.implementation.GeometryWrapper;
 import org.apache.lucene.search.BooleanClause;
 import org.apache.lucene.search.BooleanQuery;
 import org.apache.lucene.search.Query;
+import org.apache.lucene.search.IndexSearcher;
 import org.locationtech.jts.geom.Envelope;
 import org.locationtech.jts.geom.Polygon;
 import org.opengis.referencing.operation.TransformException;
@@ -14,6 +15,7 @@ import org.opengis.util.FactoryException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -33,7 +35,7 @@ final class NativeCrs84DisjointPruning {
 		this.bound = bound;
 	}
 
-	static Query prune(IndexGeometry bound, Query candidates) {
+	static Query prune(IndexGeometry bound, Query candidates, IndexSearcher searcher) {
 		if (bound.candidateBoundsKind() != CandidateBoundsKind.NATIVE_CRS84) {
 			return candidates;
 		}
@@ -45,10 +47,10 @@ final class NativeCrs84DisjointPruning {
 			}
 			NativeCrs84DisjointPruning cover = new NativeCrs84DisjointPruning(wrapper);
 			cover.certify(bound.indexEnvelope(), MAX_DEPTH);
-			return cover.retainUncertain(candidates);
-		} catch (FactoryException | TransformException | RuntimeException e) {
-			// Certification is optional. Unavailable topology leaves the complete candidate query intact.
-			LOGGER.debug("Keeping all disjoint candidates because interior rectangles cannot be certified", e);
+			return cover.retainUncertain(candidates, searcher);
+		} catch (FactoryException | TransformException | IOException | RuntimeException e) {
+			// Pruning is optional. Unavailable topology or counting leaves the complete candidate query intact.
+			LOGGER.debug("Keeping all disjoint candidates because interior pruning is unavailable", e);
 			return candidates;
 		}
 	}
@@ -84,7 +86,7 @@ final class NativeCrs84DisjointPruning {
 		certify(new Envelope(midX, maxX, midY, maxY), depth - 1);
 	}
 
-	private Query retainUncertain(Query candidates) {
+	private Query retainUncertain(Query candidates, IndexSearcher searcher) throws IOException {
 		if (rectangles.isEmpty()) {
 			return candidates;
 		}
@@ -101,6 +103,20 @@ final class NativeCrs84DisjointPruning {
 		Query containedNativeSources = new BooleanQuery.Builder()
 				.add(nativeSources, BooleanClause.Occur.FILTER)
 				.add(contained.build(), BooleanClause.Occur.FILTER).build();
+		Query eligibleCandidates = new BooleanQuery.Builder()
+				.add(candidates, BooleanClause.Occur.FILTER)
+				.add(nativeSources, BooleanClause.Occur.FILTER).build();
+		int eligibleCount = searcher.count(eligibleCandidates);
+		if (eligibleCount == 0) {
+			return candidates;
+		}
+		Query excludedCandidates = new BooleanQuery.Builder()
+				.add(candidates, BooleanClause.Occur.FILTER)
+				.add(containedNativeSources, BooleanClause.Occur.FILTER).build();
+		// Avoid repeated containment filtering unless it removes most eligible native source documents.
+		if (2L * searcher.count(excludedCandidates) <= eligibleCount) {
+			return candidates;
+		}
 		return new BooleanQuery.Builder()
 				.add(candidates, BooleanClause.Occur.FILTER)
 				.add(containedNativeSources, BooleanClause.Occur.MUST_NOT).build();
