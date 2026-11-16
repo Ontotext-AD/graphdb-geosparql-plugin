@@ -27,6 +27,7 @@ public final class BoundEvaluationEnvelope {
 
 	private final GeometryWrapper bound;
 	private final boolean fillsEnvelope;
+	private Boolean valid;
 
 	/** @param bound the bound as Jena evaluates it in its CRS, or null when Jena cannot place it */
 	BoundEvaluationEnvelope(GeometryWrapper bound) {
@@ -54,7 +55,22 @@ public final class BoundEvaluationEnvelope {
 	/** Whether the bound, as Jena evaluates it, is a valid polygon of at most the given number of points. */
 	public boolean isValidPolygonOfAtMost(int points) {
 		return bound.getXYGeometry() instanceof Polygon polygon && !polygon.isEmpty()
-				&& polygon.getNumPoints() <= points && polygon.isValid();
+				&& polygon.getNumPoints() <= points && isValid();
+	}
+
+	/**
+	 * Whether the bound, as Jena evaluates it, is a valid geometry. Jena may fail to relate an invalid geometry to
+	 * a source whose envelope meets it, and a pair that fails is no match.
+	 */
+	public boolean isValid() {
+		if (valid == null) {
+			try {
+				valid = bound.getXYGeometry().isValid();
+			} catch (RuntimeException e) {
+				valid = false;
+			}
+		}
+		return valid;
 	}
 
 	/**

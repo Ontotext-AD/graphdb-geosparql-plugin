@@ -34,6 +34,7 @@ import java.util.Optional;
 final class EvaluationCrsLookup {
 	private final Map<String, BoundEvaluationEnvelope> placements = new LinkedHashMap<>();
 	private boolean leavesSourcesElsewhere;
+	private boolean hasSourceCovers;
 
 	private EvaluationCrsLookup() {
 	}
@@ -41,6 +42,7 @@ final class EvaluationCrsLookup {
 	static EvaluationCrsLookup of(IndexReader reader, IndexGeometry bound, boolean candidateIsSubject)
 			throws IOException {
 		EvaluationCrsLookup lookup = new EvaluationCrsLookup();
+		lookup.hasSourceCovers = LuceneGeoDocumentSchema.hasSourceCovers(reader);
 		// The bound is always placed among the sources of its own CRS, so a CRS84 lookup never selects those.
 		String boundCrsUri = bound.sourceGeometryLiteral().effectiveCrsUri();
 		lookup.placements.put(boundCrsUri, bound.evaluationEnvelope(boundCrsUri, candidateIsSubject).orElseThrow());
@@ -71,9 +73,18 @@ final class EvaluationCrsLookup {
 	 * a source carries cover boxes, one of them does. Every lookup takes its sources from this one condition, so
 	 * the sources that need exact evaluation and the sources that are apart never overlap and leave none out.
 	 */
-	private static Query mayMeet(BoundEvaluationEnvelope bound) {
+	private Query mayMeet(BoundEvaluationEnvelope bound) {
+		Query meeting = LuceneGeoDocumentSchema.sourceEnvelopeIntersectsQuery(bound.envelope());
+		/*
+		 * A source apart from the bound by its cover boxes becomes a definite disjoint match without exact
+		 * evaluation, although the two envelopes meet. Jena may fail to relate such a pair when the bound is
+		 * invalid, and a pair that fails is no match, so cover boxes decide nothing for an invalid bound.
+		 */
+		if (!hasSourceCovers || !bound.isValid()) {
+			return meeting;
+		}
 		return new BooleanQuery.Builder()
-				.add(LuceneGeoDocumentSchema.sourceEnvelopeIntersectsQuery(bound.envelope()), BooleanClause.Occur.FILTER)
+				.add(meeting, BooleanClause.Occur.FILTER)
 				.add(LuceneGeoDocumentSchema.sourceCoverApartQuery(bound.envelope()), BooleanClause.Occur.MUST_NOT)
 				.build();
 	}

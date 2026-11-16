@@ -101,6 +101,30 @@ public class SourceCoverLookupTest {
         }
     }
 
+    /**
+     * Cover boxes decide only for a valid bound. Two overlapping squares in the hole of the ring form an invalid
+     * multipolygon, apart from every box of the ring; the ring stays a candidate for exact evaluation in both
+     * directions instead of becoming a definite disjoint match. A valid square in the same place is a definite
+     * disjoint match.
+     */
+    @Test
+    public void coverBoxesDecideNothingForAnInvalidBound() throws Exception {
+        LuceneGeoIndexer indexer = createIndexer("invalid-bound");
+        index(indexer, List.of(geometry(RING)));
+        IndexGeometry overlappingParts = geometry("MULTIPOLYGON(((15.45 60.45,15.52 60.45,15.52 60.52,15.45 60.52,"
+                + "15.45 60.45)),((15.48 60.48,15.55 60.48,15.55 60.55,15.48 60.55,15.48 60.48)))");
+        IndexGeometry square = geometry("POLYGON((15.45 60.45,15.55 60.45,15.55 60.55,15.45 60.55,15.45 60.45))");
+
+        for (boolean candidateIsSubject : new boolean[]{true, false}) {
+            assertEquals(Set.of(1L), definite(indexer.getEnvelopeDisjointCandidates(square, candidateIsSubject)));
+            assertEquals(Set.of(), ids(indexer.getEnvelopeDisjointUncertainCandidates(square, candidateIsSubject)));
+            assertEquals(Set.of(), definite(indexer.getEnvelopeDisjointCandidates(overlappingParts, candidateIsSubject)));
+            assertEquals(Set.of(1L),
+                    ids(indexer.getEnvelopeDisjointUncertainCandidates(overlappingParts, candidateIsSubject)));
+            assertEquals(Set.of(1L), ids(indexer.getEnvelopeIntersections(overlappingParts, candidateIsSubject)));
+        }
+    }
+
     /** A triangle has too few points for boxes, so a bound in the empty half of its envelope stays a candidate. */
     @Test
     public void sourceWithoutBoxesIsLookedUpByItsEnvelope() throws Exception {

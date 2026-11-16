@@ -14,9 +14,9 @@ import java.util.List;
 /**
  * Boxes that together contain a source geometry, in the coordinates of the geometry itself.
  *
- * <p>The envelope of a large geometry can cover far more than the geometry does. A bound that meets the envelope
- * and none of these boxes shares no point with the geometry, in any CRS: the boxes are built from the same
- * coordinates Jena evaluates the source on, without a transformation.
+ * <p>The envelope of a large geometry can cover far more than the geometry does. The boxes are built from the
+ * coordinates Jena evaluates the source on, without a transformation, so a bound whose envelope in the source's CRS
+ * meets none of them shares no point with the geometry when the two are compared in that CRS.
  *
  * <p>The boxes are cells of the envelope, quartered repeatedly. A cell is discarded only when an exact predicate
  * finds no point of the geometry in it, so every point of the geometry lies in a kept cell: the closed cells of one

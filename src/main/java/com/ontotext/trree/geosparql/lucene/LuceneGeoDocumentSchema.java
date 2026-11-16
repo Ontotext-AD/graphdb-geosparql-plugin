@@ -281,6 +281,11 @@ final class LuceneGeoDocumentSchema {
 				hasEnvelope ? HAS_ENVELOPE_VALUE : NO_ENVELOPE_VALUE));
 	}
 
+	/** Whether any document of the reader carries cover boxes. */
+	static boolean hasSourceCovers(IndexReader reader) throws IOException {
+		return reader.docFreq(new Term(FIELD_HAS_SOURCE_COVER, HAS_SOURCE_COVER_VALUE)) > 0;
+	}
+
 	/**
 	 * Matches sources that carry cover boxes of which none meets the closed envelope, both taken in one CRS. Such a
 	 * source shares no point with a geometry inside that envelope.

@@ -49,6 +49,7 @@ import java.util.Set;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
@@ -750,6 +751,55 @@ public class GeoSparqlCandidateEnvelopeDifferentialTest {
 		assertEquals(Set.of(3L), runIndexed(fixture, GeoSparqlPropertyRelation.SF_DISJOINT, 0, 100L));
 		assertEquals(Set.of(3L), runIndexed(fixture, GeoSparqlPropertyRelation.EH_DISJOINT, 0, 100L));
 		assertEquals(Set.of(), runIndexed(fixture, GeoSparqlPropertyRelation.RCC8_DC, 0, 100L));
+	}
+
+	/**
+	 * A ring of 202 points carries cover boxes, and its hole leaves the middle of its envelope uncovered. Bound 2 is a
+	 * multipolygon whose parts overlap, which Jena cannot relate to the ring as an RCC8 relation, so that pair is no
+	 * match. Bound 3 is a valid polygon in the same place, disjoint from the ring. Source 4 is a polygon whose envelope
+	 * is apart from both bounds. Indexed results equal the exact results for each bound, relation and direction.
+	 */
+	@Test
+	public void boundsInTheHoleOfACoveredRingGiveTheExactResults() throws Exception {
+		Map<Long, List<IndexGeometry>> sources = new LinkedHashMap<>();
+		sources.put(1L, geometries(ringAroundTheOrigin(10, 8, 100)));
+		sources.put(2L, geometries("MULTIPOLYGON(((-2 -2,1 -2,1 1,-2 1,-2 -2)),((-1 -1,2 -1,2 2,-1 2,-1 -1)))"));
+		sources.put(3L, geometries("POLYGON((-2 -2,2 -2,2 2,-2 2,-2 -2))"));
+		sources.put(4L, geometries("POLYGON((30 30,31 30,31 31,30 31,30 30))"));
+		Fixture fixture = createFixture("bounds-in-a-covered-hole", sources);
+		List<SourceGeometryLiteral> ring = List.of(sources.get(1L).get(0).sourceGeometryLiteral());
+		List<SourceGeometryLiteral> overlappingParts = List.of(sources.get(2L).get(0).sourceGeometryLiteral());
+
+		assertNull(exactRelationOrUnknown(GeoSparqlPropertyRelation.RCC8_DC, ring, overlappingParts));
+		assertNull(exactRelationOrUnknown(GeoSparqlPropertyRelation.RCC8_DC, overlappingParts, ring));
+		for (GeoSparqlPropertyRelation relation : List.of(GeoSparqlPropertyRelation.RCC8_DC,
+				GeoSparqlPropertyRelation.SF_DISJOINT, GeoSparqlPropertyRelation.EH_DISJOINT,
+				GeoSparqlPropertyRelation.SF_INTERSECTS)) {
+			for (long bound : new long[]{2L, 3L}) {
+				assertIndexedEqualsReference(fixture, relation, 0, bound);
+				assertIndexedEqualsReference(fixture, relation, bound, 0);
+			}
+		}
+		assertTrue(runIndexed(fixture, GeoSparqlPropertyRelation.RCC8_DC, 0, 3L).contains(1L));
+	}
+
+	/** A polygon around 0 0 with an outer ring and a hole, each of the given number of segments. */
+	private static String ringAroundTheOrigin(double outer, double inner, int segments) {
+		return "POLYGON((" + circleAroundTheOrigin(outer, segments) + "),(" + circleAroundTheOrigin(inner, segments)
+				+ "))";
+	}
+
+	private static String circleAroundTheOrigin(double radius, int segments) {
+		StringBuilder circle = new StringBuilder();
+		for (int i = 0; i <= segments; i++) {
+			double angle = 2 * Math.PI * (i % segments) / segments;
+			if (i > 0) {
+				circle.append(',');
+			}
+			circle.append(String.format(Locale.ROOT, "%.9f %.9f", radius * Math.cos(angle),
+					radius * Math.sin(angle)));
+		}
+		return circle.toString();
 	}
 
 	private void assertDefiniteMatchesAreExact(Fixture fixture, GeoSparqlPropertyRelation relation,
