@@ -28,10 +28,7 @@ import org.apache.lucene.util.BytesRef;
 import org.apache.jena.geosparql.implementation.DimensionInfo;
 import org.locationtech.jts.geom.Envelope;
 import org.locationtech.spatial4j.context.SpatialContext;
-import org.locationtech.spatial4j.context.jts.JtsSpatialContext;
-import org.locationtech.spatial4j.context.jts.JtsSpatialContextFactory;
 import org.locationtech.spatial4j.shape.Rectangle;
-import org.locationtech.spatial4j.shape.jts.JtsGeometry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -47,17 +44,19 @@ import java.util.Map;
  */
 final class LuceneGeoDocumentSchema {
 	private static final Logger LOGGER = LoggerFactory.getLogger(LuceneGeoDocumentSchema.class);
-	private static final JtsSpatialContext PLANAR_COVER_CONTEXT = planarCoverContext();
 	/** Per-document GeoSPARQL Lucene schema version. */
 	static final int SCHEMA_VERSION = 2;
 	/** GraphDB entity id, stored for reconstruction and indexed/doc-valued for lookup and grouping. */
 	static final String FIELD_ID = "id";
 	/** Prefix cells of the CRS84 index envelope; absent on empty sentinels. */
 	static final String FIELD_SPATIAL_PREFIX = "geoData1";
-	/** Prefix cells of the planar convex hull of a native CRS84 source; absent where no hull was indexed. */
-	static final String FIELD_NATIVE_HULL_PREFIX = "geoNativeHullCells";
-	/** Indexed marker present on exactly the documents that carry native hull cells. */
-	static final String FIELD_HAS_NATIVE_HULL_CELLS = "geoHasNativeHullCells";
+	/**
+	 * Boxes that together contain the source, in its own CRS: several points of four dimensions in the ordinate
+	 * order of {@link #FIELD_SOURCE_ENVELOPE}. Absent where the source's envelope describes it well enough.
+	 */
+	static final String FIELD_SOURCE_COVER = "geoSourceCover";
+	/** Indexed marker present on exactly the documents that carry cover boxes. */
+	static final String FIELD_HAS_SOURCE_COVER = "geoHasSourceCover";
 	/**
 	 * XY envelope of the source in its own CRS, as one point of four dimensions: minimum X, maximum X, minimum Y
 	 * and maximum Y. It serves lookup in the CRS where Jena evaluates a pair. Absent on empty sentinels.
@@ -94,7 +93,7 @@ final class LuceneGeoDocumentSchema {
 	static final String FIELD_HAS_ENVELOPE = "geoHasEnvelope";
 	static final String HAS_ENVELOPE_VALUE = "1";
 	static final String NO_ENVELOPE_VALUE = "0";
-	static final String HAS_NATIVE_HULL_CELLS_VALUE = "1";
+	static final String HAS_SOURCE_COVER_VALUE = "1";
 	/** Ends of the CRS84 longitude range, which name the same meridian. */
 	private static final double MINIMUM_LONGITUDE = -180.0;
 	private static final double MAXIMUM_LONGITUDE = 180.0;
@@ -112,7 +111,7 @@ final class LuceneGeoDocumentSchema {
 	 * envelope in its own CRS, and the CRS84 index envelope of each source in another CRS.
 	 */
 	static final String COMMIT_SCHEMA_LAYOUT_VALUE =
-			"prefix-envelope-ordinate-preserving-source-wkb-envelope-marker-topology-dv-indexed-source-crs-source-envelope-index-envelope";
+			"prefix-envelope-ordinate-preserving-source-wkb-envelope-marker-topology-dv-indexed-source-crs-source-envelope-index-envelope-source-cover";
 	/** Commit metadata key identifying the CRS transformation inputs used for candidate envelopes. */
 	static final String COMMIT_CRS_ENVIRONMENT_FINGERPRINT_KEY = "geosparql.crsEnvironmentFingerprint";
 	static final String SCHEMA_MISMATCH_MESSAGE =
@@ -124,20 +123,20 @@ final class LuceneGeoDocumentSchema {
 	}
 
 	static List<Document> toDocuments(long entityId, List<IndexGeometry> geometries,
-			SpatialStrategy strategy, SpatialStrategy nativeHullStrategy, SpatialContext ctx) {
+			SpatialStrategy strategy, SpatialContext ctx) {
 		Map<SourceGeometryLiteral, IndexGeometry> distinctSources = new LinkedHashMap<>();
 		for (IndexGeometry geometry : geometries) {
 			distinctSources.putIfAbsent(geometry.sourceGeometryLiteral(), geometry);
 		}
 		List<Document> documents = new ArrayList<>(distinctSources.size());
 		for (IndexGeometry geometry : distinctSources.values()) {
-			documents.add(toDocument(entityId, geometry, strategy, nativeHullStrategy, ctx));
+			documents.add(toDocument(entityId, geometry, strategy, ctx));
 		}
 		return documents;
 	}
 
 	static Document toDocument(long entityId, IndexGeometry geometry,
-			SpatialStrategy strategy, SpatialStrategy nativeHullStrategy, SpatialContext ctx) {
+			SpatialStrategy strategy, SpatialContext ctx) {
 		SourceGeometryLiteral source = geometry.sourceGeometryLiteral();
 		byte[] sourceGeometryWkb = SourceGeometryWkbCodec.encode(source);
 		DimensionInfo dimensions = source.asGeometryWrapper().getDimensionInfo();
@@ -154,10 +153,10 @@ final class LuceneGeoDocumentSchema {
 			for (Field field : strategy.createIndexableFields(shape)) {
 				doc.add(field);
 			}
-			addNativeHullCells(doc, geometry, nativeHullStrategy);
 			Envelope sourceEnvelope = geometry.sourceEnvelope();
 			doc.add(new DoublePoint(FIELD_SOURCE_ENVELOPE, sourceEnvelope.getMinX(), sourceEnvelope.getMaxX(),
 					sourceEnvelope.getMinY(), sourceEnvelope.getMaxY()));
+			addSourceCover(doc, geometry);
 			if (!IndexGeometry.INDEX_CRS.equals(source.effectiveCrsUri())) {
 				doc.add(new DoublePoint(FIELD_INDEX_ENVELOPE, envelope.getMinX(), envelope.getMaxX(),
 						envelope.getMinY(), envelope.getMaxY()));
@@ -182,42 +181,26 @@ final class LuceneGeoDocumentSchema {
 		return doc;
 	}
 
-	private static JtsSpatialContext planarCoverContext() {
-		JtsSpatialContextFactory factory = new JtsSpatialContextFactory();
-		factory.geo = false;
-		return factory.newSpatialContext();
-	}
-
 	/**
-	 * Adds the prefix cells of the planar convex hull of a native CRS84 source and the marker identifying documents
-	 * that carry them. A source gets neither, and remains an envelope candidate, when its hull is unavailable or
-	 * fills its envelope: the hull of a point, an axis-parallel line or a rectangle separates no bound that the
-	 * numeric envelope ranges admit.
+	 * Adds the boxes that together contain a source and the marker identifying documents that carry them. A source
+	 * gets neither, and is described by its envelope alone, when it has no boxes or they cannot be built: a marker
+	 * without boxes would name a source that no bound can meet.
 	 */
-	private static void addNativeHullCells(Document doc, IndexGeometry geometry, SpatialStrategy nativeHullStrategy) {
-		if (geometry.candidateBoundsKind() != CandidateBoundsKind.NATIVE_CRS84) {
-			return;
-		}
-		Field[] hullCells;
+	private static void addSourceCover(Document doc, IndexGeometry geometry) {
+		List<Envelope> boxes;
 		try {
-			// Native CRS84 topology is planar. Geographic wrapping would change the covered point set.
-			var hull = geometry.sourceGeometryLiteral().asGeometryWrapper().getXYGeometry().convexHull();
-			boolean fillsEnvelope = hull.getEnvelopeInternal().getArea() == 0 || hull.isRectangle();
-			if (hull.isEmpty() || !hull.isValid() || fillsEnvelope) {
-				return;
-			}
-			JtsGeometry cover = new JtsGeometry(hull, PLANAR_COVER_CONTEXT, false, false);
-			cover.index();
-			hullCells = nativeHullStrategy.createIndexableFields(cover);
+			boxes = SourceCoverBoxes.of(geometry.sourceGeometryLiteral().asGeometryWrapper().getXYGeometry());
 		} catch (RuntimeException e) {
-			// Hull cells are an optional refinement; a source without them remains an envelope candidate.
-			LOGGER.debug("Indexing a native CRS84 source without convex hull cells", e);
+			LOGGER.debug("Indexing a source without cover boxes", e);
 			return;
 		}
-		for (Field cell : hullCells) {
-			doc.add(cell);
+		if (boxes.isEmpty()) {
+			return;
 		}
-		doc.add(new StringField(FIELD_HAS_NATIVE_HULL_CELLS, HAS_NATIVE_HULL_CELLS_VALUE, Field.Store.NO));
+		for (Envelope box : boxes) {
+			doc.add(new DoublePoint(FIELD_SOURCE_COVER, box.getMinX(), box.getMaxX(), box.getMinY(), box.getMaxY()));
+		}
+		doc.add(new StringField(FIELD_HAS_SOURCE_COVER, HAS_SOURCE_COVER_VALUE, Field.Store.NO));
 	}
 
 	static SourceGeometryLiteral sourceGeometryLiteral(Document doc, SourceGeometryLiteralResolver sourceResolver) {
@@ -298,9 +281,15 @@ final class LuceneGeoDocumentSchema {
 				hasEnvelope ? HAS_ENVELOPE_VALUE : NO_ENVELOPE_VALUE));
 	}
 
-	/** Matches the documents that carry native hull cells. */
-	static Query hasNativeHullCellsQuery() {
-		return new TermQuery(new Term(FIELD_HAS_NATIVE_HULL_CELLS, HAS_NATIVE_HULL_CELLS_VALUE));
+	/**
+	 * Matches sources that carry cover boxes of which none meets the closed envelope, both taken in one CRS. Such a
+	 * source shares no point with a geometry inside that envelope.
+	 */
+	static Query sourceCoverApartQuery(Envelope envelope) {
+		return new BooleanQuery.Builder()
+				.add(new TermQuery(new Term(FIELD_HAS_SOURCE_COVER, HAS_SOURCE_COVER_VALUE)), BooleanClause.Occur.FILTER)
+				.add(boxesMeetingQuery(FIELD_SOURCE_COVER, envelope), BooleanClause.Occur.MUST_NOT)
+				.build();
 	}
 
 	/** Returns the source CRS URIs of the reader's documents. */
@@ -319,7 +308,12 @@ final class LuceneGeoDocumentSchema {
 
 	/** Matches sources whose own envelopes meet the closed envelope, both taken in one CRS. */
 	static Query sourceEnvelopeIntersectsQuery(Envelope envelope) {
-		return DoublePoint.newRangeQuery(FIELD_SOURCE_ENVELOPE,
+		return boxesMeetingQuery(FIELD_SOURCE_ENVELOPE, envelope);
+	}
+
+	/** Matches documents with a box in the field that meets the closed envelope. */
+	private static Query boxesMeetingQuery(String field, Envelope envelope) {
+		return DoublePoint.newRangeQuery(field,
 				new double[]{Double.NEGATIVE_INFINITY, lowerBound(envelope.getMinX()),
 						Double.NEGATIVE_INFINITY, lowerBound(envelope.getMinY())},
 				new double[]{upperBound(envelope.getMaxX()), Double.POSITIVE_INFINITY,

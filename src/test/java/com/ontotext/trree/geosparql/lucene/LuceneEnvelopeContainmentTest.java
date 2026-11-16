@@ -36,8 +36,6 @@ public class LuceneEnvelopeContainmentTest {
 	private static final SpatialContext SPATIAL_CONTEXT = SpatialContext.GEO;
 	private static final SpatialStrategy SPATIAL_STRATEGY = new RecursivePrefixTreeStrategy(
 			new QuadPrefixTree(SPATIAL_CONTEXT, 11), LuceneGeoDocumentSchema.FIELD_SPATIAL_PREFIX);
-	private static final SpatialStrategy NATIVE_HULL_STRATEGY = new RecursivePrefixTreeStrategy(
-			new QuadPrefixTree(SPATIAL_CONTEXT, 11), LuceneGeoDocumentSchema.FIELD_NATIVE_HULL_PREFIX);
 	private static final String EPSG_32634 = "http://www.opengis.net/def/crs/EPSG/0/32634";
 
 	@Test
@@ -141,7 +139,7 @@ public class LuceneEnvelopeContainmentTest {
 	private static void writeCandidate(IndexWriter writer, long entityId, IndexGeometry geometry)
 			throws Exception {
 		Document document = LuceneGeoDocumentSchema.toDocument(
-				entityId, geometry, SPATIAL_STRATEGY, NATIVE_HULL_STRATEGY, SPATIAL_CONTEXT);
+				entityId, geometry, SPATIAL_STRATEGY, SPATIAL_CONTEXT);
 		writer.addDocument(document);
 	}
 

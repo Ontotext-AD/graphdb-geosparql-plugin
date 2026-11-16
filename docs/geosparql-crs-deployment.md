@@ -36,6 +36,11 @@ The first two rows compare the coordinates that Jena evaluates. Lookup there nee
 envelopes, and a disjoint relation is decided by bounding boxes for every source that is clearly apart from the bound
 geometry or clearly inside it.
 
+A geometry with many points also stores a set of smaller boxes that follow its outline, in its own CRS. In the first
+two rows, a bound geometry that falls in an empty part of such a geometry's bounding box, such as a bay, a hole or a
+corner, does not select it. Geometries with fewer points, and invalid geometries, are selected by their bounding box
+alone.
+
 The last two rows rely on CRS84 index envelopes. A CRS84 index envelope of a source in another CRS is derived with
 Apache SIS and includes Jena's pinned cleanup displacement in CRS84 units. Apache SIS does not provide a universal
 mathematical proof that its transformed envelopes contain every possible transformed geometry. This is an intentional

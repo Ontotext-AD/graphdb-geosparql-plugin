@@ -8,7 +8,6 @@ import org.apache.lucene.search.BooleanQuery;
 import org.apache.lucene.search.IndexSearcher;
 import org.apache.lucene.search.MatchNoDocsQuery;
 import org.apache.lucene.search.Query;
-import org.locationtech.jts.geom.Envelope;
 
 import java.io.IOException;
 import java.util.LinkedHashMap;
@@ -22,7 +21,8 @@ import java.util.Optional;
  * operand transformed into that CRS. For the sources of one CRS this lookup therefore compares each source's own
  * envelope with the bound's envelope as Jena places it there. Both are exact for the two geometries of the
  * evaluation: envelopes that are apart prove the pair disjoint, and no other relation holds without envelopes that
- * meet.
+ * meet. A source may also carry boxes that together contain it; a bound whose envelope meets none of them shares no
+ * point with the source.
  *
  * <p>The bound is placed in every source CRS of the reader that it shares, or in which every source is the left
  * operand. A CRS in which Jena cannot place the bound relates none of its sources. Sources of every other CRS are
@@ -61,18 +61,21 @@ final class EvaluationCrsLookup {
 		return lookup;
 	}
 
+	/** Sources that may share a point with the bound. No other source is related to it except as disjoint. */
+	Query intersecting() {
+		return inEachCrs((sourceCrsUri, bound) -> mayMeet(bound));
+	}
+
 	/**
-	 * Sources whose envelopes meet the bound's. A refinement may name sources of one CRS that cannot meet the bound
-	 * although their envelopes do; it receives the CRS and the bound's envelope there and may return null.
+	 * Sources of one CRS that may share a point with the bound there: their envelopes meet the bound's, and where
+	 * a source carries cover boxes, one of them does. Every lookup takes its sources from this one condition, so
+	 * the sources that need exact evaluation and the sources that are apart never overlap and leave none out.
 	 */
-	Query intersecting(Refinement refinement) {
-		return inEachCrs((sourceCrsUri, bound) -> {
-			Query meeting = LuceneGeoDocumentSchema.sourceEnvelopeIntersectsQuery(bound.envelope());
-			Query apart = refinement.apart(sourceCrsUri, bound.envelope());
-			return apart == null ? meeting : new BooleanQuery.Builder()
-					.add(meeting, BooleanClause.Occur.FILTER)
-					.add(apart, BooleanClause.Occur.MUST_NOT).build();
-		});
+	private static Query mayMeet(BoundEvaluationEnvelope bound) {
+		return new BooleanQuery.Builder()
+				.add(LuceneGeoDocumentSchema.sourceEnvelopeIntersectsQuery(bound.envelope()), BooleanClause.Occur.FILTER)
+				.add(LuceneGeoDocumentSchema.sourceCoverApartQuery(bound.envelope()), BooleanClause.Occur.MUST_NOT)
+				.build();
 	}
 
 	/** Sources whose envelopes equal the bound's, which geometries that are equal share. */
@@ -81,21 +84,20 @@ final class EvaluationCrsLookup {
 				LuceneGeoDocumentSchema.sourceEnvelopeEqualsQuery(bound.envelope()));
 	}
 
-	/** Sources whose envelopes are apart from the bound's: each is disjoint from the bound. */
+	/** Sources that share no point with the bound: each is disjoint from it. */
 	Query apart() {
 		return inEachCrs((sourceCrsUri, bound) -> new BooleanQuery.Builder()
 				.add(LuceneGeoDocumentSchema.hasEnvelopeQuery(true), BooleanClause.Occur.FILTER)
-				.add(LuceneGeoDocumentSchema.sourceEnvelopeIntersectsQuery(bound.envelope()),
-						BooleanClause.Occur.MUST_NOT).build());
+				.add(mayMeet(bound), BooleanClause.Occur.MUST_NOT).build());
 	}
 
 	/**
-	 * Sources whose envelopes meet the bound's and that the bound is not known to cover. Where the bound fills its
-	 * envelope, a source whose envelope lies inside it meets the bound and is not disjoint from it.
+	 * Sources that may share a point with the bound and that the bound is not known to cover. Where the bound
+	 * fills its envelope, a source whose envelope lies inside it meets the bound and is not disjoint from it.
 	 */
 	Query possiblyDisjoint() {
 		return inEachCrs((sourceCrsUri, bound) -> {
-			Query meeting = LuceneGeoDocumentSchema.sourceEnvelopeIntersectsQuery(bound.envelope());
+			Query meeting = mayMeet(bound);
 			return !bound.fillsEnvelope() ? meeting : new BooleanQuery.Builder()
 					.add(meeting, BooleanClause.Occur.FILTER)
 					.add(LuceneGeoDocumentSchema.sourceEnvelopeWithinQuery(bound.envelope()),
@@ -164,12 +166,6 @@ final class EvaluationCrsLookup {
 	@FunctionalInterface
 	private interface InCrs {
 		Query query(String sourceCrsUri, BoundEvaluationEnvelope bound);
-	}
-
-	/** Names sources of one CRS that cannot meet the bound although their envelopes meet its envelope there. */
-	@FunctionalInterface
-	interface Refinement {
-		Query apart(String sourceCrsUri, Envelope boundEnvelope);
 	}
 
 	/** Builds a lookup on CRS84 index envelopes when the reader needs one. */

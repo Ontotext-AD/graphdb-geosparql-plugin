@@ -108,7 +108,6 @@ public class LuceneGeoIndexerTest {
     private SpatialContext testSpatialContext;
 
     private SpatialStrategy testSpatialStrategy;
-    private SpatialStrategy testNativeHullStrategy;
 
     private Map<Long, Long> expected = new HashMap<>();
 
@@ -133,8 +132,6 @@ public class LuceneGeoIndexerTest {
         testSpatialContext = SpatialContext.GEO;
         testSpatialStrategy = new RecursivePrefixTreeStrategy(
                 new QuadPrefixTree(testSpatialContext, 11), LuceneGeoDocumentSchema.FIELD_SPATIAL_PREFIX);
-        testNativeHullStrategy = new RecursivePrefixTreeStrategy(
-                new QuadPrefixTree(testSpatialContext, 11), LuceneGeoDocumentSchema.FIELD_NATIVE_HULL_PREFIX);
     }
 
     private void indexGeometries(List<IndexGeometry> exampleGeometries) throws Exception {
@@ -1052,7 +1049,7 @@ public class LuceneGeoIndexerTest {
 
     private Document currentSchemaDocument(long entityId, IndexGeometry geometry) {
         return LuceneGeoDocumentSchema.toDocument(entityId, geometry,
-                testSpatialStrategy, testNativeHullStrategy, testSpatialContext);
+                testSpatialStrategy, testSpatialContext);
     }
 
     private LuceneSourceGeometryLiteralIterator sourceGeometryLiteralIterator(
