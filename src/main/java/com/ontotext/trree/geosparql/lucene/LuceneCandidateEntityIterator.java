@@ -22,12 +22,16 @@ import java.util.NoSuchElementException;
  * Groups Lucene documents matched by a candidate query into one {@link CandidateEntity} per entity id.
  *
  * <p>Numeric entity-id sorting keeps all matching documents for an entity contiguous across {@code searchAfter}
- * pages. The source geometry resolver is shared across the current group, so documents derived from the same source
- * geometry literal reuse one validated source snapshot. This iterator owns the searcher's reader and releases it on
- * {@link #close()}.
+ * pages. Every page runs the candidate query again, so each continuation page is larger than the one before it, up to
+ * {@link #MAXIMUM_PAGE_SIZE}: a lookup with few candidates reads one small page, and a broad lookup repeats its query
+ * a number of times that grows far more slowly than its candidate count. The source geometry resolver is shared
+ * across the current group, so documents derived from the same source geometry literal reuse one validated source
+ * snapshot. This iterator owns the searcher's reader and releases it on {@link #close()}.
  */
 class LuceneCandidateEntityIterator implements CloseableIterator<CandidateEntity> {
-	private static final int PAGE_SIZE = 1000;
+	private static final int FIRST_PAGE_SIZE = 1000;
+	private static final int PAGE_GROWTH = 4;
+	private static final int MAXIMUM_PAGE_SIZE = 64_000;
 	private static final Sort ENTITY_ID_SORT = new Sort(new SortField(LuceneGeoDocumentSchema.FIELD_ID,
 			SortField.Type.LONG));
 	private static final Sort CONTINUATION_SORT = continuationSort();
@@ -36,6 +40,7 @@ class LuceneCandidateEntityIterator implements CloseableIterator<CandidateEntity
 	private final Query query;
 	private final SourceGeometryLiteralResolver sourceResolver = new SourceGeometryLiteralResolver();
 	private TopDocs topDocs;
+	private int pageSize = FIRST_PAGE_SIZE;
 	private int idx;
 	private boolean exhausted;
 	private CandidateEntity next;
@@ -115,7 +120,7 @@ class LuceneCandidateEntityIterator implements CloseableIterator<CandidateEntity
 
 	private void loadFirstPage() {
 		try {
-			topDocs = searcher.search(query, PAGE_SIZE, ENTITY_ID_SORT);
+			topDocs = searcher.search(query, pageSize, ENTITY_ID_SORT);
 			idx = 0;
 		} catch (IOException e) {
 			throw new PluginException("Unable to execute Lucene candidate entity query.", e);
@@ -126,7 +131,7 @@ class LuceneCandidateEntityIterator implements CloseableIterator<CandidateEntity
 		if (exhausted) {
 			return false;
 		}
-		if (topDocs.scoreDocs.length == 0 || topDocs.scoreDocs.length < PAGE_SIZE) {
+		if (topDocs.scoreDocs.length < pageSize) {
 			exhausted = true;
 			return false;
 		}
@@ -138,8 +143,9 @@ class LuceneCandidateEntityIterator implements CloseableIterator<CandidateEntity
 					.add(query, BooleanClause.Occur.FILTER)
 					.add(LuceneGeoDocumentSchema.entityIdsAtLeastQuery(lastEntityId), BooleanClause.Occur.FILTER)
 					.build();
+			pageSize = Math.min(pageSize * PAGE_GROWTH, MAXIMUM_PAGE_SIZE);
 			// Avoid point-comparator setup for lookups that fit on their first page.
-			topDocs = searcher.searchAfter(last, remaining, PAGE_SIZE, CONTINUATION_SORT);
+			topDocs = searcher.searchAfter(last, remaining, pageSize, CONTINUATION_SORT);
 			idx = 0;
 			if (topDocs.scoreDocs.length == 0) {
 				exhausted = true;

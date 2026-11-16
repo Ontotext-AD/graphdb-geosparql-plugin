@@ -74,6 +74,34 @@ public class LuceneCandidatePagingTest {
         assertEquals(entityCount + 1L, expectedId);
     }
 
+    /**
+     * Every page runs the candidate query again. Pages of 1,000, 4,000 and 16,000 documents and one page with the
+     * remaining 9,000 hold these candidates.
+     */
+    @Test
+    public void broadLookupsRepeatTheCandidateQueryFewTimes() throws Exception {
+        IdReadCountingIndexer indexer = createIndexer("growing-pages");
+        int entityCount = 30000;
+        var geometry = TestIndexGeometries.fromWkt("POINT(0 0)");
+        indexInShuffledOrder(indexer, entityCount, List.of(geometry));
+        int segments;
+        try (IndexReader reader = indexer.openReader()) {
+            segments = reader.leaves().size();
+        }
+
+        indexer.idValueOpens.set(0);
+        long expectedId = 1;
+        try (var candidates = indexer.getEnvelopeIntersections(geometry)) {
+            while (candidates.hasNext()) {
+                assertEquals(expectedId++, candidates.next().entityId());
+            }
+        }
+        assertEquals(entityCount + 1L, expectedId);
+        // Each run of the query opens the entity ids of every segment once.
+        assertTrue("The candidate query ran " + indexer.idValueOpens.get() + " times over " + segments
+                + " segments", indexer.idValueOpens.get() <= 4L * segments);
+    }
+
     private IdReadCountingIndexer createIndexer(String name) throws Exception {
         GeoSparqlPlugin parent = new GeoSparqlPlugin();
         GeoSparqlConfig config = new GeoSparqlConfig();
@@ -104,6 +132,7 @@ public class LuceneCandidatePagingTest {
     private static final class IdReadCountingIndexer extends LuceneGeoIndexer {
         private final AtomicLong idReads = new AtomicLong();
         private final AtomicLong lowestIdReads = new AtomicLong();
+        private final AtomicLong idValueOpens = new AtomicLong();
 
         private IdReadCountingIndexer(GeoSparqlPlugin parent) {
             super(parent);
@@ -111,16 +140,18 @@ public class LuceneCandidatePagingTest {
 
         @Override
         IndexReader openReader() throws IOException {
-            return new IdReadCountingReader((DirectoryReader) super.openReader(), idReads, lowestIdReads);
+            return new IdReadCountingReader((DirectoryReader) super.openReader(), idReads, lowestIdReads,
+                    idValueOpens);
         }
     }
 
     private static final class IdReadCountingReader extends FilterDirectoryReader {
         private final AtomicLong idReads;
         private final AtomicLong lowestIdReads;
+        private final AtomicLong idValueOpens;
 
-        private IdReadCountingReader(DirectoryReader reader, AtomicLong idReads, AtomicLong lowestIdReads)
-                throws IOException {
+        private IdReadCountingReader(DirectoryReader reader, AtomicLong idReads, AtomicLong lowestIdReads,
+                AtomicLong idValueOpens) throws IOException {
             super(reader, new SubReaderWrapper() {
                 @Override
                 public LeafReader wrap(LeafReader leaf) {
@@ -129,6 +160,7 @@ public class LuceneCandidatePagingTest {
                         public NumericDocValues getNumericDocValues(String field) throws IOException {
                             NumericDocValues values = super.getNumericDocValues(field);
                             if (!LuceneGeoDocumentSchema.FIELD_ID.equals(field) || values == null) return values;
+                            idValueOpens.incrementAndGet();
                             return new FilterNumericDocValues(values) {
                                 @Override
                                 public long longValue() throws IOException {
@@ -154,11 +186,12 @@ public class LuceneCandidatePagingTest {
             });
             this.idReads = idReads;
             this.lowestIdReads = lowestIdReads;
+            this.idValueOpens = idValueOpens;
         }
 
         @Override
         protected DirectoryReader doWrapDirectoryReader(DirectoryReader reader) throws IOException {
-            return new IdReadCountingReader(reader, idReads, lowestIdReads);
+            return new IdReadCountingReader(reader, idReads, lowestIdReads, idValueOpens);
         }
 
         @Override
