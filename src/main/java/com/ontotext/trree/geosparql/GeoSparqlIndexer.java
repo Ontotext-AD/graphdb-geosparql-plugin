@@ -28,46 +28,30 @@ public interface GeoSparqlIndexer {
 	void indexGeometryList(long subject, Function<Long, String> subjectMapper, List<IndexGeometry> geometries);
 
 	/**
-	 * Returns candidates whose CRS84 index envelopes intersect one bound source envelope.
-	 * An adapter may omit a native CRS84 source that a finer cover shows to be apart from a native CRS84 bound, and
-	 * may add a source beside the bound's envelope when one side of the pair is transformed. Omission from this
-	 * result does not itself prove disjointness; partitioned disjoint lookup retains its envelope proofs.
+	 * Returns the candidates that an exact evaluation against one bound source can relate by any relation other
+	 * than a disjoint one.
 	 *
-	 * @param boundSourceIndexGeometry derived index envelope for one bound source geometry literal
+	 * <p>Jena evaluates a pair in the CRS of its left operand, the subject, so a lookup needs to know which side
+	 * of the pair the candidates are on. An adapter may leave out a source that it can show to share no point with
+	 * the bound. Omission from this result does not itself prove disjointness; partitioned disjoint lookup has its
+	 * own proofs.
+	 *
+	 * @param boundSourceIndexGeometry index geometry of one bound source geometry literal
+	 * @param candidateIsSubject whether each candidate is the subject and the bound source the object
 	 * @return a closeable iterator over entity groups and their matching source geometry literal snapshots
 	 */
-	CloseableIterator<CandidateEntity> getEnvelopeIntersections(IndexGeometry boundSourceIndexGeometry);
+	CloseableIterator<CandidateEntity> getEnvelopeIntersections(IndexGeometry boundSourceIndexGeometry,
+			boolean candidateIsSubject);
 
 	/**
-	 * Returns intersection candidates for a bound source whose binding direction is known.
-	 *
-	 * <p>Jena evaluates a pair in the CRS of its left operand, the subject. When every candidate is the subject, an
-	 * adapter may select candidates by envelopes taken in that CRS; the result still contains every source that an
-	 * exact evaluation against the bound can relate.
-	 *
-	 * @param candidateIsSubject whether each candidate is the subject and the bound source the object
-	 */
-	default CloseableIterator<CandidateEntity> getEnvelopeIntersections(IndexGeometry boundSourceIndexGeometry,
-			boolean candidateIsSubject) {
-		return getEnvelopeIntersections(boundSourceIndexGeometry);
-	}
-
-	/**
-	 * Returns uncertain equality candidates. Adapters may require equal envelopes for two native CRS84 sources;
-	 * transformed sources retain conservative envelope-intersection lookup. Every candidate needs exact evaluation.
-	 */
-	default CloseableIterator<CandidateEntity> getEnvelopeEqualityCandidates(IndexGeometry boundSourceIndexGeometry) {
-		return getEnvelopeIntersections(boundSourceIndexGeometry);
-	}
-
-	/**
-	 * Returns uncertain equality candidates for a bound source whose binding direction is known.
+	 * Returns uncertain equality candidates. Adapters may require equal envelopes where both envelopes are exact
+	 * for the pair, and retain intersection lookup otherwise. Every candidate needs exact evaluation.
 	 *
 	 * @param candidateIsSubject whether each candidate is the subject and the bound source the object
 	 */
 	default CloseableIterator<CandidateEntity> getEnvelopeEqualityCandidates(IndexGeometry boundSourceIndexGeometry,
 			boolean candidateIsSubject) {
-		return getEnvelopeEqualityCandidates(boundSourceIndexGeometry);
+		return getEnvelopeIntersections(boundSourceIndexGeometry, candidateIsSubject);
 	}
 
 	/**
@@ -82,44 +66,30 @@ public interface GeoSparqlIndexer {
 	/**
 	 * Returns uncertain candidates for one bound source in a partitioned disjoint traversal.
 	 *
-	 * <p>Under the candidate-envelope containment contract, adapters may remove candidates whose precise envelope
-	 * ordinate metadata proves they cannot be disjoint. The returned candidates carry complete source payloads.
-	 * Callers own and must close the iterator. Implementations without a definite-non-match proof retain ordinary
-	 * conservative envelope intersections.
+	 * <p>Adapters may remove candidates that they can prove not to be disjoint from the bound. The returned
+	 * candidates carry complete source payloads. Callers own and must close the iterator. Implementations without
+	 * such a proof retain ordinary intersection candidates.
 	 *
-	 * @param boundSourceIndexGeometry derived index envelope for one bound source geometry literal
+	 * @param boundSourceIndexGeometry index geometry of one bound source geometry literal
+	 * @param candidateIsSubject whether each candidate is the subject and the bound source the object
 	 * @return a closeable iterator over uncertain entity groups and their matching source geometry literal snapshots
 	 */
 	default CloseableIterator<CandidateEntity> getEnvelopeDisjointUncertainCandidates(
-			IndexGeometry boundSourceIndexGeometry) {
-		return getEnvelopeIntersections(boundSourceIndexGeometry);
-	}
-
-	/**
-	 * Returns uncertain candidates of a partitioned disjoint traversal for a bound source whose binding direction
-	 * is known.
-	 *
-	 * @param candidateIsSubject whether each candidate is the subject and the bound source the object
-	 */
-	default CloseableIterator<CandidateEntity> getEnvelopeDisjointUncertainCandidates(
 			IndexGeometry boundSourceIndexGeometry, boolean candidateIsSubject) {
-		return getEnvelopeDisjointUncertainCandidates(boundSourceIndexGeometry);
+		return getEnvelopeIntersections(boundSourceIndexGeometry, candidateIsSubject);
 	}
 
 	/**
-	 * Returns one lightweight result per source document whose non-empty CRS84 index envelope is absent from the
-	 * conservative envelope-intersection result for the supplied bound source.
+	 * Returns one lightweight result per spatial source document that is proven disjoint from the supplied bound
+	 * source without exact evaluation. Together with the uncertain and cleanup candidates of the same bound and
+	 * direction, these are all the spatial source documents that can be disjoint from it.
 	 *
-	 * @param boundSourceIndexGeometry derived index envelope for one non-empty bound source geometry literal
-	 * @return source-document metadata for envelope-proven disjoint candidates
+	 * @param boundSourceIndexGeometry index geometry of one non-empty bound source geometry literal
+	 * @param candidateIsSubject whether each candidate is the subject and the bound source the object
+	 * @return source-document metadata for proven disjoint candidates
 	 */
 	CloseableIterator<EnvelopeDisjointCandidate> getEnvelopeDisjointCandidates(
-			IndexGeometry boundSourceIndexGeometry);
-
-	default CloseableIterator<EnvelopeDisjointCandidate> getEnvelopeDisjointCandidates(
-			IndexGeometry boundSourceIndexGeometry, boolean candidateIsSubject) {
-		return getEnvelopeDisjointCandidates(boundSourceIndexGeometry);
-	}
+			IndexGeometry boundSourceIndexGeometry, boolean candidateIsSubject);
 
 	/** Returns entities represented by non-spatial empty-sentinel source documents for exact evaluation. */
 	CloseableIterator<CandidateEntity> getNonSpatialCandidates();

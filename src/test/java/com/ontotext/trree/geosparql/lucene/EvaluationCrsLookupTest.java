@@ -183,17 +183,6 @@ public class EvaluationCrsLookupTest {
                 candidates.contains(6L));
     }
 
-    /** A caller that does not state the binding direction gets candidates that hold for either direction. */
-    @Test
-    public void lookupWithoutABindingDirectionKeepsSourcesOfAnotherCrsBesideTheBound() throws Exception {
-        LuceneGeoIndexer indexer = createIndexer("unstated");
-        index(indexer, insideAndBeside());
-
-        Set<Long> candidates = ids(indexer.getEnvelopeIntersections(geometry(BOUND)));
-        assertTrue(candidates.containsAll(Set.of(1L, 2L, 3L, 5L, 6L)));
-        assertFalse(candidates.contains(4L));
-    }
-
     /**
      * Jena cannot place this three-dimensional EPSG:4979 bound near Brisbane in UTM 32N, so every exact evaluation
      * of a UTM 32N subject against it fails and no relation holds. Such a subject is no candidate of any phase.

@@ -275,7 +275,7 @@ public class LuceneGeoIndexerTest {
 		}
 
 		CloseableIterator<CandidateEntity> iterator =
-				entityCandidateIndexer.getEnvelopeIntersections(geometry);
+				entityCandidateIndexer.getEnvelopeIntersections(geometry, false);
 		try {
 			assertTrue(iterator.hasNext());
 			CandidateEntity candidate = iterator.next();
@@ -304,7 +304,7 @@ public class LuceneGeoIndexerTest {
 		indexer.complete();
 
 		assertArrayEquals(new long[]{1L},
-				collectEntityIds(indexer.getEnvelopeIntersections(collectionEnvelope)));
+				collectEntityIds(indexer.getEnvelopeIntersections(collectionEnvelope, false)));
         assertArrayEquals(new long[]{1L, 2L}, collectEntityIds(indexer.getAllEntities()));
 
         try (FSDirectory directory = FSDirectory.open(GeoSparqlConfig.resolveIndexPath(dataDir));

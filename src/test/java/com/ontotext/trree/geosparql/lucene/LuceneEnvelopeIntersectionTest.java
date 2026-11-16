@@ -43,7 +43,7 @@ public class LuceneEnvelopeIntersectionTest {
                         geometry("POLYGON((10.009 10.009,10.011 10.009,10.011 10.011,10.009 10.011,10.009 10.009))"),
                         geometry("POLYGON((10.012 10.012,10.013 10.012,10.013 10.013,10.012 10.013,10.012 10.012))")));
 
-                List<Long> candidates = collect(indexer.getEnvelopeIntersections(geometry("POINT(10.01 10.01)")));
+                List<Long> candidates = collect(indexer.getEnvelopeIntersections(geometry("POINT(10.01 10.01)"), false));
                 assertEquals("Envelope-separated sources must not load stored fields", 1, indexer.storedReads.get());
                 assertEquals(List.of(1L), candidates);
             }
@@ -51,12 +51,13 @@ public class LuceneEnvelopeIntersectionTest {
     }
 
     /**
-     * Exact evaluation of a mixed-CRS pair can relate sources whose index envelopes are apart, so a pair with a
-     * transformed side stays a candidate whenever the prefix cells of the two envelopes meet. All three envelopes
-     * lie in one cell of the default grid.
+     * A subject in another CRS than CRS84 is evaluated against each object transformed into its CRS, which can
+     * relate sources whose index envelopes are apart, so objects stay candidates wherever the prefix cells of the
+     * two envelopes meet. All three envelopes lie in one cell of the default grid. A CRS84 subject is evaluated in
+     * CRS84 and selects objects of another CRS by index envelopes that meet its own.
      */
     @Test
-    public void transformedEnvelopesInThePrefixCellsOfTheBoundRemainIntersectionCandidates() throws Exception {
+    public void transformedSubjectsKeepObjectsInThePrefixCellsOfTheirIndexEnvelopes() throws Exception {
         LuceneGeoIndexer indexer = createIndexer("prefix-cells", GeoSparqlConfig.PrefixTree.QUAD, 11);
         IndexGeometry transformedBesideThePoint = transformed(new Envelope(10.012, 10.013, 10.012, 10.013));
         index(indexer, List.of(
@@ -64,8 +65,8 @@ public class LuceneEnvelopeIntersectionTest {
                 geometry("POLYGON((10.012 10.012,10.013 10.012,10.013 10.013,10.012 10.013,10.012 10.012))"),
                 transformedBesideThePoint));
 
-        assertEquals(List.of(1L, 3L), collect(indexer.getEnvelopeIntersections(geometry("POINT(10.01 10.01)"))));
-        assertEquals(List.of(1L, 2L, 3L), collect(indexer.getEnvelopeIntersections(transformedBesideThePoint)));
+        assertEquals(List.of(1L, 2L, 3L), collect(indexer.getEnvelopeIntersections(transformedBesideThePoint, false)));
+        assertEquals(List.of(1L), collect(indexer.getEnvelopeIntersections(geometry("POINT(10.01 10.01)"), false)));
     }
 
     /**
@@ -109,7 +110,7 @@ public class LuceneEnvelopeIntersectionTest {
                             overlapping.add(i + 1L);
                         }
                     }
-                    List<Long> candidates = collect(indexer.getEnvelopeIntersections(boundInAnotherCrs(bound)));
+                    List<Long> candidates = collect(indexer.getEnvelopeIntersections(boundInAnotherCrs(bound), false));
                     assertTrue(tree + " " + precision + " " + bound + " omits "
                             + overlapping.stream().filter(id -> !candidates.contains(id)).toList(),
                             candidates.containsAll(overlapping));
@@ -126,7 +127,7 @@ public class LuceneEnvelopeIntersectionTest {
                 geometry("POINT(1.00001 1)")));
 
         assertEquals(List.of(1L, 2L, 3L, 4L, 5L), collect(indexer.getEnvelopeIntersections(
-                geometry("POLYGON((-1 -1,-1 1,1 1,1 -1,-1 -1))"))));
+                geometry("POLYGON((-1 -1,-1 1,1 1,1 -1,-1 -1))"), false)));
         assertEquals(5, indexer.storedReads.get());
     }
 
@@ -139,7 +140,7 @@ public class LuceneEnvelopeIntersectionTest {
 
         for (IndexGeometry bound : zeros) {
             indexer.storedReads.set(0);
-            assertEquals(List.of(1L, 2L, 3L, 4L), collect(indexer.getEnvelopeIntersections(bound)));
+            assertEquals(List.of(1L, 2L, 3L, 4L), collect(indexer.getEnvelopeIntersections(bound, false)));
             assertEquals(4, indexer.storedReads.get());
         }
     }
@@ -155,9 +156,9 @@ public class LuceneEnvelopeIntersectionTest {
                 transformed(new Envelope(-180 + 1e-7, -170, -10, 10))));
 
         assertEquals(List.of(1L, 2L, 5L), collect(indexer.getEnvelopeIntersections(
-                boundInAnotherCrs(east.indexEnvelope()))));
+                boundInAnotherCrs(east.indexEnvelope()), false)));
         assertEquals(List.of(1L, 2L, 4L, 5L), collect(indexer.getEnvelopeIntersections(
-                boundInAnotherCrs(west.indexEnvelope()))));
+                boundInAnotherCrs(west.indexEnvelope()), false)));
     }
 
     @Test
@@ -171,9 +172,9 @@ public class LuceneEnvelopeIntersectionTest {
                 north));
 
         assertEquals(List.of(1L, 2L), collect(indexer.getEnvelopeIntersections(
-                boundInAnotherCrs(south.indexEnvelope()))));
+                boundInAnotherCrs(south.indexEnvelope()), false)));
         assertEquals(List.of(4L), collect(indexer.getEnvelopeIntersections(
-                boundInAnotherCrs(north.indexEnvelope()))));
+                boundInAnotherCrs(north.indexEnvelope()), false)));
     }
 
     private StoredReadCountingIndexer createIndexer(String name, GeoSparqlConfig.PrefixTree tree, int precision)

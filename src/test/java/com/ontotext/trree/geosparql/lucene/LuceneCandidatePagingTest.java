@@ -41,7 +41,7 @@ public class LuceneCandidatePagingTest {
         indexer.idReads.set(0);
         indexer.lowestIdReads.set(0);
         long expectedId = 1;
-        try (var candidates = indexer.getEnvelopeIntersections(geometry)) {
+        try (var candidates = indexer.getEnvelopeIntersections(geometry, false)) {
             while (candidates.hasNext()) {
                 var candidate = candidates.next();
                 assertEquals(expectedId++, candidate.entityId());
@@ -64,7 +64,7 @@ public class LuceneCandidatePagingTest {
 
         long expectedId = 1;
         try (var candidates = indexer.getEnvelopeIntersections(
-                TestIndexGeometries.fromWkt("POLYGON((-1 -1,-1 2,2 2,2 -1,-1 -1))"))) {
+                TestIndexGeometries.fromWkt("POLYGON((-1 -1,-1 2,2 2,2 -1,-1 -1))"), false)) {
             while (candidates.hasNext()) {
                 var candidate = candidates.next();
                 assertEquals(expectedId++, candidate.entityId());
@@ -91,7 +91,7 @@ public class LuceneCandidatePagingTest {
 
         indexer.idValueOpens.set(0);
         long expectedId = 1;
-        try (var candidates = indexer.getEnvelopeIntersections(geometry)) {
+        try (var candidates = indexer.getEnvelopeIntersections(geometry, false)) {
             while (candidates.hasNext()) {
                 assertEquals(expectedId++, candidates.next().entityId());
             }

@@ -141,13 +141,13 @@ public class GeoSparqlFullIndexerTest {
 		}
 
 		@Override
-		public CloseableIterator<CandidateEntity> getEnvelopeIntersections(IndexGeometry boundSourceIndexGeometry) {
+		public CloseableIterator<CandidateEntity> getEnvelopeIntersections(IndexGeometry boundSourceIndexGeometry, boolean candidateIsSubject) {
 			return null;
 		}
 
 		@Override
 		public CloseableIterator<EnvelopeDisjointCandidate> getEnvelopeDisjointCandidates(
-				IndexGeometry boundSourceIndexGeometry) {
+				IndexGeometry boundSourceIndexGeometry, boolean candidateIsSubject) {
 			return null;
 		}
 

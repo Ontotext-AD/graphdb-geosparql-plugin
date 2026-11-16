@@ -346,7 +346,7 @@ public class LuceneGeoSchemaTest {
         LuceneGeoIndexer indexer = createIndexer(missingEnvelopePointsDataDir.toFile());
 
         PluginException exception = assertThrows(PluginException.class,
-                () -> indexer.getEnvelopeIntersections(sampleGeometry));
+                () -> indexer.getEnvelopeIntersections(sampleGeometry, false));
 
         assertForceReindexMessage(exception);
     }

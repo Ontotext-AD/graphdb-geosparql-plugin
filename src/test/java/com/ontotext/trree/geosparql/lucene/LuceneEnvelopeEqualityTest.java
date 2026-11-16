@@ -33,7 +33,7 @@ public class LuceneEnvelopeEqualityTest {
 				geometry("LINESTRING(2 2,0 0)"), geometry("POINT(1 1)"),
 				geometry("POLYGON((-1 -1,-1 3,3 3,3 -1,-1 -1))"), geometry("LINESTRING(0 2,2 0)"));
 		LuceneGeoIndexer indexer = index(sources);
-		List<CandidateEntity> candidates = collect(indexer.getEnvelopeEqualityCandidates(sources.get(0)));
+		List<CandidateEntity> candidates = collect(indexer.getEnvelopeEqualityCandidates(sources.get(0), false));
 
 		assertEquals(List.of(1L, 2L, 5L), ids(candidates));
 		assertEquals(List.of(1L, 2L), candidates.stream()
@@ -48,7 +48,7 @@ public class LuceneEnvelopeEqualityTest {
 				geometry("POINT(0.0 -0.0)"), geometry("POINT(-0.0 -0.0)"), geometry("POINT(0.0 0.001)"));
 		LuceneGeoIndexer indexer = index(sources);
 		for (IndexGeometry bound : sources.subList(0, 4)) {
-			assertEquals(List.of(1L, 2L, 3L, 4L), ids(collect(indexer.getEnvelopeEqualityCandidates(bound))));
+			assertEquals(List.of(1L, 2L, 3L, 4L), ids(collect(indexer.getEnvelopeEqualityCandidates(bound, false))));
 		}
 	}
 
@@ -66,22 +66,22 @@ public class LuceneEnvelopeEqualityTest {
 						"Transform cannot be represented by one rectangle"),
 				geometry("LINESTRING(-1 -1,3 3)")));
 
-		assertEquals(List.of(1L, 2L, 3L, 4L), ids(collect(indexer.getEnvelopeEqualityCandidates(bound))));
+		assertEquals(List.of(1L, 2L, 3L, 4L), ids(collect(indexer.getEnvelopeEqualityCandidates(bound, false))));
 	}
 
 	/**
-	 * The transformed envelope and the native line ending beside it are apart from the bound's envelope but lie in
-	 * one prefix cell of the default grid with the bound's end point.
+	 * A subject in another CRS than CRS84 is evaluated against each object transformed into its CRS, so objects of
+	 * another CRS are equality candidates wherever the prefix cells of the index envelopes meet. The CRS84 line lies
+	 * beside the bound's index envelope, in one prefix cell of the default grid with the bound's end point.
 	 */
 	@Test
-	public void nativeBoundsRetainTransformedCandidatesInTheirPrefixCells() throws Exception {
-		IndexGeometry bound = geometry("LINESTRING(0 0,2 2)");
+	public void transformedSubjectsRetainObjectsOfAnotherCrsInTheirPrefixCells() throws Exception {
+		IndexGeometry bound = geometry("<" + EPSG_4326 + "> LINESTRING(0 0,2 2)");
 		LuceneGeoIndexer indexer = index(List.of(bound,
-				IndexGeometryFixtures.withIndexEnvelope(SourceGeometryLiteral.fromWkt(
-						"<" + EPSG_4326 + "> POINT(2.0015 2.0015)"), new Envelope(2.001, 2.002, 2.001, 2.002)),
-				geometry("LINESTRING(2.001 2.001,2.002 2.002)")));
+				geometry("LINESTRING(2.001 2.001,2.002 2.002)"),
+				geometry("<" + EPSG_4326 + "> LINESTRING(2.001 2.001,2.002 2.002)")));
 
-		assertEquals(List.of(1L, 2L), ids(collect(indexer.getEnvelopeEqualityCandidates(bound))));
+		assertEquals(List.of(1L, 2L), ids(collect(indexer.getEnvelopeEqualityCandidates(bound, false))));
 	}
 
 	@Test
@@ -90,7 +90,7 @@ public class LuceneEnvelopeEqualityTest {
 		LuceneGeoIndexer indexer = index(List.of(geometry("LINESTRING(0 0,2 2)"), bound,
 				geometry("LINESTRING(-1 -1,3 3)"), geometry("POINT(20 20)")));
 
-		assertEquals(List.of(1L, 2L, 3L), ids(collect(indexer.getEnvelopeEqualityCandidates(bound))));
+		assertEquals(List.of(1L, 2L, 3L), ids(collect(indexer.getEnvelopeEqualityCandidates(bound, false))));
 	}
 
 	private LuceneGeoIndexer index(List<IndexGeometry> sources) throws Exception {

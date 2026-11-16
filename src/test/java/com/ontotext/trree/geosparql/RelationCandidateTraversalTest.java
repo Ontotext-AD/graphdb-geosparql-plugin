@@ -421,13 +421,13 @@ public class RelationCandidateTraversalTest {
 		}
 
 		@Override
-		public CloseableIterator<CandidateEntity> getEnvelopeEqualityCandidates(IndexGeometry boundSourceIndexGeometry) {
+		public CloseableIterator<CandidateEntity> getEnvelopeEqualityCandidates(IndexGeometry boundSourceIndexGeometry, boolean candidateIsSubject) {
 			equalityLookupSources.add(boundSourceIndexGeometry.sourceGeometryLiteral());
-			return getEnvelopeIntersections(boundSourceIndexGeometry);
+			return getEnvelopeIntersections(boundSourceIndexGeometry, false);
 		}
 
 		@Override
-		public CloseableIterator<CandidateEntity> getEnvelopeIntersections(IndexGeometry boundSourceIndexGeometry) {
+		public CloseableIterator<CandidateEntity> getEnvelopeIntersections(IndexGeometry boundSourceIndexGeometry, boolean candidateIsSubject) {
 			SourceGeometryLiteral source = boundSourceIndexGeometry.sourceGeometryLiteral();
 			envelopeLookupSources.add(source);
 			events.add("open:" + source.lexicalForm());
@@ -441,7 +441,7 @@ public class RelationCandidateTraversalTest {
 
 		@Override
 		public CloseableIterator<EnvelopeDisjointCandidate> getEnvelopeDisjointCandidates(
-				IndexGeometry boundSourceIndexGeometry) {
+				IndexGeometry boundSourceIndexGeometry, boolean candidateIsSubject) {
 			envelopeDisjointLookupSources.add(boundSourceIndexGeometry.sourceGeometryLiteral());
 			events.add("open:definite");
 			lastDefiniteIterator = new TrackingIterator<>(envelopeDisjointCandidates.getOrDefault(

@@ -51,8 +51,8 @@ public class LuceneDisjointEnvelopeLookupTest {
 				IndexGeometry bound = geometry("POINT(10.01 10.01)");
 
 				assertEquals(Set.of(2L), definite(indexer.getEnvelopeDisjointCandidates(bound, true)));
-				assertEquals(Set.of(2L), definite(indexer.getEnvelopeDisjointCandidates(bound)));
-				assertEquals(Set.of(1L, 3L), uncertain(indexer.getEnvelopeDisjointUncertainCandidates(bound)));
+				assertEquals(Set.of(2L), definite(indexer.getEnvelopeDisjointCandidates(bound, false)));
+				assertEquals(Set.of(1L, 3L), uncertain(indexer.getEnvelopeDisjointUncertainCandidates(bound, false)));
 			}
 		}
 	}
@@ -66,7 +66,7 @@ public class LuceneDisjointEnvelopeLookupTest {
 		IndexGeometry bound = geometry("POLYGON((-1 -1,-1 1,1 1,1 -1,-1 -1))");
 
 		assertEquals(Set.of(3L, 4L, 6L, 7L), definite(indexer.getEnvelopeDisjointCandidates(bound, true)));
-		assertEquals(Set.of(), uncertain(indexer.getEnvelopeDisjointUncertainCandidates(bound)));
+		assertEquals(Set.of(), uncertain(indexer.getEnvelopeDisjointUncertainCandidates(bound, false)));
 		assertEquals(Set.of(5L), uncertain(indexer.getNonSpatialCandidates()));
 	}
 
@@ -81,7 +81,7 @@ public class LuceneDisjointEnvelopeLookupTest {
 			index(indexer, sources);
 			IndexGeometry bound = geometry("POLYGON((0 0,16 0,16 8,8 16,0 16,0 0))");
 
-			assertEquals(Set.of(2L), uncertain(indexer.getEnvelopeDisjointUncertainCandidates(bound)));
+			assertEquals(Set.of(2L), uncertain(indexer.getEnvelopeDisjointUncertainCandidates(bound, false)));
 			assertEquals(Set.of(4L), definite(indexer.getEnvelopeDisjointCandidates(bound, true)));
 			assertEquals(Set.of(5L), uncertain(indexer.getNonSpatialCandidates()));
 		}
@@ -95,7 +95,7 @@ public class LuceneDisjointEnvelopeLookupTest {
 				geometry("POINT(-1 -1)")));
 		IndexGeometry bound = geometry("POLYGON((0 0,16 0,16 8,8 16,0 16,0 0))");
 
-		assertEquals(Set.of(1L, 2L, 3L), uncertain(indexer.getEnvelopeDisjointUncertainCandidates(bound)));
+		assertEquals(Set.of(1L, 2L, 3L), uncertain(indexer.getEnvelopeDisjointUncertainCandidates(bound, false)));
 		assertEquals(Set.of(4L), definite(indexer.getEnvelopeDisjointCandidates(bound, true)));
 	}
 
@@ -109,7 +109,7 @@ public class LuceneDisjointEnvelopeLookupTest {
 			index(indexer, sources);
 
 			assertEquals(sources.size(), uncertain(indexer.getEnvelopeDisjointUncertainCandidates(
-					geometry("POLYGON((0 0,16 0,16 8,8 16,0 16,0 0))"))).size());
+					geometry("POLYGON((0 0,16 0,16 8,8 16,0 16,0 0))"), false)).size());
 		}
 	}
 
@@ -124,7 +124,7 @@ public class LuceneDisjointEnvelopeLookupTest {
 		index(indexer, sources);
 		IndexGeometry bound = geometry(circle(300));
 
-		Set<Long> uncertain = uncertain(indexer.getEnvelopeDisjointUncertainCandidates(bound));
+		Set<Long> uncertain = uncertain(indexer.getEnvelopeDisjointUncertainCandidates(bound, false));
 
 		assertTrue(uncertain.size() + " of " + sources.size(), uncertain.size() < sources.size() / 2);
 		for (int id = 1; id <= sources.size(); id++) {
@@ -184,7 +184,7 @@ public class LuceneDisjointEnvelopeLookupTest {
 		index(indexer, sources);
 
 		assertEquals(sources.size(),
-				uncertain(indexer.getEnvelopeDisjointUncertainCandidates(geometry(circle(1100)))).size());
+				uncertain(indexer.getEnvelopeDisjointUncertainCandidates(geometry(circle(1100)), false)).size());
 	}
 
 	@Test
@@ -201,7 +201,7 @@ public class LuceneDisjointEnvelopeLookupTest {
 		index(indexer, sources);
 
 		assertEquals(Set.of(2L, 3L), uncertain(indexer.getEnvelopeDisjointUncertainCandidates(
-				geometry("POLYGON((0 0,16 0,16 8,8 16,0 16,0 0))"))));
+				geometry("POLYGON((0 0,16 0,16 8,8 16,0 16,0 0))"), false)));
 	}
 
 	@Test
@@ -255,7 +255,7 @@ public class LuceneDisjointEnvelopeLookupTest {
 		IndexGeometry bound = geometry("POINT(1 1)");
 
 		assertEquals(Set.of(2L, 3L, 4L, 5L), definite(indexer.getEnvelopeDisjointCandidates(bound, true)));
-		assertEquals(Set.of(1L), uncertain(indexer.getEnvelopeDisjointUncertainCandidates(bound)));
+		assertEquals(Set.of(1L), uncertain(indexer.getEnvelopeDisjointUncertainCandidates(bound, false)));
 	}
 
 	@Test
@@ -266,7 +266,7 @@ public class LuceneDisjointEnvelopeLookupTest {
 		IndexGeometry bound = geometry("POLYGON((0 0,0 1,1 1,1 0,0 0))");
 
 		assertEquals(Set.of(), definite(indexer.getEnvelopeDisjointCandidates(bound, true)));
-		assertEquals(Set.of(), uncertain(indexer.getEnvelopeDisjointUncertainCandidates(bound)));
+		assertEquals(Set.of(), uncertain(indexer.getEnvelopeDisjointUncertainCandidates(bound, false)));
 	}
 
 	@Test
@@ -279,7 +279,7 @@ public class LuceneDisjointEnvelopeLookupTest {
 
 		for (IndexGeometry bound : zeros) {
 			assertEquals(Set.of(5L, 6L), definite(indexer.getEnvelopeDisjointCandidates(bound, true)));
-			assertEquals(Set.of(1L, 2L, 3L, 4L), uncertain(indexer.getEnvelopeDisjointUncertainCandidates(bound)));
+			assertEquals(Set.of(1L, 2L, 3L, 4L), uncertain(indexer.getEnvelopeDisjointUncertainCandidates(bound, false)));
 		}
 	}
 
@@ -298,8 +298,8 @@ public class LuceneDisjointEnvelopeLookupTest {
 		IndexGeometry bound = geometry("POLYGON((170 -10,180 -10,180 10,170 10,170 -10))");
 
 		assertEquals(Set.of(2L, 3L), definite(indexer.getEnvelopeDisjointCandidates(bound, false)));
-		assertEquals(Set.of(2L, 3L), definite(indexer.getEnvelopeDisjointCandidates(bound)));
-		assertEquals(Set.of(1L, 4L), uncertain(indexer.getEnvelopeDisjointUncertainCandidates(bound)));
+		assertEquals(Set.of(2L, 3L), definite(indexer.getEnvelopeDisjointCandidates(bound, false)));
+		assertEquals(Set.of(1L, 4L), uncertain(indexer.getEnvelopeDisjointUncertainCandidates(bound, false)));
 	}
 
 	/** A CRS84 subject does not separate objects of another CRS by longitude where both reach one polar cap. */
@@ -313,8 +313,8 @@ public class LuceneDisjointEnvelopeLookupTest {
 		IndexGeometry bound = geometry("POLYGON((10 -90,20 -90,20 -89.9995,10 -89.9995,10 -90))");
 
 		assertEquals(Set.of(2L, 3L), definite(indexer.getEnvelopeDisjointCandidates(bound, false)));
-		assertEquals(Set.of(2L, 3L), definite(indexer.getEnvelopeDisjointCandidates(bound)));
-		assertEquals(Set.of(1L), uncertain(indexer.getEnvelopeDisjointUncertainCandidates(bound)));
+		assertEquals(Set.of(2L, 3L), definite(indexer.getEnvelopeDisjointCandidates(bound, false)));
+		assertEquals(Set.of(1L), uncertain(indexer.getEnvelopeDisjointUncertainCandidates(bound, false)));
 	}
 
 	/** Prunes the candidates in the bound's own CRS, where the bound is evaluated as it is. */

@@ -919,7 +919,7 @@ public class GeoSparqlCandidateEnvelopeDifferentialTest {
 	}
 
 	private static Set<Long> envelopeHits(Fixture fixture, IndexGeometry bound) throws Exception {
-		CloseableIterator<CandidateEntity> candidates = fixture.plugin.indexer.getEnvelopeIntersections(bound);
+		CloseableIterator<CandidateEntity> candidates = fixture.plugin.indexer.getEnvelopeIntersections(bound, false);
 		return candidateEntityIds(candidates);
 	}
 
