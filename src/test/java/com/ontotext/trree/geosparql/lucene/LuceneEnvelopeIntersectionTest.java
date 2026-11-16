@@ -57,7 +57,7 @@ public class LuceneEnvelopeIntersectionTest {
      */
     @Test
     public void transformedEnvelopesInThePrefixCellsOfTheBoundRemainIntersectionCandidates() throws Exception {
-        LuceneGeoIndexer indexer = createIndexEnvelopeOnlyIndexer("prefix-cells", GeoSparqlConfig.PrefixTree.QUAD, 11);
+        LuceneGeoIndexer indexer = createIndexer("prefix-cells", GeoSparqlConfig.PrefixTree.QUAD, 11);
         IndexGeometry transformedBesideThePoint = transformed(new Envelope(10.012, 10.013, 10.012, 10.013));
         index(indexer, List.of(
                 geometry("POLYGON((10.009 10.009,10.011 10.009,10.011 10.011,10.009 10.011,10.009 10.009))"),
@@ -96,8 +96,7 @@ public class LuceneEnvelopeIntersectionTest {
         }
         for (GeoSparqlConfig.PrefixTree tree : GeoSparqlConfig.PrefixTree.values()) {
             for (int precision : new int[]{1, 6, 11, 20}) {
-                LuceneGeoIndexer indexer = createIndexEnvelopeOnlyIndexer(
-                        "overlap-" + tree.name() + precision, tree, precision);
+                LuceneGeoIndexer indexer = createIndexer("overlap-" + tree.name() + precision, tree, precision);
                 List<IndexGeometry> sources = new ArrayList<>();
                 for (Envelope envelope : envelopes) {
                     sources.add(transformed(envelope));
@@ -110,7 +109,7 @@ public class LuceneEnvelopeIntersectionTest {
                             overlapping.add(i + 1L);
                         }
                     }
-                    List<Long> candidates = collect(indexer.getEnvelopeIntersections(transformed(bound)));
+                    List<Long> candidates = collect(indexer.getEnvelopeIntersections(boundInAnotherCrs(bound)));
                     assertTrue(tree + " " + precision + " " + bound + " omits "
                             + overlapping.stream().filter(id -> !candidates.contains(id)).toList(),
                             candidates.containsAll(overlapping));
@@ -147,7 +146,7 @@ public class LuceneEnvelopeIntersectionTest {
 
     @Test
     public void envelopesMeetingAcrossTheAntimeridianRemainIntersectionCandidates() throws Exception {
-        LuceneGeoIndexer indexer = createIndexEnvelopeOnlyIndexer("antimeridian", GeoSparqlConfig.PrefixTree.QUAD, 11);
+        LuceneGeoIndexer indexer = createIndexer("antimeridian", GeoSparqlConfig.PrefixTree.QUAD, 11);
         IndexGeometry east = transformed(new Envelope(170, 180, -10, 10));
         IndexGeometry west = transformed(new Envelope(-180, -170, -10, 10));
         index(indexer, List.of(east, west,
@@ -155,13 +154,15 @@ public class LuceneEnvelopeIntersectionTest {
                 transformed(new Envelope(-179, -170, -10, 10)),
                 transformed(new Envelope(-180 + 1e-7, -170, -10, 10))));
 
-        assertEquals(List.of(1L, 2L, 5L), collect(indexer.getEnvelopeIntersections(east)));
-        assertEquals(List.of(1L, 2L, 4L, 5L), collect(indexer.getEnvelopeIntersections(west)));
+        assertEquals(List.of(1L, 2L, 5L), collect(indexer.getEnvelopeIntersections(
+                boundInAnotherCrs(east.indexEnvelope()))));
+        assertEquals(List.of(1L, 2L, 4L, 5L), collect(indexer.getEnvelopeIntersections(
+                boundInAnotherCrs(west.indexEnvelope()))));
     }
 
     @Test
     public void envelopesReachingTheSamePolarCapRemainIntersectionCandidates() throws Exception {
-        LuceneGeoIndexer indexer = createIndexEnvelopeOnlyIndexer("polar-cap", GeoSparqlConfig.PrefixTree.QUAD, 11);
+        LuceneGeoIndexer indexer = createIndexer("polar-cap", GeoSparqlConfig.PrefixTree.QUAD, 11);
         IndexGeometry south = transformed(new Envelope(10, 20, -90, -89.9995));
         IndexGeometry north = transformed(new Envelope(100, 110, 89.9995, 90));
         index(indexer, List.of(south,
@@ -169,21 +170,15 @@ public class LuceneEnvelopeIntersectionTest {
                 transformed(new Envelope(100, 110, -89.99, -89.98)),
                 north));
 
-        assertEquals(List.of(1L, 2L), collect(indexer.getEnvelopeIntersections(south)));
-        assertEquals(List.of(4L), collect(indexer.getEnvelopeIntersections(north)));
+        assertEquals(List.of(1L, 2L), collect(indexer.getEnvelopeIntersections(
+                boundInAnotherCrs(south.indexEnvelope()))));
+        assertEquals(List.of(4L), collect(indexer.getEnvelopeIntersections(
+                boundInAnotherCrs(north.indexEnvelope()))));
     }
 
     private StoredReadCountingIndexer createIndexer(String name, GeoSparqlConfig.PrefixTree tree, int precision)
             throws Exception {
         StoredReadCountingIndexer indexer = new StoredReadCountingIndexer(plugin(name, tree, precision));
-        indexer.initialize();
-        return indexer;
-    }
-
-    /** An index whose sources are looked up by CRS84 index envelopes, as the fixtures with chosen envelopes need. */
-    private LuceneGeoIndexer createIndexEnvelopeOnlyIndexer(String name, GeoSparqlConfig.PrefixTree tree,
-            int precision) throws Exception {
-        LuceneGeoIndexer indexer = new IndexEnvelopeOnlyIndexer(plugin(name, tree, precision));
         indexer.initialize();
         return indexer;
     }
@@ -229,6 +224,15 @@ public class LuceneEnvelopeIntersectionTest {
     private static IndexGeometry transformed(Envelope indexEnvelope) {
         return IndexGeometryFixtures.withIndexEnvelope(SourceGeometryLiteral.fromWkt(
                 "<http://www.opengis.net/def/crs/EPSG/0/3857> POINT(0 0)"), indexEnvelope);
+    }
+
+    /**
+     * A bound with the given index envelope in another CRS than the {@link #transformed} sources, which are then
+     * looked up by their CRS84 index envelopes.
+     */
+    private static IndexGeometry boundInAnotherCrs(Envelope indexEnvelope) {
+        return IndexGeometryFixtures.withIndexEnvelope(SourceGeometryLiteral.fromWkt(
+                "<http://www.opengis.net/def/crs/EPSG/0/32633> POINT(500000 0)"), indexEnvelope);
     }
 
     private static final class StoredReadCountingIndexer extends LuceneGeoIndexer {

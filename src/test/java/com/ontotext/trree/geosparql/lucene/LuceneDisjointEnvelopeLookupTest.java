@@ -120,7 +120,7 @@ public class LuceneDisjointEnvelopeLookupTest {
 					"GEOMETRYCOLLECTION(POLYGON((0 0,2 0,2 2,0 0)))",
 					"POLYGON((0 0,4 4,0 4,4 0,0 0))",
 					"<http://www.opengis.net/def/crs/EPSG/0/3857> POLYGON((0 0,100000 0,0 100000,0 0))")) {
-				assertSame(wkt, candidates, InteriorRectanglePruning.pruneByIndexEnvelopes(geometry(wkt), candidates, searcher));
+				assertSame(wkt, candidates, prune(geometry(wkt), candidates, searcher));
 			}
 		}
 	}
@@ -135,7 +135,7 @@ public class LuceneDisjointEnvelopeLookupTest {
 		polygon.append(",12 8))");
 		Query candidates = new MatchAllDocsQuery();
 		try (MultiReader reader = new MultiReader()) {
-			assertSame(candidates, InteriorRectanglePruning.pruneByIndexEnvelopes(
+			assertSame(candidates, prune(
 					geometry(polygon.toString()), candidates, new IndexSearcher(reader)));
 		}
 	}
@@ -150,7 +150,7 @@ public class LuceneDisjointEnvelopeLookupTest {
 				}
 			};
 			Query candidates = new MatchAllDocsQuery();
-			assertSame(candidates, InteriorRectanglePruning.pruneByIndexEnvelopes(
+			assertSame(candidates, prune(
 					geometry("POLYGON((0 0,16 0,16 8,8 16,0 16,0 0))"), candidates, searcher));
 		}
 	}
@@ -159,7 +159,7 @@ public class LuceneDisjointEnvelopeLookupTest {
 	public void emptyCandidateCountsRetainTheCompleteQuery() throws Exception {
 		try (MultiReader reader = new MultiReader()) {
 			Query candidates = new MatchAllDocsQuery();
-			assertSame(candidates, InteriorRectanglePruning.pruneByIndexEnvelopes(
+			assertSame(candidates, prune(
 					geometry("POLYGON((0 0,16 0,16 8,8 16,0 16,0 0))"),
 					candidates, new IndexSearcher(reader)));
 		}
@@ -204,45 +204,51 @@ public class LuceneDisjointEnvelopeLookupTest {
 		}
 	}
 
+	/**
+	 * A CRS84 subject classifies objects of another CRS by their CRS84 index envelopes, where envelopes that meet
+	 * across the antimeridian are not separated.
+	 */
 	@Test
 	public void envelopesMeetingAcrossTheAntimeridianAreUncertainInsteadOfDefiniteMatches() throws Exception {
-		LuceneGeoIndexer indexer = createIndexEnvelopeOnlyIndexer("antimeridian");
+		LuceneGeoIndexer indexer = createIndexer("antimeridian", GeoSparqlConfig.PrefixTree.QUAD, 11);
 		index(indexer, List.of(
 				transformed(new Envelope(-180, -170, -10, 10)),
 				transformed(new Envelope(-180, -170, 20, 30)),
 				transformed(new Envelope(-179, -170, -10, 10)),
 				transformed(new Envelope(-180 + 1e-7, -170, -10, 10))));
-		IndexGeometry bound = transformed(new Envelope(170, 180, -10, 10));
+		IndexGeometry bound = geometry("POLYGON((170 -10,180 -10,180 10,170 10,170 -10))");
 
-		assertEquals(Set.of(2L, 3L), definite(indexer.getEnvelopeDisjointCandidates(bound, true)));
+		assertEquals(Set.of(2L, 3L), definite(indexer.getEnvelopeDisjointCandidates(bound, false)));
 		assertEquals(Set.of(2L, 3L), definite(indexer.getEnvelopeDisjointCandidates(bound)));
 		assertEquals(Set.of(1L, 4L), uncertain(indexer.getEnvelopeDisjointUncertainCandidates(bound)));
 	}
 
+	/** A CRS84 subject does not separate objects of another CRS by longitude where both reach one polar cap. */
 	@Test
 	public void envelopesReachingTheSamePolarCapAreUncertainInsteadOfDefiniteMatches() throws Exception {
-		LuceneGeoIndexer indexer = createIndexEnvelopeOnlyIndexer("polar-cap");
+		LuceneGeoIndexer indexer = createIndexer("polar-cap", GeoSparqlConfig.PrefixTree.QUAD, 11);
 		index(indexer, List.of(
 				transformed(new Envelope(100, 110, -89.9999, -89.9998)),
 				transformed(new Envelope(100, 110, -89.99, -89.98)),
 				transformed(new Envelope(100, 110, 89.9995, 90))));
-		IndexGeometry bound = transformed(new Envelope(10, 20, -90, -89.9995));
+		IndexGeometry bound = geometry("POLYGON((10 -90,20 -90,20 -89.9995,10 -89.9995,10 -90))");
 
-		assertEquals(Set.of(2L, 3L), definite(indexer.getEnvelopeDisjointCandidates(bound, true)));
+		assertEquals(Set.of(2L, 3L), definite(indexer.getEnvelopeDisjointCandidates(bound, false)));
 		assertEquals(Set.of(2L, 3L), definite(indexer.getEnvelopeDisjointCandidates(bound)));
 		assertEquals(Set.of(1L), uncertain(indexer.getEnvelopeDisjointUncertainCandidates(bound)));
+	}
+
+	/** Prunes the candidates in the bound's own CRS, where the bound is evaluated as it is. */
+	private static Query prune(IndexGeometry bound, Query candidates, IndexSearcher searcher) {
+		String crsUri = bound.sourceGeometryLiteral().effectiveCrsUri();
+		return InteriorRectanglePruning.prune(bound.evaluationEnvelope(crsUri, true).orElseThrow(), candidates,
+				LuceneGeoDocumentSchema.sourceCrsQuery(crsUri), LuceneGeoDocumentSchema::sourceEnvelopeWithinQuery,
+				searcher);
 	}
 
 	private LuceneGeoIndexer createIndexer(String name, GeoSparqlConfig.PrefixTree tree, int precision)
 			throws Exception {
 		LuceneGeoIndexer indexer = new LuceneGeoIndexer(plugin(name, tree, precision));
-		indexer.initialize();
-		return indexer;
-	}
-
-	/** An index whose sources are classified by CRS84 index envelopes, where the longitude rules apply. */
-	private LuceneGeoIndexer createIndexEnvelopeOnlyIndexer(String name) throws Exception {
-		LuceneGeoIndexer indexer = new IndexEnvelopeOnlyIndexer(plugin(name, GeoSparqlConfig.PrefixTree.QUAD, 11));
 		indexer.initialize();
 		return indexer;
 	}

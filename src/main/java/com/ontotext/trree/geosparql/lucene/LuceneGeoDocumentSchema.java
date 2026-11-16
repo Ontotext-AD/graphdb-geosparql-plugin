@@ -13,7 +13,6 @@ import org.apache.lucene.document.StoredField;
 import org.apache.lucene.document.StringField;
 import org.apache.lucene.index.IndexReader;
 import org.apache.lucene.index.MultiTerms;
-import org.apache.lucene.index.PointValues;
 import org.apache.lucene.index.Terms;
 import org.apache.lucene.index.TermsEnum;
 import org.apache.lucene.index.IndexableField;
@@ -68,9 +67,8 @@ final class LuceneGeoDocumentSchema {
 	/** Indexed exact upper Y bound used for envelope intersection and containment pruning. */
 	static final String FIELD_ENVELOPE_MAX_Y = "geoEnvelopeMaxY";
 	/**
-	 * Optional XY envelope of the source in its own CRS, as one point of four dimensions: minimum X, maximum X,
-	 * minimum Y and maximum Y. It serves lookup in the CRS where Jena evaluates a pair whose left operand is the
-	 * source.
+	 * XY envelope of the source in its own CRS, as one point of four dimensions: minimum X, maximum X, minimum Y
+	 * and maximum Y. It serves lookup in the CRS where Jena evaluates a pair. Absent on empty sentinels.
 	 */
 	static final String FIELD_SOURCE_ENVELOPE = "geoSourceEnvelope";
 	/** Stored WKB for the complete native-CRS source geometry used to construct Jena exact-evaluation input. */
@@ -110,9 +108,12 @@ final class LuceneGeoDocumentSchema {
 	static final String COMMIT_SCHEMA_VERSION_VALUE = Integer.toString(SCHEMA_VERSION);
 	/** Commit metadata key identifying the concrete field layout within the schema version. */
 	static final String COMMIT_SCHEMA_LAYOUT_KEY = "geosparql.luceneSchemaLayout";
-	/** Commit metadata value requiring source WKB, exact envelope bounds, provenance, and indexed source CRS. */
+	/**
+	 * Commit metadata value requiring source WKB, exact envelope bounds, provenance, indexed source CRS, and each
+	 * spatial source's envelope in its own CRS.
+	 */
 	static final String COMMIT_SCHEMA_LAYOUT_VALUE =
-			"prefix-envelope-ordinate-preserving-source-wkb-envelope-marker-topology-dv-envelope-points-bounds-kind-indexed-source-crs";
+			"prefix-envelope-ordinate-preserving-source-wkb-envelope-marker-topology-dv-envelope-points-bounds-kind-indexed-source-crs-source-envelope";
 	/** Commit metadata key identifying the CRS transformation inputs used for candidate envelopes. */
 	static final String COMMIT_CRS_ENVIRONMENT_FINGERPRINT_KEY = "geosparql.crsEnvironmentFingerprint";
 	static final String SCHEMA_MISMATCH_MESSAGE =
@@ -308,21 +309,6 @@ final class LuceneGeoDocumentSchema {
 	/** Matches the documents that carry native hull cells. */
 	static Query hasNativeHullCellsQuery() {
 		return new TermQuery(new Term(FIELD_HAS_NATIVE_HULL_CELLS, HAS_NATIVE_HULL_CELLS_VALUE));
-	}
-
-	/** Whether the reader holds a source whose index envelope is transformed or a world fallback. */
-	static boolean hasNonNativeBounds(IndexReader reader) throws IOException {
-		return reader.docFreq(new Term(FIELD_CANDIDATE_BOUNDS_KIND, CandidateBoundsKind.TRANSFORMED.name())) > 0
-				|| reader.docFreq(new Term(FIELD_CANDIDATE_BOUNDS_KIND, CandidateBoundsKind.WORLD_FALLBACK.name())) > 0;
-	}
-
-	/**
-	 * Whether every spatial source in the reader carries {@link #FIELD_SOURCE_ENVELOPE}. A source written without
-	 * it is found through its CRS84 index envelope only.
-	 */
-	static boolean hasSourceEnvelopeOnEverySpatialSource(IndexReader reader) throws IOException {
-		return PointValues.getDocCount(reader, FIELD_SOURCE_ENVELOPE)
-				== PointValues.getDocCount(reader, FIELD_ENVELOPE_MIN_X);
 	}
 
 	/** Returns the source CRS URIs of the reader's documents. */

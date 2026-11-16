@@ -1,8 +1,6 @@
 package com.ontotext.trree.geosparql.lucene;
 
 import com.ontotext.trree.geosparql.jena.BoundEvaluationEnvelope;
-import com.ontotext.trree.geosparql.jena.CandidateBoundsKind;
-import com.ontotext.trree.geosparql.jena.IndexGeometry;
 import org.apache.lucene.search.BooleanClause;
 import org.apache.lucene.search.BooleanQuery;
 import org.apache.lucene.search.IndexSearcher;
@@ -40,19 +38,6 @@ final class InteriorRectanglePruning {
 
 	private InteriorRectanglePruning(BoundEvaluationEnvelope bound) {
 		this.bound = bound;
-	}
-
-	/**
-	 * Prunes the native CRS84 sources of a native CRS84 bound by their CRS84 index envelopes, which are their own
-	 * envelopes. Transformed and world-fallback index envelopes do not take part in the proof.
-	 */
-	static Query pruneByIndexEnvelopes(IndexGeometry bound, Query candidates, IndexSearcher searcher) {
-		if (bound.candidateBoundsKind() != CandidateBoundsKind.NATIVE_CRS84) {
-			return candidates;
-		}
-		return prune(bound.evaluationEnvelope(IndexGeometry.INDEX_CRS, true).orElseThrow(), candidates,
-				LuceneGeoDocumentSchema.candidateBoundsKindQuery(CandidateBoundsKind.NATIVE_CRS84),
-				LuceneGeoDocumentSchema::envelopeWithinQuery, searcher);
 	}
 
 	/**

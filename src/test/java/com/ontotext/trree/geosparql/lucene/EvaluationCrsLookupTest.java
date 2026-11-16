@@ -48,7 +48,7 @@ public class EvaluationCrsLookupTest {
     /** Sources 1 to 3 lie inside the bound and sources 4 to 6 beside it, one of each per source CRS. */
     @Test
     public void subjectCandidatesAreSelectedByTheirOwnEnvelopesInEverySourceCrs() throws Exception {
-        LuceneGeoIndexer indexer = createIndexer("subject", false);
+        LuceneGeoIndexer indexer = createIndexer("subject");
         index(indexer, insideAndBeside());
         IndexGeometry bound = geometry(BOUND);
 
@@ -66,7 +66,7 @@ public class EvaluationCrsLookupTest {
      */
     @Test
     public void subjectsInsideAnObliqueBoundAreRemovedFromItsDisjointCandidates() throws Exception {
-        LuceneGeoIndexer indexer = createIndexer("oblique", false);
+        LuceneGeoIndexer indexer = createIndexer("oblique");
         index(indexer, List.of(geometry(literal(UTM_33N, "POINT(15.4 60.4)")),
                 geometry(literal(UTM_33N, "POINT(15.5 60.5)")), geometry(literal(UTM_33N, "POINT(15.6 60.6)")),
                 geometry(literal(UTM_33N, "POINT(17 60.5)")), geometry(literal(UTM_33N, "POINT(16.02 60.95)"))));
@@ -83,7 +83,7 @@ public class EvaluationCrsLookupTest {
      */
     @Test
     public void objectsOfACrs84SubjectAreSelectedByTheirIndexEnvelopes() throws Exception {
-        LuceneGeoIndexer indexer = createIndexer("crs84-subject", false);
+        LuceneGeoIndexer indexer = createIndexer("crs84-subject");
         index(indexer, insideAndBeside());
 
         assertEquals(Set.of(1L, 2L, 3L), ids(indexer.getEnvelopeIntersections(geometry(BOUND), false)));
@@ -95,7 +95,7 @@ public class EvaluationCrsLookupTest {
      */
     @Test
     public void objectsOfAnotherCrsKeepPrefixCellLookupForAProjectedSubject() throws Exception {
-        LuceneGeoIndexer indexer = createIndexer("projected-subject", false);
+        LuceneGeoIndexer indexer = createIndexer("projected-subject");
         index(indexer, insideAndBeside());
 
         Set<Long> candidates = ids(indexer.getEnvelopeIntersections(geometry(literal(MERCATOR, BOUND)), false));
@@ -107,22 +107,12 @@ public class EvaluationCrsLookupTest {
     /** A caller that does not state the binding direction gets candidates that hold for either direction. */
     @Test
     public void lookupWithoutABindingDirectionKeepsSourcesOfAnotherCrsBesideTheBound() throws Exception {
-        LuceneGeoIndexer indexer = createIndexer("unstated", false);
+        LuceneGeoIndexer indexer = createIndexer("unstated");
         index(indexer, insideAndBeside());
 
         Set<Long> candidates = ids(indexer.getEnvelopeIntersections(geometry(BOUND)));
         assertTrue(candidates.containsAll(Set.of(1L, 2L, 3L, 5L, 6L)));
         assertFalse(candidates.contains(4L));
-    }
-
-    /** An index whose sources carry no envelope of their own selects every source by its CRS84 index envelope. */
-    @Test
-    public void sourcesWithoutTheirOwnEnvelopeKeepIndexEnvelopeLookup() throws Exception {
-        LuceneGeoIndexer indexer = createIndexer("index-envelopes", true);
-        index(indexer, insideAndBeside());
-
-        Set<Long> candidates = ids(indexer.getEnvelopeIntersections(geometry(BOUND), true));
-        assertTrue(candidates.containsAll(Set.of(1L, 2L, 3L, 5L, 6L)));
     }
 
     /**
@@ -140,7 +130,7 @@ public class EvaluationCrsLookupTest {
         } catch (JenaGeoSparqlException expected) {
             // Jena cannot place the bound in the subject's CRS.
         }
-        LuceneGeoIndexer indexer = createIndexer("unrelated", false);
+        LuceneGeoIndexer indexer = createIndexer("unrelated");
         index(indexer, List.of(utmSubject));
 
         assertEquals(Set.of(), ids(indexer.getEnvelopeIntersections(bound, true)));
@@ -157,7 +147,7 @@ public class EvaluationCrsLookupTest {
         String sameEnvelope = "POLYGON((1700000 8400000,1710000 8400000,1710000 8410000,1705000 8405000,"
                 + "1700000 8410000,1700000 8400000))";
         String larger = "POLYGON((1700000 8400000,1710001 8400000,1710001 8410000,1700000 8410000,1700000 8400000))";
-        LuceneGeoIndexer indexer = createIndexer("equality", false);
+        LuceneGeoIndexer indexer = createIndexer("equality");
         index(indexer, List.of(geometry("<" + MERCATOR + "> " + square), geometry("<" + MERCATOR + "> " + sameEnvelope),
                 geometry("<" + MERCATOR + "> " + larger)));
 
@@ -179,7 +169,7 @@ public class EvaluationCrsLookupTest {
         for (int i = 0; i < 160; i++) {
             sources.add(geometry(literal(SOURCE_CRSS.get(i % SOURCE_CRSS.size()), randomShape(random, 0.08))));
         }
-        LuceneGeoIndexer indexer = createIndexer("differential", false);
+        LuceneGeoIndexer indexer = createIndexer("differential");
         index(indexer, sources);
 
         for (int i = 0; i < 24; i++) {
@@ -268,7 +258,7 @@ public class EvaluationCrsLookupTest {
         return latitudeFirst ? y + " " + x : x + " " + y;
     }
 
-    private LuceneGeoIndexer createIndexer(String name, boolean indexEnvelopesOnly) throws Exception {
+    private LuceneGeoIndexer createIndexer(String name) throws Exception {
         GeoSparqlPlugin parent = new GeoSparqlPlugin();
         GeoSparqlConfig config = new GeoSparqlConfig();
         config.setPrefixTree(GeoSparqlConfig.PrefixTree.QUAD);
@@ -277,7 +267,7 @@ public class EvaluationCrsLookupTest {
         parent.setConfig(config);
         parent.setLogger(LoggerFactory.getLogger(EvaluationCrsLookupTest.class));
         parent.setDataDir(Files.createDirectories(tmpFolder.getRoot().toPath().resolve(name)).toFile());
-        LuceneGeoIndexer indexer = indexEnvelopesOnly ? new IndexEnvelopeOnlyIndexer(parent) : new LuceneGeoIndexer(parent);
+        LuceneGeoIndexer indexer = new LuceneGeoIndexer(parent);
         indexer.initialize();
         return indexer;
     }

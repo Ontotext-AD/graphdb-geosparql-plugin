@@ -38,14 +38,16 @@ final class EvaluationCrsLookup {
 	private EvaluationCrsLookup() {
 	}
 
-	/** Returns the lookup, or null for a reader in which a spatial source lacks its own envelope. */
 	static EvaluationCrsLookup of(IndexReader reader, IndexGeometry bound, boolean candidateIsSubject)
 			throws IOException {
-		if (!LuceneGeoDocumentSchema.hasSourceEnvelopeOnEverySpatialSource(reader)) {
-			return null;
-		}
 		EvaluationCrsLookup lookup = new EvaluationCrsLookup();
+		// The bound is always placed among the sources of its own CRS, so a CRS84 lookup never selects those.
+		String boundCrsUri = bound.sourceGeometryLiteral().effectiveCrsUri();
+		lookup.placements.put(boundCrsUri, bound.evaluationEnvelope(boundCrsUri, candidateIsSubject).orElseThrow());
 		for (String sourceCrsUri : LuceneGeoDocumentSchema.sourceCrsUris(reader)) {
+			if (lookup.placements.containsKey(sourceCrsUri)) {
+				continue;
+			}
 			Optional<BoundEvaluationEnvelope> placement = lookup.placements.size() < MAXIMUM_PLACEMENTS
 					? bound.evaluationEnvelope(sourceCrsUri, candidateIsSubject) : Optional.empty();
 			if (placement.isPresent()) {
