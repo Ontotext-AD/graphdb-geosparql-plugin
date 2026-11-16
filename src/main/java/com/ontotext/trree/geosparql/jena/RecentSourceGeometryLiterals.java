@@ -18,7 +18,8 @@ import java.lang.ref.SoftReference;
  * <p>A literal is kept by its text and datatype alone, and its source geometry literal is built from a copy of
  * those. A value passed to a function can belong to the repository connection of its query and become unreadable
  * when that connection closes, so none is kept. Each thread has its own literals, held softly so that a large
- * geometry is released when memory is short.
+ * geometry is released when memory is short. A kept literal holds its parsed geometry and one transformed copy for
+ * each CRS it has been evaluated against as a right operand.
  */
 final class RecentSourceGeometryLiterals {
 	private static final ThreadLocal<SoftReference<RecentSourceGeometryLiterals>> RECENT = new ThreadLocal<>();
