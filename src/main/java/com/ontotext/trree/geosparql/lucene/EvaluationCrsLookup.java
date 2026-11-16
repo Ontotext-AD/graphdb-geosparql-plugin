@@ -24,14 +24,14 @@ import java.util.Optional;
  * evaluation: envelopes that are apart prove the pair disjoint, and no other relation holds without envelopes that
  * meet.
  *
- * <p>The bound is placed in a source CRS when the two share it, or when every source is the left operand. A CRS in
- * which Jena cannot place the bound relates none of its sources. Sources of every other CRS are left to lookup by
- * CRS84 index envelopes, which {@link #orElsewhere} restricts to them.
+ * <p>The bound is placed in every source CRS of the reader that it shares, or in which every source is the left
+ * operand. A CRS in which Jena cannot place the bound relates none of its sources. Sources of every other CRS are
+ * left to lookup by CRS84 index envelopes, which {@link #orElsewhere} restricts to them.
+ *
+ * <p>A lookup has one clause for each CRS it places the bound in, and Lucene limits the clauses of one query. In a
+ * reader with more source CRSs than that limit allows, the sources of the remaining CRSs keep CRS84 lookup.
  */
 final class EvaluationCrsLookup {
-	/** Most source CRSs in which one lookup places its bound; sources of further CRSs keep CRS84 lookup. */
-	private static final int MAXIMUM_PLACEMENTS = 16;
-
 	private final Map<String, BoundEvaluationEnvelope> placements = new LinkedHashMap<>();
 	private boolean leavesSourcesElsewhere;
 
@@ -48,7 +48,9 @@ final class EvaluationCrsLookup {
 			if (lookup.placements.containsKey(sourceCrsUri)) {
 				continue;
 			}
-			Optional<BoundEvaluationEnvelope> placement = lookup.placements.size() < MAXIMUM_PLACEMENTS
+			// One clause is kept for the CRS84 lookup that selects the sources placed nowhere.
+			boolean hasClauseLeft = lookup.placements.size() < BooleanQuery.getMaxClauseCount() - 1;
+			Optional<BoundEvaluationEnvelope> placement = hasClauseLeft
 					? bound.evaluationEnvelope(sourceCrsUri, candidateIsSubject) : Optional.empty();
 			if (placement.isPresent()) {
 				lookup.placements.put(sourceCrsUri, placement.get());

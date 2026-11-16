@@ -62,8 +62,8 @@ occurs in another CRS.
   geometries differ in CRS, so their results can differ for geometries that lie on a boundary.
 - CRS URIs are compared as strings, as Jena compares them. Two URIs that name one CRS are different CRSs to candidate
   lookup and to exact evaluation.
-- One lookup places the bound geometry in at most sixteen source CRSs: its own, then the others in URI order. Sources
-  in further CRSs are looked up by CRS84 index envelopes as in the last row.
+- A lookup transforms the bound geometry once into every CRS that the stored data uses, so its cost grows with the
+  number of CRSs in the repository and with the size of the bound geometry.
 - GeoSPARQL filter functions such as `geof:sfWithin` evaluate every pair they are given and do not use the index. A
   property relation with one side bound is the indexed form.
 

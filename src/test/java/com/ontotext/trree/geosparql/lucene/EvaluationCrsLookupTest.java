@@ -62,6 +62,34 @@ public class EvaluationCrsLookupTest {
     }
 
     /**
+     * The bound is placed in every source CRS, however many the reader holds. Sources 1 to 4 lie inside the bound
+     * and beside it in EPSG:4326 and EPSG:3857, whose URIs sort after those of the eighteen UTM CRSs that the other
+     * sources use. The sources beside the bound share prefix cells with it and are still not candidates.
+     */
+    @Test
+    public void subjectCandidatesAreSelectedByTheirOwnEnvelopesInManySourceCrss() throws Exception {
+        List<IndexGeometry> sources = new ArrayList<>();
+        for (String crs : List.of(EPSG_4326, MERCATOR)) {
+            sources.add(geometry(literal(crs, "POINT(15.5 60.5)")));
+            sources.add(geometry(literal(crs, "POINT(16.01 60.5)")));
+        }
+        Set<Long> inside = new TreeSet<>(Set.of(1L, 3L));
+        for (int zone = 29; zone <= 37; zone++) {
+            for (int hemisphere : new int[]{32600, 32700}) {
+                String utm = "http://www.opengis.net/def/crs/EPSG/0/" + (hemisphere + zone);
+                sources.add(geometry(literal(utm, "POINT(15.5 60.5)")));
+                inside.add((long) sources.size());
+            }
+        }
+        LuceneGeoIndexer indexer = createIndexer("many-crss");
+        index(indexer, sources);
+        IndexGeometry bound = geometry(BOUND);
+
+        assertEquals(inside, ids(indexer.getEnvelopeIntersections(bound, true)));
+        assertEquals(Set.of(), ids(indexer.getDisjointTransformCleanupCandidates(bound, true)));
+    }
+
+    /**
      * In UTM the CRS84 bound is a quadrilateral that does not fill its envelope. Sources 1 to 3 lie inside
      * rectangles that Jena finds within it and cannot be disjoint. Source 4 is far outside its envelope. Source 5
      * lies about a kilometre east of its slanted eastern edge, inside its envelope, and needs exact evaluation.
