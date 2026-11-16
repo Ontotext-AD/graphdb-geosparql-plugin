@@ -378,25 +378,40 @@ public class LuceneGeoIndexer implements GeoSparqlIndexer {
 		indexWriter.addDocument(document);
 	}
 
+	/** Which side of a pair the candidates are on, where the caller states it. */
+	private enum Binding {
+		CANDIDATE_IS_SUBJECT, CANDIDATE_IS_OBJECT, UNSTATED;
+
+		static Binding of(boolean candidateIsSubject) {
+			return candidateIsSubject ? CANDIDATE_IS_SUBJECT : CANDIDATE_IS_OBJECT;
+		}
+	}
+
 	@Override
 	public CloseableIterator<CandidateEntity> getEnvelopeIntersections(IndexGeometry boundSourceIndexGeometry) {
-		return getEnvelopeIntersections(boundSourceIndexGeometry, false);
+		return envelopeIntersections(boundSourceIndexGeometry, Binding.UNSTATED);
 	}
 
 	@Override
 	public CloseableIterator<CandidateEntity> getEnvelopeIntersections(IndexGeometry boundSourceIndexGeometry,
 			boolean candidateIsSubject) {
+		return envelopeIntersections(boundSourceIndexGeometry, Binding.of(candidateIsSubject));
+	}
+
+	private CloseableIterator<CandidateEntity> envelopeIntersections(IndexGeometry boundSourceIndexGeometry,
+			Binding binding) {
 		assertReadableCurrentSchema();
 		if (boundSourceIndexGeometry == null || !boundSourceIndexGeometry.isSpatialCandidate()) {
 			return getCandidateEntitiesForQuery(new MatchNoDocsQuery("Empty source has no envelope intersections."));
 		}
 		return getCandidateEntities(reader -> {
-			EvaluationCrsLookup lookup = EvaluationCrsLookup.of(reader, boundSourceIndexGeometry, candidateIsSubject);
+			EvaluationCrsLookup lookup = EvaluationCrsLookup.of(reader, boundSourceIndexGeometry,
+					binding == Binding.CANDIDATE_IS_SUBJECT);
 			if (lookup == null) {
-				return indexEnvelopeIntersectionsQuery(reader, boundSourceIndexGeometry);
+				return indexEnvelopeIntersectionsQuery(reader, boundSourceIndexGeometry, binding);
 			}
 			return lookup.orElsewhere(lookup.intersecting(this::nativeHullCellsApartQuery),
-					() -> indexEnvelopeIntersectionsQuery(reader, boundSourceIndexGeometry));
+					() -> indexEnvelopeIntersectionsQuery(reader, boundSourceIndexGeometry, binding));
 		});
 	}
 
@@ -419,9 +434,9 @@ public class LuceneGeoIndexer implements GeoSparqlIndexer {
 				&& envelope.getMinY() >= -90 && envelope.getMaxY() <= 90;
 	}
 
-	/** Selects candidates by CRS84 index envelopes, whichever side of the pair the bound is on. */
-	private Query indexEnvelopeIntersectionsQuery(IndexReader reader, IndexGeometry boundSourceIndexGeometry)
-			throws IOException {
+	/** Selects candidates by CRS84 index envelopes. */
+	private Query indexEnvelopeIntersectionsQuery(IndexReader reader, IndexGeometry boundSourceIndexGeometry,
+			Binding binding) throws IOException {
 		Query prefixCellIntersections = prefixCellIntersectionsQuery(strategy,
 				boundSourceIndexGeometry.indexEnvelope());
 		if (boundSourceIndexGeometry.candidateBoundsKind() != CandidateBoundsKind.NATIVE_CRS84) {
@@ -445,39 +460,53 @@ public class LuceneGeoIndexer implements GeoSparqlIndexer {
 				.add(LuceneGeoDocumentSchema.hasNativeHullCellsQuery(), BooleanClause.Occur.FILTER)
 				.add(prefixCellIntersectionsQuery(nativeHullStrategy, boundSourceIndexGeometry.indexEnvelope()),
 						BooleanClause.Occur.MUST_NOT).build();
+		/*
+		 * Jena evaluates a CRS84 subject in CRS84, against each object transformed there. The transformed vertices
+		 * of an object lie inside its index envelope, which is widened by Jena's cleanup, and Jena joins them with
+		 * straight lines that stay inside it. The numeric ranges therefore select every object of a CRS84 subject.
+		 * Where a candidate may be the subject, a transformed or world-fallback source is evaluated in its own CRS
+		 * and keeps the prefix-cell rule.
+		 */
 		Query candidates = new BooleanQuery.Builder()
 				.add(envelopeIntersections, BooleanClause.Occur.FILTER)
 				.add(hullCellsApart, BooleanClause.Occur.MUST_NOT).build();
-		return withNonNativePrefixCellCandidates(reader, candidates, prefixCellIntersections);
+		return binding == Binding.CANDIDATE_IS_OBJECT
+				? candidates : withNonNativePrefixCellCandidates(reader, candidates, prefixCellIntersections);
 	}
 
 	@Override
 	public CloseableIterator<CandidateEntity> getEnvelopeEqualityCandidates(IndexGeometry boundSourceIndexGeometry) {
-		return getEnvelopeEqualityCandidates(boundSourceIndexGeometry, false);
+		return envelopeEqualityCandidates(boundSourceIndexGeometry, Binding.UNSTATED);
 	}
 
 	@Override
 	public CloseableIterator<CandidateEntity> getEnvelopeEqualityCandidates(IndexGeometry boundSourceIndexGeometry,
 			boolean candidateIsSubject) {
+		return envelopeEqualityCandidates(boundSourceIndexGeometry, Binding.of(candidateIsSubject));
+	}
+
+	private CloseableIterator<CandidateEntity> envelopeEqualityCandidates(IndexGeometry boundSourceIndexGeometry,
+			Binding binding) {
 		assertReadableCurrentSchema();
 		if (boundSourceIndexGeometry == null || !boundSourceIndexGeometry.isSpatialCandidate()) {
 			return getCandidateEntitiesForQuery(new MatchNoDocsQuery("Empty source has no envelope intersections."));
 		}
 		return getCandidateEntities(reader -> {
-			EvaluationCrsLookup lookup = EvaluationCrsLookup.of(reader, boundSourceIndexGeometry, candidateIsSubject);
+			EvaluationCrsLookup lookup = EvaluationCrsLookup.of(reader, boundSourceIndexGeometry,
+					binding == Binding.CANDIDATE_IS_SUBJECT);
 			if (lookup == null) {
-				return indexEnvelopeEqualityQuery(reader, boundSourceIndexGeometry);
+				return indexEnvelopeEqualityQuery(reader, boundSourceIndexGeometry, binding);
 			}
 			return lookup.orElsewhere(lookup.withEqualEnvelope(),
-					() -> indexEnvelopeEqualityQuery(reader, boundSourceIndexGeometry));
+					() -> indexEnvelopeEqualityQuery(reader, boundSourceIndexGeometry, binding));
 		});
 	}
 
-	/** Selects equality candidates by CRS84 index envelopes, whichever side of the pair the bound is on. */
-	private Query indexEnvelopeEqualityQuery(IndexReader reader, IndexGeometry boundSourceIndexGeometry)
-			throws IOException {
+	/** Selects equality candidates by CRS84 index envelopes. */
+	private Query indexEnvelopeEqualityQuery(IndexReader reader, IndexGeometry boundSourceIndexGeometry,
+			Binding binding) throws IOException {
 		if (boundSourceIndexGeometry.candidateBoundsKind() != CandidateBoundsKind.NATIVE_CRS84) {
-			return indexEnvelopeIntersectionsQuery(reader, boundSourceIndexGeometry);
+			return indexEnvelopeIntersectionsQuery(reader, boundSourceIndexGeometry, binding);
 		}
 		Query nativeBounds = LuceneGeoDocumentSchema.candidateBoundsKindQuery(CandidateBoundsKind.NATIVE_CRS84);
 		Query nativeEquals = new BooleanQuery.Builder()
@@ -497,7 +526,8 @@ public class LuceneGeoIndexer implements GeoSparqlIndexer {
 				.build();
 		Query prefixCellIntersections = prefixCellIntersectionsQuery(strategy,
 				boundSourceIndexGeometry.indexEnvelope());
-		return withNonNativePrefixCellCandidates(reader, equalityCandidates, prefixCellIntersections);
+		return binding == Binding.CANDIDATE_IS_OBJECT ? equalityCandidates
+				: withNonNativePrefixCellCandidates(reader, equalityCandidates, prefixCellIntersections);
 	}
 
 	@Override
@@ -519,6 +549,7 @@ public class LuceneGeoIndexer implements GeoSparqlIndexer {
 	@Override
 	public CloseableIterator<CandidateEntity> getEnvelopeDisjointUncertainCandidates(
 			IndexGeometry boundSourceIndexGeometry) {
+		// A bound is placed among the sources of its own CRS whichever side of the pair it is on.
 		return getEnvelopeDisjointUncertainCandidates(boundSourceIndexGeometry, false);
 	}
 

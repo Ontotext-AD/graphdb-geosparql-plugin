@@ -78,19 +78,41 @@ public class EvaluationCrsLookupTest {
     }
 
     /**
-     * Jena transforms each source into the CRS of a bound that is the subject. Only sources in the bound's CRS are
-     * then selected by their own envelopes; a source of another CRS beside the bound stays a candidate.
+     * Jena evaluates a CRS84 subject in CRS84, against each object transformed there. A transformed object lies
+     * inside its CRS84 index envelope, so objects of every CRS beside the bound are excluded by numeric ranges.
      */
     @Test
-    public void sourcesOfAnotherCrsKeepIndexEnvelopeLookupWhenTheBoundIsTheSubject() throws Exception {
-        LuceneGeoIndexer indexer = createIndexer("object", false);
+    public void objectsOfACrs84SubjectAreSelectedByTheirIndexEnvelopes() throws Exception {
+        LuceneGeoIndexer indexer = createIndexer("crs84-subject", false);
         index(indexer, insideAndBeside());
-        IndexGeometry bound = geometry(BOUND);
 
-        Set<Long> candidates = ids(indexer.getEnvelopeIntersections(bound, false));
-        assertTrue(candidates.containsAll(Set.of(1L, 2L, 3L)));
-        assertFalse("A CRS84 source beside the CRS84 bound is selected by its own envelope", candidates.contains(4L));
-        assertTrue(candidates.containsAll(Set.of(5L, 6L)));
+        assertEquals(Set.of(1L, 2L, 3L), ids(indexer.getEnvelopeIntersections(geometry(BOUND), false)));
+    }
+
+    /**
+     * Jena transforms each object into the CRS of a projected subject. Only objects in that CRS are then selected
+     * by their own envelopes; an object of another CRS beside the bound stays a candidate through its prefix cells.
+     */
+    @Test
+    public void objectsOfAnotherCrsKeepPrefixCellLookupForAProjectedSubject() throws Exception {
+        LuceneGeoIndexer indexer = createIndexer("projected-subject", false);
+        index(indexer, insideAndBeside());
+
+        Set<Long> candidates = ids(indexer.getEnvelopeIntersections(geometry(literal(MERCATOR, BOUND)), false));
+        assertTrue(candidates.containsAll(Set.of(1L, 2L, 3L, 4L, 5L)));
+        assertFalse("A Mercator object beside the Mercator bound is selected by its own envelope",
+                candidates.contains(6L));
+    }
+
+    /** A caller that does not state the binding direction gets candidates that hold for either direction. */
+    @Test
+    public void lookupWithoutABindingDirectionKeepsSourcesOfAnotherCrsBesideTheBound() throws Exception {
+        LuceneGeoIndexer indexer = createIndexer("unstated", false);
+        index(indexer, insideAndBeside());
+
+        Set<Long> candidates = ids(indexer.getEnvelopeIntersections(geometry(BOUND)));
+        assertTrue(candidates.containsAll(Set.of(1L, 2L, 3L, 5L, 6L)));
+        assertFalse(candidates.contains(4L));
     }
 
     /** An index whose sources carry no envelope of their own selects every source by its CRS84 index envelope. */
