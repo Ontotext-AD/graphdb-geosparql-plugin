@@ -155,7 +155,7 @@ public final class JenaFunctionEvaluator {
 	}
 
 	private static SourceGeometryLiteral sourceLiteral(Value value) {
-		return JenaGeometryAdapter.toSourceGeometryLiteral(value, true);
+		return RecentSourceGeometryLiterals.of(value);
 	}
 
 	private static GeometryWrapper geometry(Value value) {
