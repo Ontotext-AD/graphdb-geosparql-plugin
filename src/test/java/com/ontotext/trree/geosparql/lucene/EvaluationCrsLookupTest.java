@@ -158,6 +158,26 @@ public class EvaluationCrsLookupTest {
     }
 
     /**
+     * Jena rounds a transformed bound to its cleanup precision. A source that holds the rounded coordinates in its
+     * own CRS equals a bound written with more decimal places, and is an equality candidate. A source one cleanup
+     * step away is not equal and has another envelope.
+     */
+    @Test
+    public void equalityCandidatesIncludeASourceEqualToTheBoundAfterCoordinateCleanup() throws Exception {
+        IndexGeometry bound = geometry("LINESTRING(15.1234564 60.1234564,15.9 60.9)");
+        IndexGeometry rounded = geometry("<" + EPSG_4326 + "> LINESTRING(60.123456 15.123456,60.9 15.9)");
+        IndexGeometry oneStepAway = geometry("<" + EPSG_4326 + "> LINESTRING(60.123457 15.123456,60.9 15.9)");
+        LuceneGeoIndexer indexer = createIndexer("equality-cleanup");
+        index(indexer, List.of(rounded, oneStepAway));
+
+        assertTrue(holds(GeoSparqlPropertyRelation.SF_EQUALS, rounded.sourceGeometryLiteral(),
+                bound.sourceGeometryLiteral()));
+        assertFalse(holds(GeoSparqlPropertyRelation.SF_EQUALS, oneStepAway.sourceGeometryLiteral(),
+                bound.sourceGeometryLiteral()));
+        assertEquals(Set.of(1L), ids(indexer.getEnvelopeEqualityCandidates(bound, true)));
+    }
+
+    /**
      * Every source that Jena relates to a bound is a candidate, every definite disjoint match is disjoint, and every
      * disjoint source is found in one of the disjoint phases, for bounds and sources in each pair of CRSs and for
      * both binding directions.
