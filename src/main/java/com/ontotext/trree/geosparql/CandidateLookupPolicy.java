@@ -6,7 +6,7 @@ package com.ontotext.trree.geosparql;
 public enum CandidateLookupPolicy {
 	/** Return source documents whose envelopes may support a relation and require exact evaluation. */
 	ENVELOPE_INTERSECTS,
-	/** Require equal envelopes for native CRS84 equality pairs and retain transformed intersection candidates. */
+	/** Require equal envelopes where a pair is looked up in its evaluation CRS; retain intersection candidates otherwise. */
 	ENVELOPE_EQUALS,
 	/** Partition spatial source documents into definite disjoint matches and uncertain intersections. */
 	DISJOINT_PARTITIONED

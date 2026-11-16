@@ -55,8 +55,9 @@ import org.opengis.util.FactoryException;
  * <p>Jena separately rounds coordinates after transforming the right exact-evaluation operand into the left
  * operand's CRS. The plugin pins that cleanup precision in {@link JenaCalculationPrecision}. Transformed CRS84
  * candidate bounds are widened by the maximum cleanup displacement in CRS84 units so a right operand transformed
-	 * into CRS84 remains covered. This widening is distinct from the SIS envelope approximation. Non-disjoint candidate
-	 * lookup treats independently derived CRS84 envelopes as conservative in both binding directions. When disjoint exact
+	 * into CRS84 remains covered. This widening is distinct from the SIS envelope approximation. For a pair that is not
+	 * looked up in the CRS where Jena evaluates it, non-disjoint candidate lookup treats independently derived CRS84
+	 * envelopes as conservative. When disjoint exact
 	 * evaluation would round in another CRS, relation traversal retains the pair for exact evaluation instead of using
 	 * the CRS84 envelopes as a definite classification. When the exact target is CRS84 and the right operand has a
 	 * three-dimensional CRS, the direct component selects the same source-to-CRS84 operation as exact evaluation. The

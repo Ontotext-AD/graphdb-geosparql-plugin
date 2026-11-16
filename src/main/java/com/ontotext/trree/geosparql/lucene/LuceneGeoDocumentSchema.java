@@ -1,6 +1,5 @@
 package com.ontotext.trree.geosparql.lucene;
 
-import com.ontotext.trree.geosparql.jena.CandidateBoundsKind;
 import com.ontotext.trree.geosparql.jena.IndexGeometry;
 import com.ontotext.trree.geosparql.jena.SourceGeometryLiteral;
 import com.ontotext.trree.sdk.PluginException;
@@ -108,7 +107,8 @@ final class LuceneGeoDocumentSchema {
 	static final String COMMIT_SCHEMA_LAYOUT_KEY = "geosparql.luceneSchemaLayout";
 	/**
 	 * Commit metadata value requiring source WKB, the envelope marker, indexed source CRS, each spatial source's
-	 * envelope in its own CRS, and the CRS84 index envelope of each source in another CRS.
+	 * envelope in its own CRS, the CRS84 index envelope of each source in another CRS, and cover boxes for large
+	 * sources.
 	 */
 	static final String COMMIT_SCHEMA_LAYOUT_VALUE =
 			"prefix-envelope-ordinate-preserving-source-wkb-envelope-marker-topology-dv-indexed-source-crs-source-envelope-index-envelope-source-cover";

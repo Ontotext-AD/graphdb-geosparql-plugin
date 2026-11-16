@@ -56,8 +56,9 @@ index settings. Run a rebuild when GraphDB reports an incompatible GeoSPARQL ind
 as the prefix tree or precision, or whenever the index needs to be recreated from repository data.
 
 An index is written in the layout of the plugin version that built it. A plugin version with another layout reports
-the index as incompatible and answers no index-backed GeoSPARQL query until the index is rebuilt; restarting GraphDB
-does not change that. This holds in both directions. After upgrading the plugin, rebuild the index. After returning
+the index as incompatible. Until the index is rebuilt it answers no index-backed GeoSPARQL query and rejects updates
+that add or remove geometries; restarting GraphDB does not change that. This holds in both directions. After
+upgrading the plugin, rebuild the index. After returning
 to an earlier plugin version, rebuild it with that version or restore an index that version built.
 
 If the plugin is disabled, enabling it performs a full index build. If the plugin is already enabled, run this SPARQL
