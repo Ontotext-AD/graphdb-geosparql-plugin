@@ -6,6 +6,7 @@ import com.ontotext.trree.geosparql.CloseableIterator;
 import com.ontotext.trree.geosparql.EnvelopeDisjointCandidate;
 import com.ontotext.trree.geosparql.GeoSparqlConfig;
 import com.ontotext.trree.geosparql.GeoSparqlPlugin;
+import com.ontotext.trree.geosparql.GeoSparqlPropertyRelation;
 import com.ontotext.trree.geosparql.TestIndexGeometries;
 import com.ontotext.trree.geosparql.jena.IndexGeometry;
 import com.ontotext.trree.geosparql.jena.CandidateBoundsKind;
@@ -23,12 +24,15 @@ import org.slf4j.LoggerFactory;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertSame;
+import static org.junit.Assert.assertTrue;
 
 public class LuceneDisjointEnvelopeLookupTest {
 	@Rule
@@ -65,12 +69,15 @@ public class LuceneDisjointEnvelopeLookupTest {
 		assertEquals(Set.of(5L), uncertain(indexer.getNonSpatialCandidates()));
 	}
 
+	/** Sources 6 and later lie inside the bound with sources 1 and 3; there are enough of them to certify it. */
 	@Test
 	public void nonRectangularBoundPrunesContainedSourcesAndRetainsDisjointCandidates() throws Exception {
 		for (GeoSparqlConfig.PrefixTree tree : GeoSparqlConfig.PrefixTree.values()) {
 			LuceneGeoIndexer indexer = createIndexer("interior-rectangles-" + tree, tree, 1);
-			index(indexer, List.of(geometry("POINT(1 1)"), geometry("POINT(15 15)"),
+			List<IndexGeometry> sources = new ArrayList<>(List.of(geometry("POINT(1 1)"), geometry("POINT(15 15)"),
 					geometry("POINT(0 8)"), geometry("POINT(-1 -1)"), geometry("POINT EMPTY")));
+			sources.addAll(Collections.nCopies(200, geometry("POINT(2 2)")));
+			index(indexer, sources);
 			IndexGeometry bound = geometry("POLYGON((0 0,16 0,16 8,8 16,0 16,0 0))");
 
 			assertEquals(Set.of(2L), uncertain(indexer.getEnvelopeDisjointUncertainCandidates(bound)));
@@ -79,21 +86,64 @@ public class LuceneDisjointEnvelopeLookupTest {
 		}
 	}
 
+	/** Certifying a bound takes work that a few candidates cannot repay, so they are all evaluated exactly. */
+	@Test
+	public void fewCandidatesAreKeptWithoutCertifyingTheBound() throws Exception {
+		LuceneGeoIndexer indexer = createIndexer("few-candidates", GeoSparqlConfig.PrefixTree.QUAD, 11);
+		index(indexer, List.of(geometry("POINT(1 1)"), geometry("POINT(15 15)"), geometry("POINT(0 8)"),
+				geometry("POINT(-1 -1)")));
+		IndexGeometry bound = geometry("POLYGON((0 0,16 0,16 8,8 16,0 16,0 0))");
+
+		assertEquals(Set.of(1L, 2L, 3L), uncertain(indexer.getEnvelopeDisjointUncertainCandidates(bound)));
+		assertEquals(Set.of(4L), definite(indexer.getEnvelopeDisjointCandidates(bound, true)));
+	}
+
 	@Test
 	public void interiorPruningRetainsAllCandidatesWhenAtMostHalfCanBeExcluded() throws Exception {
-		for (int outsideCount : new int[]{1, 2}) {
+		for (int outsideCount : new int[]{100, 101}) {
 			LuceneGeoIndexer indexer = createIndexer("low-reduction-" + outsideCount,
 					GeoSparqlConfig.PrefixTree.QUAD, 11);
-			List<IndexGeometry> sources = new ArrayList<>();
-			sources.add(geometry("POINT(1 1)"));
-			for (int i = 0; i < outsideCount; i++) {
-				sources.add(geometry("POINT(15 15)"));
-			}
+			List<IndexGeometry> sources = new ArrayList<>(Collections.nCopies(100, geometry("POINT(1 1)")));
+			sources.addAll(Collections.nCopies(outsideCount, geometry("POINT(15 15)")));
 			index(indexer, sources);
-			Set<Long> expected = outsideCount == 1 ? Set.of(1L, 2L) : Set.of(1L, 2L, 3L);
-			assertEquals(expected, uncertain(indexer.getEnvelopeDisjointUncertainCandidates(
-					geometry("POLYGON((0 0,16 0,16 8,8 16,0 16,0 0))"))));
+
+			assertEquals(sources.size(), uncertain(indexer.getEnvelopeDisjointUncertainCandidates(
+					geometry("POLYGON((0 0,16 0,16 8,8 16,0 16,0 0))"))).size());
 		}
+	}
+
+	/**
+	 * A circle fills no large rectangle. Certifying larger cells before their quarters still covers most of it, so
+	 * most of the sources spread over its envelope are removed, and every removed source meets the circle.
+	 */
+	@Test
+	public void roundBoundPrunesMostSourcesInsideIt() throws Exception {
+		LuceneGeoIndexer indexer = createIndexer("round-bound", GeoSparqlConfig.PrefixTree.QUAD, 11);
+		List<IndexGeometry> sources = gridOverTheCircleEnvelope();
+		index(indexer, sources);
+		IndexGeometry bound = geometry(circle(300));
+
+		Set<Long> uncertain = uncertain(indexer.getEnvelopeDisjointUncertainCandidates(bound));
+
+		assertTrue(uncertain.size() + " of " + sources.size(), uncertain.size() < sources.size() / 2);
+		for (int id = 1; id <= sources.size(); id++) {
+			if (!uncertain.contains((long) id)) {
+				assertFalse("removed source is disjoint: " + sources.get(id - 1).sourceGeometryLiteral().lexicalForm(),
+						GeoSparqlPropertyRelation.SF_DISJOINT.evaluate(sources.get(id - 1).sourceGeometryLiteral(),
+								bound.sourceGeometryLiteral()));
+			}
+		}
+	}
+
+	/** One Jena check takes longer the more points a bound has, so a bound beyond the point limit is not certified. */
+	@Test
+	public void boundWithTooManyPointsRetainsAllCandidates() throws Exception {
+		LuceneGeoIndexer indexer = createIndexer("many-points", GeoSparqlConfig.PrefixTree.QUAD, 11);
+		List<IndexGeometry> sources = gridOverTheCircleEnvelope();
+		index(indexer, sources);
+
+		assertEquals(sources.size(),
+				uncertain(indexer.getEnvelopeDisjointUncertainCandidates(geometry(circle(1100)))).size());
 	}
 
 	@Test
@@ -101,10 +151,13 @@ public class LuceneDisjointEnvelopeLookupTest {
 		LuceneGeoIndexer indexer = createIndexer("interior-non-native", GeoSparqlConfig.PrefixTree.QUAD, 11);
 		SourceGeometryLiteral fallback = SourceGeometryLiteral.fromWkt(
 				"<http://www.opengis.net/def/crs/EPSG/0/3857> POINT(2000000 1000000)");
-		index(indexer, List.of(geometry("POINT(1 1)"),
+		List<IndexGeometry> sources = new ArrayList<>(List.of(geometry("POINT(1 1)"),
 				geometry("<http://www.opengis.net/def/crs/EPSG/0/3857> POINT(100000 100000)"),
 				IndexGeometryFixtures.withIndexEnvelope(fallback, new Envelope(-180, 180, -90, 90),
 						CandidateBoundsKind.WORLD_FALLBACK, "unrepresentable-rectangle")));
+		// Enough CRS84 sources inside the bound to certify it.
+		sources.addAll(Collections.nCopies(100, geometry("POINT(2 2)")));
+		index(indexer, sources);
 
 		assertEquals(Set.of(2L, 3L), uncertain(indexer.getEnvelopeDisjointUncertainCandidates(
 				geometry("POLYGON((0 0,16 0,16 8,8 16,0 16,0 0))"))));
@@ -122,21 +175,6 @@ public class LuceneDisjointEnvelopeLookupTest {
 					"<http://www.opengis.net/def/crs/EPSG/0/3857> POLYGON((0 0,100000 0,0 100000,0 0))")) {
 				assertSame(wkt, candidates, prune(geometry(wkt), candidates, searcher));
 			}
-		}
-	}
-
-	@Test
-	public void complexPolygonBoundsRetainTheCompleteCandidateQuery() throws Exception {
-		StringBuilder polygon = new StringBuilder("POLYGON((12 8");
-		for (int i = 1; i < 300; i++) {
-			double angle = i * 2 * Math.PI / 300;
-			polygon.append(',').append(8 + 4 * Math.cos(angle)).append(' ').append(8 + 4 * Math.sin(angle));
-		}
-		polygon.append(",12 8))");
-		Query candidates = new MatchAllDocsQuery();
-		try (MultiReader reader = new MultiReader()) {
-			assertSame(candidates, prune(
-					geometry(polygon.toString()), candidates, new IndexSearcher(reader)));
 		}
 	}
 
@@ -296,6 +334,27 @@ public class LuceneDisjointEnvelopeLookupTest {
 
 	private static IndexGeometry geometry(String wkt) {
 		return TestIndexGeometries.fromWkt(wkt);
+	}
+
+	/** A circle of radius 4 around 8 8 with the given number of distinct points. */
+	private static String circle(int points) {
+		StringBuilder polygon = new StringBuilder("POLYGON((12 8");
+		for (int i = 1; i < points; i++) {
+			double angle = i * 2 * Math.PI / points;
+			polygon.append(',').append(8 + 4 * Math.cos(angle)).append(' ').append(8 + 4 * Math.sin(angle));
+		}
+		return polygon.append(",12 8))").toString();
+	}
+
+	/** 6,400 points spread evenly over the envelope of the circle. */
+	private static List<IndexGeometry> gridOverTheCircleEnvelope() {
+		List<IndexGeometry> sources = new ArrayList<>();
+		for (int column = 0; column < 80; column++) {
+			for (int row = 0; row < 80; row++) {
+				sources.add(geometry("POINT(" + (4.05 + column * 0.1) + " " + (4.05 + row * 0.1) + ")"));
+			}
+		}
+		return sources;
 	}
 
 	private static IndexGeometry transformed(Envelope indexEnvelope) {

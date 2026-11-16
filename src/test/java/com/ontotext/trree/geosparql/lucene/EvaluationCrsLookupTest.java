@@ -17,11 +17,13 @@ import org.slf4j.LoggerFactory;
 
 import java.nio.file.Files;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.Locale;
 import java.util.Random;
 import java.util.Set;
 import java.util.TreeSet;
+import java.util.stream.LongStream;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
@@ -63,16 +65,21 @@ public class EvaluationCrsLookupTest {
      * In UTM the CRS84 bound is a quadrilateral that does not fill its envelope. Sources 1 to 3 lie inside
      * rectangles that Jena finds within it and cannot be disjoint. Source 4 is far outside its envelope. Source 5
      * lies about a kilometre east of its slanted eastern edge, inside its envelope, and needs exact evaluation.
+     * Sources 6 and later lie at the middle of the bound; with them there are enough candidates to certify it.
      */
     @Test
     public void subjectsInsideAnObliqueBoundAreRemovedFromItsDisjointCandidates() throws Exception {
         LuceneGeoIndexer indexer = createIndexer("oblique");
-        index(indexer, List.of(geometry(literal(UTM_33N, "POINT(15.4 60.4)")),
+        List<IndexGeometry> sources = new ArrayList<>(List.of(geometry(literal(UTM_33N, "POINT(15.4 60.4)")),
                 geometry(literal(UTM_33N, "POINT(15.5 60.5)")), geometry(literal(UTM_33N, "POINT(15.6 60.6)")),
                 geometry(literal(UTM_33N, "POINT(17 60.5)")), geometry(literal(UTM_33N, "POINT(16.02 60.95)"))));
+        sources.addAll(Collections.nCopies(40, geometry(literal(UTM_33N, "POINT(15.5 60.5)"))));
+        index(indexer, sources);
         IndexGeometry bound = geometry(BOUND);
+        Set<Long> meetingTheEnvelope = new TreeSet<>(Set.of(1L, 2L, 3L, 5L));
+        LongStream.rangeClosed(6, sources.size()).forEach(meetingTheEnvelope::add);
 
-        assertEquals(Set.of(1L, 2L, 3L, 5L), ids(indexer.getEnvelopeIntersections(bound, true)));
+        assertEquals(meetingTheEnvelope, ids(indexer.getEnvelopeIntersections(bound, true)));
         assertEquals(Set.of(5L), ids(indexer.getEnvelopeDisjointUncertainCandidates(bound, true)));
         assertEquals(Set.of(4L), definite(indexer.getEnvelopeDisjointCandidates(bound, true)));
     }
