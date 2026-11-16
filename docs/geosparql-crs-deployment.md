@@ -15,32 +15,57 @@ This guide explains how to provide and test those CRS data files.
 - Missing CRS definitions or grid-shift files are a configuration problem. They are not permission to reinterpret coordinates as CRS84 or WGS84.
 - A CRS that Apache SIS cannot parse, resolve, or transform fails by default. Missing EPSG or grid data can also reduce transformation accuracy without causing an error, so projected CRSes must be checked with known points.
 
-## Mixed-CRS Candidate Lookup
+## Candidate Lookup and CRS
 
-Non-disjoint GeoSPARQL property relations use CRS84 index-envelope intersection for candidate lookup in both binding
-directions. A local bound geometry can therefore select a geographic candidate subset when the indexed source
-geometry literals use a different CRS. Broad or world-fallback index envelopes can still retain many candidates.
-Exact evaluation preserves source CRS semantics and subject/object order while transforming the right operand into
-the left operand's CRS when required.
+A GeoSPARQL property relation with one side bound looks up candidate source geometry literals in the Lucene index and
+then decides each pair by exact evaluation. Exact evaluation preserves source CRS semantics and subject/object order:
+Jena evaluates a pair in the CRS of its subject geometry and transforms the object geometry into that CRS when the
+two differ.
 
-This policy treats independently derived CRS84 index envelopes as conservative for non-disjoint candidate lookup,
-including when Jena cleans transformed coordinates in a non-CRS84 target CRS. Transformed envelopes include Jena's
-pinned cleanup displacement in CRS84 units. Apache SIS does not provide a universal mathematical proof that its
-transformed envelopes contain every possible transformed geometry. This is an intentional engineering trade-off: the
-plugin does not scan every different-CRS source merely because that formal proof is unavailable. A reproducible
-under-bound remains a correctness defect.
+The index stores the bounding box of every source geometry literal in the literal's own CRS. Candidate lookup compares
+bounding boxes in the CRS where Jena evaluates the pair, wherever that CRS is known before the candidates are read.
 
-Transform failures and results that cannot be represented safely as one Lucene geographic rectangle use the world
-CRS84 fallback. CRS-environment fingerprint changes require a force reindex, and differential coverage across the
-maintained CRS and runtime matrix is a correctness control. These safeguards do not turn the SIS result into a
-mathematical enclosure guarantee.
+| Bound geometry | Candidates | Lookup |
+| --- | --- | --- |
+| Either side, in the candidates' CRS | Sources in that CRS | Bounding boxes in that CRS |
+| Object, in another CRS | Subjects in any CRS | The bound geometry is transformed once into each source CRS; bounding boxes are compared there |
+| Subject, in CRS84 | Objects in another CRS | CRS84 index envelopes of the candidates |
+| Subject, in a CRS other than CRS84 | Objects in another CRS | Prefix cells of the candidates' CRS84 index envelopes |
 
-Disjoint relations keep a separate mixed-CRS exact-evaluation phase. Candidate lookup does not use independently
-derived CRS84 envelopes to make a definite disjoint classification when coordinate cleanup occurs in another CRS.
-This phase can process all spatial sources in relevant different CRSes.
+The first two rows compare the coordinates that Jena evaluates. Lookup there needs no assumption about transformed
+envelopes, and a disjoint relation is decided by bounding boxes for every source that is clearly apart from the bound
+geometry or clearly inside it.
 
-This asymmetry keeps ordinary non-disjoint queries selective while preventing independently derived envelopes from
-establishing a positive disjoint result without exact evaluation.
+The last two rows rely on CRS84 index envelopes. A CRS84 index envelope of a source in another CRS is derived with
+Apache SIS and includes Jena's pinned cleanup displacement in CRS84 units. Apache SIS does not provide a universal
+mathematical proof that its transformed envelopes contain every possible transformed geometry. This is an intentional
+engineering trade-off: the plugin does not scan every different-CRS source merely because that formal proof is
+unavailable. A reproducible under-bound remains a correctness defect. Transform failures and results that cannot be
+represented safely as one Lucene geographic rectangle use the world CRS84 fallback. CRS-environment fingerprint
+changes require a force reindex, and differential coverage across the maintained CRS and runtime matrix is a
+correctness control.
+
+The last row is the coarse case. Jena transforms every candidate into the bound geometry's CRS and cleans its
+coordinates there, so the bounding box it compares is not known until the candidate is transformed. Non-disjoint
+relations select candidates by the prefix cells of their CRS84 index envelopes, which can retain many candidates for
+a small bound geometry. Disjoint relations exact-evaluate every source in a CRS other than the bound geometry's,
+because independently derived CRS84 envelopes do not establish a positive disjoint result when coordinate cleanup
+occurs in another CRS.
+
+### Writing Selective Queries
+
+- Lookup is most selective when the stored geometries are the subject of the relation, as in
+  `?geometry geo:sfWithin ?area`, or when the bound geometry is written in the CRS of the stored data.
+- A bound geometry that is the subject in a projected or other non-CRS84 CRS, over data in a different CRS, uses the
+  coarse case. Writing that geometry in the data's CRS or in CRS84, or using the converse relation with the stored
+  geometries as the subject, avoids it. A relation and its converse are evaluated in different CRSs when the two
+  geometries differ in CRS, so their results can differ for geometries that lie on a boundary.
+- CRS URIs are compared as strings, as Jena compares them. Two URIs that name one CRS are different CRSs to candidate
+  lookup and to exact evaluation.
+- One lookup places the bound geometry in at most sixteen source CRSs: its own, then the others in URI order. Sources
+  in further CRSs are looked up by CRS84 index envelopes as in the last row.
+- GeoSPARQL filter functions such as `geof:sfWithin` evaluate every pair they are given and do not use the index. A
+  property relation with one side bound is the indexed form.
 
 ## Default Behavior Without CRS Configuration
 
