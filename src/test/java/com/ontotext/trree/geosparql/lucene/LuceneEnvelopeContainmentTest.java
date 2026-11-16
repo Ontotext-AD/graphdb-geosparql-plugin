@@ -63,7 +63,8 @@ public class LuceneEnvelopeContainmentTest {
 				for (int documentId = 0; documentId < reader.maxDoc(); documentId++) {
 					Document stored = reader.document(documentId);
 					assertFalse(stored.getFields().stream().anyMatch(field ->
-							field.name().startsWith("geoEnvelope")));
+							field.name().equals(LuceneGeoDocumentSchema.FIELD_SOURCE_ENVELOPE)
+									|| field.name().equals(LuceneGeoDocumentSchema.FIELD_INDEX_ENVELOPE)));
 				}
 			}
 		}
@@ -84,10 +85,8 @@ public class LuceneEnvelopeContainmentTest {
 				IndexWriter writer = new IndexWriter(directory, new IndexWriterConfig())) {
 			for (Envelope envelope : envelopes) {
 				Document document = new Document();
-				document.add(new DoublePoint(LuceneGeoDocumentSchema.FIELD_ENVELOPE_MIN_X, envelope.getMinX()));
-				document.add(new DoublePoint(LuceneGeoDocumentSchema.FIELD_ENVELOPE_MAX_X, envelope.getMaxX()));
-				document.add(new DoublePoint(LuceneGeoDocumentSchema.FIELD_ENVELOPE_MIN_Y, envelope.getMinY()));
-				document.add(new DoublePoint(LuceneGeoDocumentSchema.FIELD_ENVELOPE_MAX_Y, envelope.getMaxY()));
+				document.add(new DoublePoint(LuceneGeoDocumentSchema.FIELD_SOURCE_ENVELOPE, envelope.getMinX(),
+						envelope.getMaxX(), envelope.getMinY(), envelope.getMaxY()));
 				writer.addDocument(document);
 			}
 			writer.addDocument(new Document());
@@ -103,7 +102,7 @@ public class LuceneEnvelopeContainmentTest {
 						}
 					}
 					Set<Integer> actual = new HashSet<>();
-					for (ScoreDoc hit : searcher.search(LuceneGeoDocumentSchema.envelopeWithinQuery(bound),
+					for (ScoreDoc hit : searcher.search(LuceneGeoDocumentSchema.sourceEnvelopeWithinQuery(bound),
 							reader.maxDoc()).scoreDocs) {
 						actual.add(hit.doc);
 					}

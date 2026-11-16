@@ -58,19 +58,20 @@ final class LuceneGeoDocumentSchema {
 	static final String FIELD_NATIVE_HULL_PREFIX = "geoNativeHullCells";
 	/** Indexed marker present on exactly the documents that carry native hull cells. */
 	static final String FIELD_HAS_NATIVE_HULL_CELLS = "geoHasNativeHullCells";
-	/** Indexed exact lower X bound used for envelope intersection and containment pruning. */
-	static final String FIELD_ENVELOPE_MIN_X = "geoEnvelopeMinX";
-	/** Indexed exact upper X bound used for envelope intersection and containment pruning. */
-	static final String FIELD_ENVELOPE_MAX_X = "geoEnvelopeMaxX";
-	/** Indexed exact lower Y bound used for envelope intersection and containment pruning. */
-	static final String FIELD_ENVELOPE_MIN_Y = "geoEnvelopeMinY";
-	/** Indexed exact upper Y bound used for envelope intersection and containment pruning. */
-	static final String FIELD_ENVELOPE_MAX_Y = "geoEnvelopeMaxY";
 	/**
 	 * XY envelope of the source in its own CRS, as one point of four dimensions: minimum X, maximum X, minimum Y
 	 * and maximum Y. It serves lookup in the CRS where Jena evaluates a pair. Absent on empty sentinels.
 	 */
 	static final String FIELD_SOURCE_ENVELOPE = "geoSourceEnvelope";
+	/**
+	 * CRS84 index envelope of a source in another CRS, as one point of the same four dimensions. A CRS84 source's
+	 * index envelope is its own envelope and is not stored a second time.
+	 */
+	static final String FIELD_INDEX_ENVELOPE = "geoIndexEnvelope";
+	private static final int MIN_X = 0;
+	private static final int MAX_X = 1;
+	private static final int MIN_Y = 2;
+	private static final int MAX_Y = 3;
 	/** Stored WKB for the complete native-CRS source geometry used to construct Jena exact-evaluation input. */
 	static final String FIELD_SOURCE_GEOMETRY = "geoData";
 	/** Stored per-document schema number used for defensive validation after the commit-level check. */
@@ -91,8 +92,6 @@ final class LuceneGeoDocumentSchema {
 	static final String FIELD_INDEX_CRS = "geoIndexCrs";
 	/** Indexed and stored marker separating spatial envelope documents from non-spatial empty sentinels. */
 	static final String FIELD_HAS_ENVELOPE = "geoHasEnvelope";
-	/** Indexed and stored candidate-envelope provenance. */
-	static final String FIELD_CANDIDATE_BOUNDS_KIND = "geoCandidateBoundsKind";
 	static final String HAS_ENVELOPE_VALUE = "1";
 	static final String NO_ENVELOPE_VALUE = "0";
 	static final String HAS_NATIVE_HULL_CELLS_VALUE = "1";
@@ -109,11 +108,11 @@ final class LuceneGeoDocumentSchema {
 	/** Commit metadata key identifying the concrete field layout within the schema version. */
 	static final String COMMIT_SCHEMA_LAYOUT_KEY = "geosparql.luceneSchemaLayout";
 	/**
-	 * Commit metadata value requiring source WKB, exact envelope bounds, provenance, indexed source CRS, and each
-	 * spatial source's envelope in its own CRS.
+	 * Commit metadata value requiring source WKB, the envelope marker, indexed source CRS, each spatial source's
+	 * envelope in its own CRS, and the CRS84 index envelope of each source in another CRS.
 	 */
 	static final String COMMIT_SCHEMA_LAYOUT_VALUE =
-			"prefix-envelope-ordinate-preserving-source-wkb-envelope-marker-topology-dv-envelope-points-bounds-kind-indexed-source-crs-source-envelope";
+			"prefix-envelope-ordinate-preserving-source-wkb-envelope-marker-topology-dv-indexed-source-crs-source-envelope-index-envelope";
 	/** Commit metadata key identifying the CRS transformation inputs used for candidate envelopes. */
 	static final String COMMIT_CRS_ENVIRONMENT_FINGERPRINT_KEY = "geosparql.crsEnvironmentFingerprint";
 	static final String SCHEMA_MISMATCH_MESSAGE =
@@ -156,18 +155,16 @@ final class LuceneGeoDocumentSchema {
 				doc.add(field);
 			}
 			addNativeHullCells(doc, geometry, nativeHullStrategy);
-			doc.add(new DoublePoint(FIELD_ENVELOPE_MIN_X, envelope.getMinX()));
-			doc.add(new DoublePoint(FIELD_ENVELOPE_MAX_X, envelope.getMaxX()));
-			doc.add(new DoublePoint(FIELD_ENVELOPE_MIN_Y, envelope.getMinY()));
-			doc.add(new DoublePoint(FIELD_ENVELOPE_MAX_Y, envelope.getMaxY()));
 			Envelope sourceEnvelope = geometry.sourceEnvelope();
 			doc.add(new DoublePoint(FIELD_SOURCE_ENVELOPE, sourceEnvelope.getMinX(), sourceEnvelope.getMaxX(),
 					sourceEnvelope.getMinY(), sourceEnvelope.getMaxY()));
+			if (!IndexGeometry.INDEX_CRS.equals(source.effectiveCrsUri())) {
+				doc.add(new DoublePoint(FIELD_INDEX_ENVELOPE, envelope.getMinX(), envelope.getMaxX(),
+						envelope.getMinY(), envelope.getMaxY()));
+			}
 		}
 		doc.add(new StringField(FIELD_HAS_ENVELOPE,
 				geometry.isSpatialCandidate() ? HAS_ENVELOPE_VALUE : NO_ENVELOPE_VALUE, Field.Store.YES));
-		doc.add(new StringField(FIELD_CANDIDATE_BOUNDS_KIND,
-				geometry.candidateBoundsKind().name(), Field.Store.YES));
 		// Empty source geometry literals still need an entity-bearing document so full scans can reconstruct
 		// them for exact predicate evaluation. Their sentinel document deliberately has no Lucene spatial fields.
 
@@ -256,7 +253,6 @@ final class LuceneGeoDocumentSchema {
 				&& numericFieldValue(doc, FIELD_SOURCE_SPATIAL_DIMENSION) != null
 				&& numericFieldValue(doc, FIELD_SOURCE_TOPOLOGICAL_DIMENSION) != null
 				&& hasValidEnvelopeMarker(doc)
-				&& hasValidCandidateBoundsKind(doc)
 				&& IndexGeometry.INDEX_CRS.equals(doc.get(FIELD_INDEX_CRS));
 	}
 
@@ -300,10 +296,6 @@ final class LuceneGeoDocumentSchema {
 	static Query hasEnvelopeQuery(boolean hasEnvelope) {
 		return new TermQuery(new Term(FIELD_HAS_ENVELOPE,
 				hasEnvelope ? HAS_ENVELOPE_VALUE : NO_ENVELOPE_VALUE));
-	}
-
-	static Query candidateBoundsKindQuery(CandidateBoundsKind kind) {
-		return new TermQuery(new Term(FIELD_CANDIDATE_BOUNDS_KIND, kind.name()));
 	}
 
 	/** Matches the documents that carry native hull cells. */
@@ -365,22 +357,18 @@ final class LuceneGeoDocumentSchema {
 		return new TermQuery(new Term(FIELD_SOURCE_CRS, sourceCrsUri));
 	}
 
+	/**
+	 * Matches sources whose CRS84 index envelopes meet the closed bound, including those that meet it despite their
+	 * longitudes.
+	 */
 	static Query envelopeIntersectsQuery(Envelope boundEnvelope) {
-		// Numeric point ranges distinguish signed zeros, while geometric coordinate comparisons do not.
-		double minX = boundEnvelope.getMinX() == 0.0 ? -0.0 : boundEnvelope.getMinX();
-		double maxX = boundEnvelope.getMaxX() == 0.0 ? 0.0 : boundEnvelope.getMaxX();
-		double minY = boundEnvelope.getMinY() == 0.0 ? -0.0 : boundEnvelope.getMinY();
-		double maxY = boundEnvelope.getMaxY() == 0.0 ? 0.0 : boundEnvelope.getMaxY();
-		Query overlapping = new BooleanQuery.Builder()
-				.add(DoublePoint.newRangeQuery(FIELD_ENVELOPE_MIN_X,
-						Double.NEGATIVE_INFINITY, maxX), BooleanClause.Occur.FILTER)
-				.add(DoublePoint.newRangeQuery(FIELD_ENVELOPE_MAX_X,
-						minX, Double.POSITIVE_INFINITY), BooleanClause.Occur.FILTER)
-				.add(DoublePoint.newRangeQuery(FIELD_ENVELOPE_MIN_Y,
-						Double.NEGATIVE_INFINITY, maxY), BooleanClause.Occur.FILTER)
-				.add(DoublePoint.newRangeQuery(FIELD_ENVELOPE_MAX_Y,
-						minY, Double.POSITIVE_INFINITY), BooleanClause.Occur.FILTER)
-				.build();
+		double[] lower = unbounded(Double.NEGATIVE_INFINITY);
+		double[] upper = unbounded(Double.POSITIVE_INFINITY);
+		upper[MIN_X] = upperBound(boundEnvelope.getMaxX());
+		lower[MAX_X] = lowerBound(boundEnvelope.getMinX());
+		upper[MIN_Y] = upperBound(boundEnvelope.getMaxY());
+		lower[MAX_Y] = lowerBound(boundEnvelope.getMinY());
+		Query overlapping = indexEnvelopeInBox(lower, upper);
 		Query meetingDespiteLongitude = envelopeMeetsDespiteLongitudeQuery(boundEnvelope);
 		if (meetingDespiteLongitude == null) {
 			return overlapping;
@@ -392,29 +380,21 @@ final class LuceneGeoDocumentSchema {
 				.build();
 	}
 
-	static Query envelopeEqualsQuery(Envelope boundEnvelope) {
-		return new BooleanQuery.Builder()
-				.add(envelopeOrdinateEqualsQuery(FIELD_ENVELOPE_MIN_X, boundEnvelope.getMinX()),
-						BooleanClause.Occur.FILTER)
-				.add(envelopeOrdinateEqualsQuery(FIELD_ENVELOPE_MAX_X, boundEnvelope.getMaxX()),
-						BooleanClause.Occur.FILTER)
-				.add(envelopeOrdinateEqualsQuery(FIELD_ENVELOPE_MIN_Y, boundEnvelope.getMinY()),
-						BooleanClause.Occur.FILTER)
-				.add(envelopeOrdinateEqualsQuery(FIELD_ENVELOPE_MAX_Y, boundEnvelope.getMaxY()),
-						BooleanClause.Occur.FILTER)
-				.build();
-	}
-
 	/**
-	 * Matches envelopes strictly separated from the bound on at least one axis, except those meeting it across the
-	 * antimeridian or at a pole.
+	 * Matches CRS84 index envelopes strictly separated from the bound on at least one axis, except those meeting it
+	 * across the antimeridian or at a pole.
 	 */
 	static Query envelopeDisjointQuery(Envelope boundEnvelope) {
+		// Mathematical nextDown/nextUp exclude both signed zeros when the bound is zero.
 		Query separated = new BooleanQuery.Builder()
-				.add(ordinateLessThanQuery(FIELD_ENVELOPE_MAX_X, boundEnvelope.getMinX()), BooleanClause.Occur.SHOULD)
-				.add(ordinateGreaterThanQuery(FIELD_ENVELOPE_MIN_X, boundEnvelope.getMaxX()), BooleanClause.Occur.SHOULD)
-				.add(ordinateLessThanQuery(FIELD_ENVELOPE_MAX_Y, boundEnvelope.getMinY()), BooleanClause.Occur.SHOULD)
-				.add(ordinateGreaterThanQuery(FIELD_ENVELOPE_MIN_Y, boundEnvelope.getMaxY()), BooleanClause.Occur.SHOULD)
+				.add(indexEnvelopeOrdinateAtMost(MAX_X, Math.nextDown(boundEnvelope.getMinX())),
+						BooleanClause.Occur.SHOULD)
+				.add(indexEnvelopeOrdinateAtLeast(MIN_X, Math.nextUp(boundEnvelope.getMaxX())),
+						BooleanClause.Occur.SHOULD)
+				.add(indexEnvelopeOrdinateAtMost(MAX_Y, Math.nextDown(boundEnvelope.getMinY())),
+						BooleanClause.Occur.SHOULD)
+				.add(indexEnvelopeOrdinateAtLeast(MIN_Y, Math.nextUp(boundEnvelope.getMaxY())),
+						BooleanClause.Occur.SHOULD)
 				.setMinimumNumberShouldMatch(1)
 				.build();
 		Query meetingDespiteLongitude = envelopeMeetsDespiteLongitudeQuery(boundEnvelope);
@@ -428,8 +408,8 @@ final class LuceneGeoDocumentSchema {
 	}
 
 	/**
-	 * Matches envelopes that can meet the bound although their longitude ranges are apart, or returns null for a
-	 * bound away from the antimeridian and the poles.
+	 * Matches CRS84 index envelopes that can meet the bound although their longitude ranges are apart, or returns
+	 * null for a bound away from the antimeridian and the poles.
 	 */
 	static Query envelopeMeetsDespiteLongitudeQuery(Envelope boundEnvelope) {
 		Query acrossAntimeridian = envelopeMeetsAcrossAntimeridianQuery(boundEnvelope);
@@ -461,12 +441,10 @@ final class LuceneGeoDocumentSchema {
 		}
 		BooleanQuery.Builder sameCap = new BooleanQuery.Builder().setMinimumNumberShouldMatch(1);
 		if (boundReachesSouthernCap) {
-			sameCap.add(DoublePoint.newRangeQuery(FIELD_ENVELOPE_MIN_Y,
-					Double.NEGATIVE_INFINITY, southernCap), BooleanClause.Occur.SHOULD);
+			sameCap.add(indexEnvelopeOrdinateAtMost(MIN_Y, southernCap), BooleanClause.Occur.SHOULD);
 		}
 		if (boundReachesNorthernCap) {
-			sameCap.add(DoublePoint.newRangeQuery(FIELD_ENVELOPE_MAX_Y,
-					northernCap, Double.POSITIVE_INFINITY), BooleanClause.Occur.SHOULD);
+			sameCap.add(indexEnvelopeOrdinateAtLeast(MAX_Y, northernCap), BooleanClause.Occur.SHOULD);
 		}
 		return sameCap.build();
 	}
@@ -488,65 +466,72 @@ final class LuceneGeoDocumentSchema {
 		}
 		BooleanQuery.Builder oppositeEnd = new BooleanQuery.Builder().setMinimumNumberShouldMatch(1);
 		if (boundReachesEasternEnd) {
-			oppositeEnd.add(DoublePoint.newRangeQuery(FIELD_ENVELOPE_MIN_X,
-					Double.NEGATIVE_INFINITY, westernEnd), BooleanClause.Occur.SHOULD);
+			oppositeEnd.add(latitudesOverlapping(boundEnvelope, MIN_X, Double.NEGATIVE_INFINITY, westernEnd),
+					BooleanClause.Occur.SHOULD);
 		}
 		if (boundReachesWesternEnd) {
-			oppositeEnd.add(DoublePoint.newRangeQuery(FIELD_ENVELOPE_MAX_X,
-					easternEnd, Double.POSITIVE_INFINITY), BooleanClause.Occur.SHOULD);
+			oppositeEnd.add(latitudesOverlapping(boundEnvelope, MAX_X, easternEnd, Double.POSITIVE_INFINITY),
+					BooleanClause.Occur.SHOULD);
 		}
-		double minY = boundEnvelope.getMinY() == 0.0 ? -0.0 : boundEnvelope.getMinY();
-		double maxY = boundEnvelope.getMaxY() == 0.0 ? 0.0 : boundEnvelope.getMaxY();
-		return new BooleanQuery.Builder()
-				.add(oppositeEnd.build(), BooleanClause.Occur.FILTER)
-				.add(DoublePoint.newRangeQuery(FIELD_ENVELOPE_MIN_Y,
-						Double.NEGATIVE_INFINITY, maxY), BooleanClause.Occur.FILTER)
-				.add(DoublePoint.newRangeQuery(FIELD_ENVELOPE_MAX_Y,
-						minY, Double.POSITIVE_INFINITY), BooleanClause.Occur.FILTER)
-				.build();
+		return oppositeEnd.build();
 	}
 
-	/** Matches envelopes contained by the closed bound, treating signed zeros as equal. */
-	static Query envelopeWithinQuery(Envelope boundEnvelope) {
-		double minX = boundEnvelope.getMinX() == 0.0 ? -0.0 : boundEnvelope.getMinX();
-		double maxX = boundEnvelope.getMaxX() == 0.0 ? 0.0 : boundEnvelope.getMaxX();
-		double minY = boundEnvelope.getMinY() == 0.0 ? -0.0 : boundEnvelope.getMinY();
-		double maxY = boundEnvelope.getMaxY() == 0.0 ? 0.0 : boundEnvelope.getMaxY();
-		return new BooleanQuery.Builder()
-				.add(DoublePoint.newRangeQuery(FIELD_ENVELOPE_MIN_X,
-						minX, Double.POSITIVE_INFINITY), BooleanClause.Occur.FILTER)
-				.add(DoublePoint.newRangeQuery(FIELD_ENVELOPE_MAX_X,
-						Double.NEGATIVE_INFINITY, maxX), BooleanClause.Occur.FILTER)
-				.add(DoublePoint.newRangeQuery(FIELD_ENVELOPE_MIN_Y,
-						minY, Double.POSITIVE_INFINITY), BooleanClause.Occur.FILTER)
-				.add(DoublePoint.newRangeQuery(FIELD_ENVELOPE_MAX_Y,
-						Double.NEGATIVE_INFINITY, maxY), BooleanClause.Occur.FILTER)
-				.build();
+	/** Matches index envelopes with one ordinate in a range whose closed latitude range overlaps the bound's. */
+	private static Query latitudesOverlapping(Envelope boundEnvelope, int ordinate, double from, double to) {
+		double[] lower = unbounded(Double.NEGATIVE_INFINITY);
+		double[] upper = unbounded(Double.POSITIVE_INFINITY);
+		lower[ordinate] = from;
+		upper[ordinate] = to;
+		upper[MIN_Y] = upperBound(boundEnvelope.getMaxY());
+		lower[MAX_Y] = lowerBound(boundEnvelope.getMinY());
+		return indexEnvelopeInBox(lower, upper);
 	}
 
-	/** Matches envelopes extending beyond at least one side of the closed bound. */
+	/** Matches CRS84 index envelopes extending beyond at least one side of the closed bound. */
 	static Query envelopeNotWithinQuery(Envelope boundEnvelope) {
 		return new BooleanQuery.Builder()
-				.add(ordinateLessThanQuery(FIELD_ENVELOPE_MIN_X, boundEnvelope.getMinX()), BooleanClause.Occur.SHOULD)
-				.add(ordinateGreaterThanQuery(FIELD_ENVELOPE_MAX_X, boundEnvelope.getMaxX()), BooleanClause.Occur.SHOULD)
-				.add(ordinateLessThanQuery(FIELD_ENVELOPE_MIN_Y, boundEnvelope.getMinY()), BooleanClause.Occur.SHOULD)
-				.add(ordinateGreaterThanQuery(FIELD_ENVELOPE_MAX_Y, boundEnvelope.getMaxY()), BooleanClause.Occur.SHOULD)
+				.add(indexEnvelopeOrdinateAtMost(MIN_X, Math.nextDown(boundEnvelope.getMinX())),
+						BooleanClause.Occur.SHOULD)
+				.add(indexEnvelopeOrdinateAtLeast(MAX_X, Math.nextUp(boundEnvelope.getMaxX())),
+						BooleanClause.Occur.SHOULD)
+				.add(indexEnvelopeOrdinateAtMost(MIN_Y, Math.nextDown(boundEnvelope.getMinY())),
+						BooleanClause.Occur.SHOULD)
+				.add(indexEnvelopeOrdinateAtLeast(MAX_Y, Math.nextUp(boundEnvelope.getMaxY())),
+						BooleanClause.Occur.SHOULD)
 				.setMinimumNumberShouldMatch(1)
 				.build();
 	}
 
-	private static Query ordinateLessThanQuery(String field, double bound) {
-		// Mathematical nextDown/nextUp exclude both signed zeros when the bound is zero.
-		return DoublePoint.newRangeQuery(field, Double.NEGATIVE_INFINITY, Math.nextDown(bound));
+	private static Query indexEnvelopeOrdinateAtMost(int ordinate, double value) {
+		double[] upper = unbounded(Double.POSITIVE_INFINITY);
+		upper[ordinate] = value;
+		return indexEnvelopeInBox(unbounded(Double.NEGATIVE_INFINITY), upper);
 	}
 
-	private static Query ordinateGreaterThanQuery(String field, double bound) {
-		return DoublePoint.newRangeQuery(field, Math.nextUp(bound), Double.POSITIVE_INFINITY);
+	private static Query indexEnvelopeOrdinateAtLeast(int ordinate, double value) {
+		double[] lower = unbounded(Double.NEGATIVE_INFINITY);
+		lower[ordinate] = value;
+		return indexEnvelopeInBox(lower, unbounded(Double.POSITIVE_INFINITY));
 	}
 
-	private static Query envelopeOrdinateEqualsQuery(String field, double ordinate) {
-		return DoublePoint.newRangeQuery(field, ordinate == 0.0 ? -0.0 : ordinate,
-				ordinate == 0.0 ? 0.0 : ordinate);
+	/**
+	 * Matches sources whose CRS84 index envelope, as (minimum X, maximum X, minimum Y, maximum Y), lies in a closed
+	 * box. A CRS84 source's index envelope is its own envelope, which is the one it stores.
+	 */
+	private static Query indexEnvelopeInBox(double[] lower, double[] upper) {
+		Query ownEnvelopeOfCrs84Source = new BooleanQuery.Builder()
+				.add(sourceCrsQuery(IndexGeometry.INDEX_CRS), BooleanClause.Occur.FILTER)
+				.add(DoublePoint.newRangeQuery(FIELD_SOURCE_ENVELOPE, lower, upper), BooleanClause.Occur.FILTER)
+				.build();
+		return new BooleanQuery.Builder()
+				.add(DoublePoint.newRangeQuery(FIELD_INDEX_ENVELOPE, lower, upper), BooleanClause.Occur.SHOULD)
+				.add(ownEnvelopeOfCrs84Source, BooleanClause.Occur.SHOULD)
+				.setMinimumNumberShouldMatch(1)
+				.build();
+	}
+
+	private static double[] unbounded(double value) {
+		return new double[]{value, value, value, value};
 	}
 
 
@@ -567,15 +552,6 @@ final class LuceneGeoDocumentSchema {
 	private static boolean hasValidEnvelopeMarker(Document doc) {
 		String value = doc.get(FIELD_HAS_ENVELOPE);
 		return HAS_ENVELOPE_VALUE.equals(value) || NO_ENVELOPE_VALUE.equals(value);
-	}
-
-	private static boolean hasValidCandidateBoundsKind(Document doc) {
-		try {
-			CandidateBoundsKind.valueOf(doc.get(FIELD_CANDIDATE_BOUNDS_KIND));
-			return true;
-		} catch (IllegalArgumentException | NullPointerException e) {
-			return false;
-		}
 	}
 
 	private static boolean hasIndexedSourceCrs(Document doc) {

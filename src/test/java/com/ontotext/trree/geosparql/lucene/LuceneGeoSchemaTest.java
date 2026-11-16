@@ -211,18 +211,6 @@ public class LuceneGeoSchemaTest {
     }
 
 	@Test
-	public void missingCandidateBoundsKindRequiresReindex() {
-		Document document = currentSchemaDocument(1L, sampleGeometry);
-		document.removeFields(LuceneGeoDocumentSchema.FIELD_CANDIDATE_BOUNDS_KIND);
-
-		PluginException exception = assertThrows(PluginException.class,
-				() -> LuceneGeoDocumentSchema.sourceGeometryLiteral(
-						document, new SourceGeometryLiteralResolver()));
-
-		assertForceReindexMessage(exception);
-	}
-
-	@Test
 	public void sourceCrsMustBeIndexedForSelectiveMixedCrsLookup() {
 		Document document = currentSchemaDocument(1L, sampleGeometry);
 		String sourceCrs = document.get(LuceneGeoDocumentSchema.FIELD_SOURCE_CRS);
@@ -723,10 +711,8 @@ public class LuceneGeoSchemaTest {
         try (FSDirectory dir = FSDirectory.open(indexDir);
              IndexWriter writer = new IndexWriter(dir, new IndexWriterConfig())) {
             Document document = currentSchemaDocument(1L, sampleGeometry);
-            document.removeFields(LuceneGeoDocumentSchema.FIELD_ENVELOPE_MIN_X);
-            document.removeFields(LuceneGeoDocumentSchema.FIELD_ENVELOPE_MAX_X);
-            document.removeFields(LuceneGeoDocumentSchema.FIELD_ENVELOPE_MIN_Y);
-            document.removeFields(LuceneGeoDocumentSchema.FIELD_ENVELOPE_MAX_Y);
+            document.removeFields(LuceneGeoDocumentSchema.FIELD_SOURCE_ENVELOPE);
+            document.removeFields(LuceneGeoDocumentSchema.FIELD_INDEX_ENVELOPE);
             writer.addDocument(document);
             Map<String, String> commitData = new HashMap<>();
             commitData.put(LuceneGeoDocumentSchema.COMMIT_SCHEMA_VERSION_KEY,
