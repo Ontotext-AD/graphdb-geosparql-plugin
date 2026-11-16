@@ -57,7 +57,7 @@ public class LuceneEnvelopeIntersectionTest {
      */
     @Test
     public void transformedEnvelopesInThePrefixCellsOfTheBoundRemainIntersectionCandidates() throws Exception {
-        StoredReadCountingIndexer indexer = createIndexer("prefix-cells", GeoSparqlConfig.PrefixTree.QUAD, 11);
+        LuceneGeoIndexer indexer = createIndexEnvelopeOnlyIndexer("prefix-cells", GeoSparqlConfig.PrefixTree.QUAD, 11);
         IndexGeometry transformedBesideThePoint = transformed(new Envelope(10.012, 10.013, 10.012, 10.013));
         index(indexer, List.of(
                 geometry("POLYGON((10.009 10.009,10.011 10.009,10.011 10.011,10.009 10.011,10.009 10.009))"),
@@ -96,7 +96,8 @@ public class LuceneEnvelopeIntersectionTest {
         }
         for (GeoSparqlConfig.PrefixTree tree : GeoSparqlConfig.PrefixTree.values()) {
             for (int precision : new int[]{1, 6, 11, 20}) {
-                StoredReadCountingIndexer indexer = createIndexer("overlap-" + tree.name() + precision, tree, precision);
+                LuceneGeoIndexer indexer = createIndexEnvelopeOnlyIndexer(
+                        "overlap-" + tree.name() + precision, tree, precision);
                 List<IndexGeometry> sources = new ArrayList<>();
                 for (Envelope envelope : envelopes) {
                     sources.add(transformed(envelope));
@@ -146,7 +147,7 @@ public class LuceneEnvelopeIntersectionTest {
 
     @Test
     public void envelopesMeetingAcrossTheAntimeridianRemainIntersectionCandidates() throws Exception {
-        StoredReadCountingIndexer indexer = createIndexer("antimeridian", GeoSparqlConfig.PrefixTree.QUAD, 11);
+        LuceneGeoIndexer indexer = createIndexEnvelopeOnlyIndexer("antimeridian", GeoSparqlConfig.PrefixTree.QUAD, 11);
         IndexGeometry east = transformed(new Envelope(170, 180, -10, 10));
         IndexGeometry west = transformed(new Envelope(-180, -170, -10, 10));
         index(indexer, List.of(east, west,
@@ -160,7 +161,7 @@ public class LuceneEnvelopeIntersectionTest {
 
     @Test
     public void envelopesReachingTheSamePolarCapRemainIntersectionCandidates() throws Exception {
-        StoredReadCountingIndexer indexer = createIndexer("polar-cap", GeoSparqlConfig.PrefixTree.QUAD, 11);
+        LuceneGeoIndexer indexer = createIndexEnvelopeOnlyIndexer("polar-cap", GeoSparqlConfig.PrefixTree.QUAD, 11);
         IndexGeometry south = transformed(new Envelope(10, 20, -90, -89.9995));
         IndexGeometry north = transformed(new Envelope(100, 110, 89.9995, 90));
         index(indexer, List.of(south,
@@ -174,6 +175,20 @@ public class LuceneEnvelopeIntersectionTest {
 
     private StoredReadCountingIndexer createIndexer(String name, GeoSparqlConfig.PrefixTree tree, int precision)
             throws Exception {
+        StoredReadCountingIndexer indexer = new StoredReadCountingIndexer(plugin(name, tree, precision));
+        indexer.initialize();
+        return indexer;
+    }
+
+    /** An index whose sources are looked up by CRS84 index envelopes, as the fixtures with chosen envelopes need. */
+    private LuceneGeoIndexer createIndexEnvelopeOnlyIndexer(String name, GeoSparqlConfig.PrefixTree tree,
+            int precision) throws Exception {
+        LuceneGeoIndexer indexer = new IndexEnvelopeOnlyIndexer(plugin(name, tree, precision));
+        indexer.initialize();
+        return indexer;
+    }
+
+    private GeoSparqlPlugin plugin(String name, GeoSparqlConfig.PrefixTree tree, int precision) throws Exception {
         GeoSparqlPlugin parent = new GeoSparqlPlugin();
         GeoSparqlConfig config = new GeoSparqlConfig();
         config.setPrefixTree(tree);
@@ -182,19 +197,19 @@ public class LuceneEnvelopeIntersectionTest {
         parent.setConfig(config);
         parent.setLogger(LoggerFactory.getLogger(LuceneEnvelopeIntersectionTest.class));
         parent.setDataDir(Files.createDirectories(tmpFolder.getRoot().toPath().resolve(name)).toFile());
-        StoredReadCountingIndexer indexer = new StoredReadCountingIndexer(parent);
-        indexer.initialize();
-        return indexer;
+        return parent;
     }
 
-    private static void index(StoredReadCountingIndexer indexer, List<IndexGeometry> geometries) throws Exception {
+    private static void index(LuceneGeoIndexer indexer, List<IndexGeometry> geometries) throws Exception {
         indexer.begin();
         for (int i = 0; i < geometries.size(); i++) {
             indexer.indexGeometryList(i + 1L, id -> "geometry-" + id, List.of(geometries.get(i)));
         }
         indexer.commit();
         indexer.complete();
-        indexer.storedReads.set(0);
+        if (indexer instanceof StoredReadCountingIndexer counting) {
+            counting.storedReads.set(0);
+        }
     }
 
     private static List<Long> collect(CloseableIterator<CandidateEntity> iterator) throws Exception {

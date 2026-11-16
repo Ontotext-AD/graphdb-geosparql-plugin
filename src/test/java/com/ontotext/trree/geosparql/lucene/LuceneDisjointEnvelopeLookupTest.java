@@ -206,7 +206,7 @@ public class LuceneDisjointEnvelopeLookupTest {
 
 	@Test
 	public void envelopesMeetingAcrossTheAntimeridianAreUncertainInsteadOfDefiniteMatches() throws Exception {
-		LuceneGeoIndexer indexer = createIndexer("antimeridian", GeoSparqlConfig.PrefixTree.QUAD, 11);
+		LuceneGeoIndexer indexer = createIndexEnvelopeOnlyIndexer("antimeridian");
 		index(indexer, List.of(
 				transformed(new Envelope(-180, -170, -10, 10)),
 				transformed(new Envelope(-180, -170, 20, 30)),
@@ -221,7 +221,7 @@ public class LuceneDisjointEnvelopeLookupTest {
 
 	@Test
 	public void envelopesReachingTheSamePolarCapAreUncertainInsteadOfDefiniteMatches() throws Exception {
-		LuceneGeoIndexer indexer = createIndexer("polar-cap", GeoSparqlConfig.PrefixTree.QUAD, 11);
+		LuceneGeoIndexer indexer = createIndexEnvelopeOnlyIndexer("polar-cap");
 		index(indexer, List.of(
 				transformed(new Envelope(100, 110, -89.9999, -89.9998)),
 				transformed(new Envelope(100, 110, -89.99, -89.98)),
@@ -235,6 +235,19 @@ public class LuceneDisjointEnvelopeLookupTest {
 
 	private LuceneGeoIndexer createIndexer(String name, GeoSparqlConfig.PrefixTree tree, int precision)
 			throws Exception {
+		LuceneGeoIndexer indexer = new LuceneGeoIndexer(plugin(name, tree, precision));
+		indexer.initialize();
+		return indexer;
+	}
+
+	/** An index whose sources are classified by CRS84 index envelopes, where the longitude rules apply. */
+	private LuceneGeoIndexer createIndexEnvelopeOnlyIndexer(String name) throws Exception {
+		LuceneGeoIndexer indexer = new IndexEnvelopeOnlyIndexer(plugin(name, GeoSparqlConfig.PrefixTree.QUAD, 11));
+		indexer.initialize();
+		return indexer;
+	}
+
+	private GeoSparqlPlugin plugin(String name, GeoSparqlConfig.PrefixTree tree, int precision) throws Exception {
 		GeoSparqlPlugin parent = new GeoSparqlPlugin();
 		GeoSparqlConfig config = new GeoSparqlConfig();
 		config.setPrefixTree(tree);
@@ -243,9 +256,7 @@ public class LuceneDisjointEnvelopeLookupTest {
 		parent.setConfig(config);
 		parent.setLogger(LoggerFactory.getLogger(LuceneDisjointEnvelopeLookupTest.class));
 		parent.setDataDir(Files.createDirectories(tmpFolder.getRoot().toPath().resolve(name)).toFile());
-		LuceneGeoIndexer indexer = new LuceneGeoIndexer(parent);
-		indexer.initialize();
-		return indexer;
+		return parent;
 	}
 
 	private static void index(LuceneGeoIndexer indexer, List<IndexGeometry> geometries) throws Exception {

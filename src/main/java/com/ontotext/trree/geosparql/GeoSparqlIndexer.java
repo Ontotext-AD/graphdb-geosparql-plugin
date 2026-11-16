@@ -39,11 +39,35 @@ public interface GeoSparqlIndexer {
 	CloseableIterator<CandidateEntity> getEnvelopeIntersections(IndexGeometry boundSourceIndexGeometry);
 
 	/**
+	 * Returns intersection candidates for a bound source whose binding direction is known.
+	 *
+	 * <p>Jena evaluates a pair in the CRS of its left operand, the subject. When every candidate is the subject, an
+	 * adapter may select candidates by envelopes taken in that CRS; the result still contains every source that an
+	 * exact evaluation against the bound can relate.
+	 *
+	 * @param candidateIsSubject whether each candidate is the subject and the bound source the object
+	 */
+	default CloseableIterator<CandidateEntity> getEnvelopeIntersections(IndexGeometry boundSourceIndexGeometry,
+			boolean candidateIsSubject) {
+		return getEnvelopeIntersections(boundSourceIndexGeometry);
+	}
+
+	/**
 	 * Returns uncertain equality candidates. Adapters may require equal envelopes for two native CRS84 sources;
 	 * transformed sources retain conservative envelope-intersection lookup. Every candidate needs exact evaluation.
 	 */
 	default CloseableIterator<CandidateEntity> getEnvelopeEqualityCandidates(IndexGeometry boundSourceIndexGeometry) {
 		return getEnvelopeIntersections(boundSourceIndexGeometry);
+	}
+
+	/**
+	 * Returns uncertain equality candidates for a bound source whose binding direction is known.
+	 *
+	 * @param candidateIsSubject whether each candidate is the subject and the bound source the object
+	 */
+	default CloseableIterator<CandidateEntity> getEnvelopeEqualityCandidates(IndexGeometry boundSourceIndexGeometry,
+			boolean candidateIsSubject) {
+		return getEnvelopeEqualityCandidates(boundSourceIndexGeometry);
 	}
 
 	/**
@@ -69,6 +93,17 @@ public interface GeoSparqlIndexer {
 	default CloseableIterator<CandidateEntity> getEnvelopeDisjointUncertainCandidates(
 			IndexGeometry boundSourceIndexGeometry) {
 		return getEnvelopeIntersections(boundSourceIndexGeometry);
+	}
+
+	/**
+	 * Returns uncertain candidates of a partitioned disjoint traversal for a bound source whose binding direction
+	 * is known.
+	 *
+	 * @param candidateIsSubject whether each candidate is the subject and the bound source the object
+	 */
+	default CloseableIterator<CandidateEntity> getEnvelopeDisjointUncertainCandidates(
+			IndexGeometry boundSourceIndexGeometry, boolean candidateIsSubject) {
+		return getEnvelopeDisjointUncertainCandidates(boundSourceIndexGeometry);
 	}
 
 	/**

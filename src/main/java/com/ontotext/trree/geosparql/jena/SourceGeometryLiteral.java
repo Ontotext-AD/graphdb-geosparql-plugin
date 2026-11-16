@@ -165,8 +165,22 @@ public final class SourceGeometryLiteral {
 	 * is its own right operand.
 	 */
 	GeometryWrapper asRightOperandFor(GeometryWrapper left) throws FactoryException, TransformException {
+		return asRightOperand(left.getSrsURI(), left);
+	}
+
+	/**
+	 * Returns this source as the right operand of an exact evaluation whose left operand is in the given CRS.
+	 *
+	 * <p>Jena selects and transforms the right operand by the left operand's CRS alone, so an empty geometry in
+	 * that CRS stands in for the left operand.
+	 */
+	GeometryWrapper asRightOperandIn(String leftCrsUri) throws FactoryException, TransformException {
+		return asRightOperand(leftCrsUri, null);
+	}
+
+	private GeometryWrapper asRightOperand(String leftCrsUri, GeometryWrapper left)
+			throws FactoryException, TransformException {
 		GeometryWrapper source = asGeometryWrapper();
-		String leftCrsUri = left.getSrsURI();
 		if (leftCrsUri.equals(source.getSrsURI())) {
 			return source;
 		}
@@ -175,7 +189,9 @@ public final class SourceGeometryLiteral {
 				return kept.operand();
 			}
 		}
-		GeometryWrapper operand = left.checkTransformSRS(source);
+		GeometryWrapper leftOperand = left != null
+				? left : new GeometryWrapper(leftCrsUri, source.getGeometryDatatypeURI());
+		GeometryWrapper operand = leftOperand.checkTransformSRS(source);
 		rightOperands = new RightOperand(leftCrsUri, operand, rightOperands);
 		return operand;
 	}

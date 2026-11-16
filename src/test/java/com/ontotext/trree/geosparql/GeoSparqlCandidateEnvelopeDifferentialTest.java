@@ -563,7 +563,8 @@ public class GeoSparqlCandidateEnvelopeDifferentialTest {
 		Fixture cleanupFixture = createFixture("unevaluable-disjoint-cleanup-candidate",
 				Map.of(1L, List.of(utm32), 2L, List.of(distantEpsg4979)));
 		assertFalse(envelopeHits(cleanupFixture, distantEpsg4979).contains(1L));
-		assertTrue(disjointCleanupHits(cleanupFixture, distantEpsg4979, true).contains(1L));
+		// Jena cannot place the bound in UTM 32N, so a UTM subject is no candidate of any disjoint phase.
+		assertFalse(disjointCleanupHits(cleanupFixture, distantEpsg4979, true).contains(1L));
 		assertEquals(Set.of(),
 				runIndexed(cleanupFixture, GeoSparqlPropertyRelation.SF_DISJOINT, 0, 2L));
 	}

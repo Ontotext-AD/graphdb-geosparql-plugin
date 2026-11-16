@@ -112,7 +112,7 @@ public class GeoSparqlCandidateSelectivityTest {
 				boundSubjectCounts.distinctCandidateEntities());
 
 		int boundObjectEnvelopeCandidates = countEntities(
-				indexer.getEnvelopeIntersections(crs84Brisbane));
+				indexer.getEnvelopeIntersections(crs84Brisbane, true));
 		TraversalCounts boundObjectCounts = countRelationTraversal(indexer, crs84Brisbane, false);
 		assertTrue("CRS84-bound object envelope phase materialized "
 					+ boundObjectEnvelopeCandidates + " of " + indexed + " features",

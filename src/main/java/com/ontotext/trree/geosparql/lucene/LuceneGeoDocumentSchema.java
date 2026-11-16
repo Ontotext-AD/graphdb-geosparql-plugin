@@ -12,6 +12,10 @@ import org.apache.lucene.document.NumericDocValuesField;
 import org.apache.lucene.document.StoredField;
 import org.apache.lucene.document.StringField;
 import org.apache.lucene.index.IndexReader;
+import org.apache.lucene.index.MultiTerms;
+import org.apache.lucene.index.PointValues;
+import org.apache.lucene.index.Terms;
+import org.apache.lucene.index.TermsEnum;
 import org.apache.lucene.index.IndexableField;
 import org.apache.lucene.index.IndexOptions;
 import org.apache.lucene.index.Term;
@@ -21,6 +25,7 @@ import org.apache.lucene.search.MatchAllDocsQuery;
 import org.apache.lucene.search.Query;
 import org.apache.lucene.search.TermQuery;
 import org.apache.lucene.spatial.SpatialStrategy;
+import org.apache.lucene.util.BytesRef;
 import org.apache.jena.geosparql.implementation.DimensionInfo;
 import org.locationtech.jts.geom.Envelope;
 import org.locationtech.spatial4j.context.SpatialContext;
@@ -62,6 +67,12 @@ final class LuceneGeoDocumentSchema {
 	static final String FIELD_ENVELOPE_MIN_Y = "geoEnvelopeMinY";
 	/** Indexed exact upper Y bound used for envelope intersection and containment pruning. */
 	static final String FIELD_ENVELOPE_MAX_Y = "geoEnvelopeMaxY";
+	/**
+	 * Optional XY envelope of the source in its own CRS, as one point of four dimensions: minimum X, maximum X,
+	 * minimum Y and maximum Y. It serves lookup in the CRS where Jena evaluates a pair whose left operand is the
+	 * source.
+	 */
+	static final String FIELD_SOURCE_ENVELOPE = "geoSourceEnvelope";
 	/** Stored WKB for the complete native-CRS source geometry used to construct Jena exact-evaluation input. */
 	static final String FIELD_SOURCE_GEOMETRY = "geoData";
 	/** Stored per-document schema number used for defensive validation after the commit-level check. */
@@ -148,6 +159,9 @@ final class LuceneGeoDocumentSchema {
 			doc.add(new DoublePoint(FIELD_ENVELOPE_MAX_X, envelope.getMaxX()));
 			doc.add(new DoublePoint(FIELD_ENVELOPE_MIN_Y, envelope.getMinY()));
 			doc.add(new DoublePoint(FIELD_ENVELOPE_MAX_Y, envelope.getMaxY()));
+			Envelope sourceEnvelope = geometry.sourceEnvelope();
+			doc.add(new DoublePoint(FIELD_SOURCE_ENVELOPE, sourceEnvelope.getMinX(), sourceEnvelope.getMaxX(),
+					sourceEnvelope.getMinY(), sourceEnvelope.getMaxY()));
 		}
 		doc.add(new StringField(FIELD_HAS_ENVELOPE,
 				geometry.isSpatialCandidate() ? HAS_ENVELOPE_VALUE : NO_ENVELOPE_VALUE, Field.Store.YES));
@@ -300,6 +314,65 @@ final class LuceneGeoDocumentSchema {
 	static boolean hasNonNativeBounds(IndexReader reader) throws IOException {
 		return reader.docFreq(new Term(FIELD_CANDIDATE_BOUNDS_KIND, CandidateBoundsKind.TRANSFORMED.name())) > 0
 				|| reader.docFreq(new Term(FIELD_CANDIDATE_BOUNDS_KIND, CandidateBoundsKind.WORLD_FALLBACK.name())) > 0;
+	}
+
+	/**
+	 * Whether every spatial source in the reader carries {@link #FIELD_SOURCE_ENVELOPE}. A source written without
+	 * it is found through its CRS84 index envelope only.
+	 */
+	static boolean hasSourceEnvelopeOnEverySpatialSource(IndexReader reader) throws IOException {
+		return PointValues.getDocCount(reader, FIELD_SOURCE_ENVELOPE)
+				== PointValues.getDocCount(reader, FIELD_ENVELOPE_MIN_X);
+	}
+
+	/** Returns the source CRS URIs of the reader's documents. */
+	static List<String> sourceCrsUris(IndexReader reader) throws IOException {
+		List<String> crsUris = new ArrayList<>();
+		Terms terms = MultiTerms.getTerms(reader, FIELD_SOURCE_CRS);
+		if (terms == null) {
+			return crsUris;
+		}
+		TermsEnum iterator = terms.iterator();
+		for (BytesRef term = iterator.next(); term != null; term = iterator.next()) {
+			crsUris.add(term.utf8ToString());
+		}
+		return crsUris;
+	}
+
+	/** Matches sources whose own envelopes meet the closed envelope, both taken in one CRS. */
+	static Query sourceEnvelopeIntersectsQuery(Envelope envelope) {
+		return DoublePoint.newRangeQuery(FIELD_SOURCE_ENVELOPE,
+				new double[]{Double.NEGATIVE_INFINITY, lowerBound(envelope.getMinX()),
+						Double.NEGATIVE_INFINITY, lowerBound(envelope.getMinY())},
+				new double[]{upperBound(envelope.getMaxX()), Double.POSITIVE_INFINITY,
+						upperBound(envelope.getMaxY()), Double.POSITIVE_INFINITY});
+	}
+
+	/** Matches sources whose own envelopes equal the envelope, both taken in one CRS. */
+	static Query sourceEnvelopeEqualsQuery(Envelope envelope) {
+		return DoublePoint.newRangeQuery(FIELD_SOURCE_ENVELOPE,
+				new double[]{lowerBound(envelope.getMinX()), lowerBound(envelope.getMaxX()),
+						lowerBound(envelope.getMinY()), lowerBound(envelope.getMaxY())},
+				new double[]{upperBound(envelope.getMinX()), upperBound(envelope.getMaxX()),
+						upperBound(envelope.getMinY()), upperBound(envelope.getMaxY())});
+	}
+
+	/** Matches sources whose own envelopes lie inside the closed envelope, both taken in one CRS. */
+	static Query sourceEnvelopeWithinQuery(Envelope envelope) {
+		return DoublePoint.newRangeQuery(FIELD_SOURCE_ENVELOPE,
+				new double[]{lowerBound(envelope.getMinX()), Double.NEGATIVE_INFINITY,
+						lowerBound(envelope.getMinY()), Double.NEGATIVE_INFINITY},
+				new double[]{Double.POSITIVE_INFINITY, upperBound(envelope.getMaxX()),
+						Double.POSITIVE_INFINITY, upperBound(envelope.getMaxY())});
+	}
+
+	// Numeric point ranges distinguish signed zeros, while geometric coordinate comparisons do not.
+	private static double lowerBound(double ordinate) {
+		return ordinate == 0.0 ? -0.0 : ordinate;
+	}
+
+	private static double upperBound(double ordinate) {
+		return ordinate == 0.0 ? 0.0 : ordinate;
 	}
 
 	static Query sourceCrsQuery(String sourceCrsUri) {

@@ -142,4 +142,56 @@ public final class IndexGeometry {
 	public boolean isSpatialCandidate() {
 		return !indexEnvelope.isNull();
 	}
+
+	/**
+	 * Returns the XY envelope of the source in its own CRS.
+	 *
+	 * <p>Jena evaluates a left operand on its own coordinates, so this envelope bounds the geometry of every exact
+	 * evaluation in which the source is the left operand.
+	 */
+	public Envelope sourceEnvelope() {
+		return new Envelope(sourceGeometryLiteral.asGeometryWrapper().getXYGeometry().getEnvelopeInternal());
+	}
+
+	/**
+	 * Returns this bound source's envelope in the CRS where Jena evaluates it against sources of the given CRS.
+	 *
+	 * <p>Empty when that envelope is not known without transforming each source: the bound is the left operand
+	 * and the sources are in another CRS, so Jena transforms every source into the bound's CRS.
+	 *
+	 * @param sourceIsLeftOperand whether each source is the subject of the relation and this bound its object
+	 */
+	public Optional<BoundEvaluationEnvelope> evaluationEnvelope(String sourceCrsUri, boolean sourceIsLeftOperand) {
+		GeometryWrapper bound = sourceGeometryLiteral.asGeometryWrapper();
+		if (sourceCrsUri.equals(bound.getSrsURI())) {
+			return Optional.of(evaluationEnvelopeOf(bound.getXYGeometry()));
+		}
+		if (!sourceIsLeftOperand) {
+			return Optional.empty();
+		}
+		try {
+			JenaCalculationPrecision.configure();
+			return Optional.of(evaluationEnvelopeOf(
+					sourceGeometryLiteral.asRightOperandIn(sourceCrsUri).getXYGeometry()));
+		} catch (Exception e) {
+			// Jena fails the same way in every exact evaluation against a source of this CRS.
+			return Optional.of(BoundEvaluationEnvelope.UNRELATED);
+		}
+	}
+
+	private static BoundEvaluationEnvelope evaluationEnvelopeOf(Geometry evaluated) {
+		return new BoundEvaluationEnvelope(new Envelope(evaluated.getEnvelopeInternal()), fillsEnvelope(evaluated));
+	}
+
+	private static boolean fillsEnvelope(Geometry geometry) {
+		if (geometry.isEmpty() || !(geometry instanceof Polygon)) {
+			return false;
+		}
+		try {
+			return RelateNG.relate(geometry, geometry.getEnvelope(), RelatePredicate.equalsTopo());
+		} catch (RuntimeException e) {
+			// Rectangle containment is an optional proof. Invalid topology must disable it, not fail the lookup.
+			return false;
+		}
+	}
 }

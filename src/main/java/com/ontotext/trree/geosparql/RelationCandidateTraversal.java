@@ -282,11 +282,13 @@ final class RelationCandidateTraversal implements CloseableIterator<RelationCand
 				continue;
 			}
 			if (phase == TraversalPhase.UNCERTAIN_CANDIDATES) {
-				currentExactCandidates = indexer.getEnvelopeDisjointUncertainCandidates(currentBoundIndexGeometry);
+				currentExactCandidates = indexer.getEnvelopeDisjointUncertainCandidates(
+						currentBoundIndexGeometry, !boundSubject);
 			} else if (relation.getCandidateLookupPolicy() == CandidateLookupPolicy.ENVELOPE_EQUALS) {
-				currentExactCandidates = indexer.getEnvelopeEqualityCandidates(currentBoundIndexGeometry);
+				currentExactCandidates = indexer.getEnvelopeEqualityCandidates(
+						currentBoundIndexGeometry, !boundSubject);
 			} else {
-				currentExactCandidates = indexer.getEnvelopeIntersections(currentBoundIndexGeometry);
+				currentExactCandidates = indexer.getEnvelopeIntersections(currentBoundIndexGeometry, !boundSubject);
 			}
 			return true;
 		}
