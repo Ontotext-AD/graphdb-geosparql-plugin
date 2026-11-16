@@ -22,9 +22,10 @@ import java.util.Optional;
  * their horizontal CRS. The resulting envelope is used only for Lucene candidate lookup. Exact evaluation uses the
  * source geometry literal and its native CRS. SIS does not prove that transform is never smaller than the complete
 	 * CRS84 image. Transformed bounds are widened for the pinned Jena post-transform decimal cleanup when CRS84 is the
-	 * exact-evaluation target. Non-disjoint candidate lookup treats the index envelopes as conservative in every binding
-	 * direction. Partitioned disjoint lookup exact-evaluates mixed-CRS pairs that cannot be classified from those
-	 * envelopes because Jena rounds in the left operand's CRS. Wraparound may broaden that envelope,
+	 * exact-evaluation target. Candidate lookup uses the index envelope for a pair it cannot look up in the CRS where
+	 * Jena evaluates it, and treats the envelope as conservative there. Partitioned disjoint lookup exact-evaluates
+	 * such pairs when they cannot be classified from those envelopes because Jena rounds in the left operand's CRS.
+	 * Wraparound may broaden that envelope,
  * potentially to full longitude. A representable SIS rectangle is indexed as-is, including ordinary non-CRS84
  * sources such as GDA2020 and projected MGA2020 CRSes. Non-CRS84 geometries are not mapped to the world envelope. The
  * world CRS84 envelope is used only when the result still cannot be stored as one Lucene geographic rectangle, or
@@ -174,6 +175,8 @@ public final class IndexGeometry {
 			return Optional.of(new BoundEvaluationEnvelope(sourceGeometryLiteral.asRightOperandIn(sourceCrsUri)));
 		} catch (Exception e) {
 			// Jena fails the same way in every exact evaluation against a source of this CRS.
+			LOGGER.debug("Relating no source of {} to a bound of {} that Jena cannot place there", sourceCrsUri,
+					bound.getSrsURI(), e);
 			return Optional.of(BoundEvaluationEnvelope.UNRELATED);
 		}
 	}

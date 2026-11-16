@@ -34,8 +34,9 @@ import java.util.function.Supplier;
 /**
  * Lucene-backed GeoSPARQL candidate indexer.
  *
- * <p>The Lucene index stores one CRS84 source envelope and its prefix cells for candidate lookup, plus
- * native-CRS source geometry WKB and literal metadata for later CRS-aware exact evaluation. A large source also
+ * <p>The Lucene index stores, for each source, its envelope in its own CRS, a CRS84 index envelope with its prefix
+ * cells for the pairs that are looked up in CRS84, and native-CRS source geometry WKB and literal metadata for
+ * later CRS-aware exact evaluation. A large source also
  * stores boxes that together contain it in its own CRS, which refine lookup for a bound placed in that CRS; a
  * source without them is looked up by its envelope alone. Each source geometry literal has one Lucene
  * document. Candidate queries group matching source documents by entity, while direct entity reads stream source
@@ -500,9 +501,13 @@ public class LuceneGeoIndexer implements GeoSparqlIndexer {
 		}
 		return getCandidateEntities(reader -> {
 			EvaluationCrsLookup lookup = EvaluationCrsLookup.of(reader, boundSourceIndexGeometry, candidateIsSubject);
+			// A source the cleanup phase evaluates is left to that phase, so no source is evaluated twice.
 			return lookup.withoutSourcesInsideTheBound(
-					lookup.orElsewhere(lookup.possiblyDisjoint(),
-							() -> indexEnvelopeDisjointUncertainQuery(boundSourceIndexGeometry)),
+					lookup.orElsewhere(lookup.possiblyDisjoint(), () -> new BooleanQuery.Builder()
+							.add(indexEnvelopeDisjointUncertainQuery(boundSourceIndexGeometry), BooleanClause.Occur.FILTER)
+							.add(disjointTransformCleanupCandidatesQuery(boundSourceIndexGeometry, candidateIsSubject),
+									BooleanClause.Occur.MUST_NOT)
+							.build()),
 					new IndexSearcher(reader));
 		});
 	}
@@ -679,7 +684,7 @@ public class LuceneGeoIndexer implements GeoSparqlIndexer {
 			Query query = candidateQuery.forReader(indexReader);
 			IndexSearcher indexSearcher = new IndexSearcher(indexReader);
 			return new LuceneEnvelopeDisjointCandidateIterator(indexSearcher, query);
-		} catch (IOException e) {
+		} catch (Exception e) {
 			if (indexReader != null) {
 				try {
 					indexReader.close();

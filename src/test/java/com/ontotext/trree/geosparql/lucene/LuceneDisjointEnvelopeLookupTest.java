@@ -27,6 +27,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Set;
 
 import static org.junit.Assert.assertEquals;
@@ -131,6 +132,46 @@ public class LuceneDisjointEnvelopeLookupTest {
 				assertFalse("removed source is disjoint: " + sources.get(id - 1).sourceGeometryLiteral().lexicalForm(),
 						GeoSparqlPropertyRelation.SF_DISJOINT.evaluate(sources.get(id - 1).sourceGeometryLiteral(),
 								bound.sourceGeometryLiteral()));
+			}
+		}
+	}
+
+	/**
+	 * EPSG:4326 writes latitude before longitude. A bound whose shape differs along the two axes is certified in
+	 * that CRS, written in it or transformed into it, and every source its rectangles remove meets the bound,
+	 * whichever side of the pair the sources are on.
+	 */
+	@Test
+	public void latitudeFirstBoundPrunesOnlySourcesThatMeetIt() throws Exception {
+		String epsg4326 = "<http://www.opengis.net/def/crs/EPSG/0/4326> ";
+		LuceneGeoIndexer indexer = createIndexer("latitude-first", GeoSparqlConfig.PrefixTree.QUAD, 11);
+		List<IndexGeometry> sources = new ArrayList<>();
+		for (int column = 0; column < 36; column++) {
+			for (int row = 0; row < 40; row++) {
+				sources.add(geometry(String.format(Locale.ROOT, "%sPOINT(%.6f %.6f)", epsg4326,
+						60 + (row + 0.5) / 40, 15 + (column + 0.5) / 36)));
+			}
+		}
+		index(indexer, sources);
+		// The square from 15 E 60 N to 16 E 61 N without its north-east corner, cut from 16 E 60.25 N to 15.5 E 61 N.
+		IndexGeometry written = geometry(epsg4326 + "POLYGON((60 15,60 16,60.25 16,61 15.5,61 15,60 15))");
+		IndexGeometry transformed = geometry("POLYGON((15 60,16 60,16 60.25,15.5 61,15 61,15 60))");
+
+		for (IndexGeometry bound : List.of(written, transformed)) {
+			for (boolean candidateIsSubject : bound == written ? new boolean[]{true, false} : new boolean[]{true}) {
+				Set<Long> evaluated = uncertain(indexer.getEnvelopeDisjointUncertainCandidates(bound, candidateIsSubject));
+				Set<Long> definite = definite(indexer.getEnvelopeDisjointCandidates(bound, candidateIsSubject));
+
+				assertTrue(evaluated.size() + " of " + sources.size(), evaluated.size() < sources.size() / 2);
+				for (int id = 1; id <= sources.size(); id++) {
+					if (!evaluated.contains((long) id) && !definite.contains((long) id)) {
+						SourceGeometryLiteral source = sources.get(id - 1).sourceGeometryLiteral();
+						assertFalse("removed source is disjoint: " + source.lexicalForm(),
+								candidateIsSubject
+										? GeoSparqlPropertyRelation.SF_DISJOINT.evaluate(source, bound.sourceGeometryLiteral())
+										: GeoSparqlPropertyRelation.SF_DISJOINT.evaluate(bound.sourceGeometryLiteral(), source));
+					}
+				}
 			}
 		}
 	}

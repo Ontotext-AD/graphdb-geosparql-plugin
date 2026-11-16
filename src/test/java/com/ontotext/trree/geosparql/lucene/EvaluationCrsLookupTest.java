@@ -10,6 +10,7 @@ import com.ontotext.trree.geosparql.GeoSparqlPropertyRelation;
 import com.ontotext.trree.geosparql.jena.IndexGeometry;
 import com.ontotext.trree.geosparql.jena.JenaGeoSparqlException;
 import com.ontotext.trree.geosparql.jena.SourceGeometryLiteral;
+import org.apache.lucene.search.BooleanQuery;
 import org.junit.Rule;
 import org.junit.Test;
 import org.locationtech.jts.geom.Envelope;
@@ -68,12 +69,60 @@ public class EvaluationCrsLookupTest {
      */
     @Test
     public void subjectCandidatesAreSelectedByTheirOwnEnvelopesInManySourceCrss() throws Exception {
+        Set<Long> inside = new TreeSet<>();
+        LuceneGeoIndexer indexer = createIndexer("many-crss");
+        index(indexer, sourcesInManyCrss(inside));
+        IndexGeometry bound = geometry(BOUND);
+
+        assertEquals(inside, ids(indexer.getEnvelopeIntersections(bound, true)));
+        assertEquals(Set.of(), ids(indexer.getDisjointTransformCleanupCandidates(bound, true)));
+    }
+
+    /**
+     * A lookup has one clause for each CRS it places the bound in. Where the reader holds more source CRSs than
+     * Lucene allows clauses, the sources of the remaining CRSs are looked up by CRS84 index envelopes and none is
+     * lost: with twelve clauses the bound is placed in eleven CRSs, and the sources beside it in EPSG:4326 and
+     * EPSG:3857 are candidates again because they share its prefix cells.
+     */
+    @Test
+    public void sourcesOfCrssBeyondTheClauseLimitAreLookedUpByIndexEnvelopes() throws Exception {
+        Set<Long> inside = new TreeSet<>();
+        List<IndexGeometry> sources = sourcesInManyCrss(inside);
+        LuceneGeoIndexer indexer = createIndexer("clause-limit");
+        index(indexer, sources);
+        IndexGeometry bound = geometry(BOUND);
+        Set<Long> expected = new TreeSet<>(inside);
+        expected.addAll(Set.of(2L, 4L));
+        int clauseLimit = BooleanQuery.getMaxClauseCount();
+        BooleanQuery.setMaxClauseCount(12);
+        try {
+            assertEquals(expected, ids(indexer.getEnvelopeIntersections(bound, true)));
+            Set<Long> disjoint = definite(indexer.getEnvelopeDisjointCandidates(bound, true));
+            disjoint.addAll(ids(indexer.getEnvelopeDisjointUncertainCandidates(bound, true)));
+            disjoint.addAll(ids(indexer.getDisjointTransformCleanupCandidates(bound, true)));
+            for (int id = 1; id <= sources.size(); id++) {
+                if (holds(GeoSparqlPropertyRelation.SF_DISJOINT, sources.get(id - 1).sourceGeometryLiteral(),
+                        bound.sourceGeometryLiteral())) {
+                    assertTrue("disjoint source " + id + " omitted", disjoint.contains((long) id));
+                }
+            }
+        } finally {
+            BooleanQuery.setMaxClauseCount(clauseLimit);
+        }
+    }
+
+    /**
+     * Sources in twenty CRSs besides CRS84. Sources 1 to 4 lie inside the bound and beside it in EPSG:4326 and
+     * EPSG:3857; the others lie inside it, one in each of eighteen UTM CRSs. The ids of the sources inside the
+     * bound are added to the given set.
+     */
+    private static List<IndexGeometry> sourcesInManyCrss(Set<Long> inside) {
         List<IndexGeometry> sources = new ArrayList<>();
         for (String crs : List.of(EPSG_4326, MERCATOR)) {
             sources.add(geometry(literal(crs, "POINT(15.5 60.5)")));
+            inside.add((long) sources.size());
             sources.add(geometry(literal(crs, "POINT(16.01 60.5)")));
         }
-        Set<Long> inside = new TreeSet<>(Set.of(1L, 3L));
         for (int zone = 29; zone <= 37; zone++) {
             for (int hemisphere : new int[]{32600, 32700}) {
                 String utm = "http://www.opengis.net/def/crs/EPSG/0/" + (hemisphere + zone);
@@ -81,12 +130,7 @@ public class EvaluationCrsLookupTest {
                 inside.add((long) sources.size());
             }
         }
-        LuceneGeoIndexer indexer = createIndexer("many-crss");
-        index(indexer, sources);
-        IndexGeometry bound = geometry(BOUND);
-
-        assertEquals(inside, ids(indexer.getEnvelopeIntersections(bound, true)));
-        assertEquals(Set.of(), ids(indexer.getDisjointTransformCleanupCandidates(bound, true)));
+        return sources;
     }
 
     /**
@@ -234,7 +278,11 @@ public class EvaluationCrsLookupTest {
                 Set<Long> equalities = ids(indexer.getEnvelopeEqualityCandidates(bound, candidateIsSubject));
                 Set<Long> definite = definite(indexer.getEnvelopeDisjointCandidates(bound, candidateIsSubject));
                 Set<Long> evaluated = ids(indexer.getEnvelopeDisjointUncertainCandidates(bound, candidateIsSubject));
-                evaluated.addAll(ids(indexer.getDisjointTransformCleanupCandidates(bound, candidateIsSubject)));
+                Set<Long> cleanup = ids(indexer.getDisjointTransformCleanupCandidates(bound, candidateIsSubject));
+                Set<Long> evaluatedTwice = new TreeSet<>(evaluated);
+                evaluatedTwice.retainAll(cleanup);
+                assertEquals("sources evaluated in two disjoint phases", Set.of(), evaluatedTwice);
+                evaluated.addAll(cleanup);
                 for (int id = 1; id <= sources.size(); id++) {
                     SourceGeometryLiteral source = sources.get(id - 1).sourceGeometryLiteral();
                     SourceGeometryLiteral subject = candidateIsSubject ? source : bound.sourceGeometryLiteral();
