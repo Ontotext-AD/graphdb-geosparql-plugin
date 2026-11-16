@@ -181,6 +181,8 @@ public final class JenaFunctionEvaluator {
 		if (hasGenericCollection) {
 			return evaluateCollectionTopological(functionUri, left, right);
 		}
+		// Each relation below transforms its right operand into the left operand's CRS; a source keeps that operand.
+		right = rightSource.asRightOperandFor(left);
 		if (GeoConstants.GEOF_SF_EQUALS.stringValue().equals(functionUri)
 				|| GeoConstants.GEOF_EH_EQUALS.stringValue().equals(functionUri)
 				|| GeoConstants.GEOF_RCC8_EQ.stringValue().equals(functionUri)) {

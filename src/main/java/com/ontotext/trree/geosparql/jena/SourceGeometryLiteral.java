@@ -20,6 +20,8 @@ import org.eclipse.rdf4j.model.vocabulary.XSD;
 import org.locationtech.jts.geom.Geometry;
 import org.locationtech.jts.geom.CoordinateSequence;
 import org.locationtech.jts.geom.util.GeometryEditor;
+import org.opengis.referencing.operation.TransformException;
+import org.opengis.util.FactoryException;
 
 import java.util.ServiceConfigurationError;
 import java.util.Objects;
@@ -33,6 +35,7 @@ public final class SourceGeometryLiteral {
 	private final IRI datatype;
 	private final IRI jenaDatatype;
 	private transient GeometryWrapper geometryWrapper;
+	private transient RightOperand rightOperands;
 
 	private SourceGeometryLiteral(String lexicalForm, IRI datatype, IRI jenaDatatype) {
 		this.lexicalForm = lexicalForm;
@@ -151,6 +154,34 @@ public final class SourceGeometryLiteral {
 			validateGeometryWrapper();
 		}
 		return geometryWrapper;
+	}
+
+	/**
+	 * Returns this source as the right operand of an exact evaluation with the given left operand.
+	 *
+	 * <p>Jena evaluates a pair in the left operand's CRS. It transforms a right operand in another CRS and cleans up
+	 * its coordinates before every evaluation. This returns the operand Jena produces and keeps it per left CRS, so a
+	 * source evaluated against many left operands in one CRS is transformed once. A source in the left operand's CRS
+	 * is its own right operand.
+	 */
+	GeometryWrapper asRightOperandFor(GeometryWrapper left) throws FactoryException, TransformException {
+		GeometryWrapper source = asGeometryWrapper();
+		String leftCrsUri = left.getSrsURI();
+		if (leftCrsUri.equals(source.getSrsURI())) {
+			return source;
+		}
+		for (RightOperand kept = rightOperands; kept != null; kept = kept.next()) {
+			if (kept.leftCrsUri().equals(leftCrsUri)) {
+				return kept.operand();
+			}
+		}
+		GeometryWrapper operand = left.checkTransformSRS(source);
+		rightOperands = new RightOperand(leftCrsUri, operand, rightOperands);
+		return operand;
+	}
+
+	/** One kept right operand and the operands kept before it. A source meets few left CRSs, so a list serves. */
+	private record RightOperand(String leftCrsUri, GeometryWrapper operand, RightOperand next) {
 	}
 
 	private void validateGeometryWrapper() {
