@@ -532,14 +532,16 @@ public class LuceneGeoIndexer implements GeoSparqlIndexer {
 		}
 		return getCandidateEntities(reader -> {
 			EvaluationCrsLookup lookup = EvaluationCrsLookup.of(reader, boundSourceIndexGeometry, candidateIsSubject);
-			Query uncertain = lookup == null
-					? indexEnvelopeDisjointUncertainQuery(boundSourceIndexGeometry)
-					: lookup.orElsewhere(lookup.possiblyDisjoint(),
-							() -> indexEnvelopeDisjointUncertainQuery(boundSourceIndexGeometry));
-			if (boundSourceIndexGeometry.isEnvelopeCoveringRectangle()) {
-				return uncertain;
+			if (lookup == null) {
+				Query uncertain = indexEnvelopeDisjointUncertainQuery(boundSourceIndexGeometry);
+				return boundSourceIndexGeometry.isEnvelopeCoveringRectangle() ? uncertain
+						: InteriorRectanglePruning.pruneByIndexEnvelopes(
+								boundSourceIndexGeometry, uncertain, new IndexSearcher(reader));
 			}
-			return NativeCrs84DisjointPruning.prune(boundSourceIndexGeometry, uncertain, new IndexSearcher(reader));
+			return lookup.withoutSourcesInsideTheBound(
+					lookup.orElsewhere(lookup.possiblyDisjoint(),
+							() -> indexEnvelopeDisjointUncertainQuery(boundSourceIndexGeometry)),
+					new IndexSearcher(reader));
 		});
 	}
 

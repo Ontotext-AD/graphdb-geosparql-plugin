@@ -60,19 +60,21 @@ public class EvaluationCrsLookupTest {
     }
 
     /**
-     * In UTM the CRS84 bound is a quadrilateral that does not fill its envelope, so a UTM source inside it needs
-     * exact evaluation to decide disjoint, and a source far outside its envelope is a definite match.
+     * In UTM the CRS84 bound is a quadrilateral that does not fill its envelope. Sources 1 to 3 lie inside
+     * rectangles that Jena finds within it and cannot be disjoint. Source 4 is far outside its envelope. Source 5
+     * lies about a kilometre east of its slanted eastern edge, inside its envelope, and needs exact evaluation.
      */
     @Test
-    public void boundThatDoesNotFillItsEnvelopeLeavesSubjectsInsideItUncertain() throws Exception {
+    public void subjectsInsideAnObliqueBoundAreRemovedFromItsDisjointCandidates() throws Exception {
         LuceneGeoIndexer indexer = createIndexer("oblique", false);
-        index(indexer, List.of(geometry(literal(UTM_33N, "POINT(15.5 60.5)")),
-                geometry(literal(UTM_33N, "POINT(17 60.5)"))));
+        index(indexer, List.of(geometry(literal(UTM_33N, "POINT(15.4 60.4)")),
+                geometry(literal(UTM_33N, "POINT(15.5 60.5)")), geometry(literal(UTM_33N, "POINT(15.6 60.6)")),
+                geometry(literal(UTM_33N, "POINT(17 60.5)")), geometry(literal(UTM_33N, "POINT(16.02 60.95)"))));
         IndexGeometry bound = geometry(BOUND);
 
-        assertEquals(Set.of(1L), ids(indexer.getEnvelopeIntersections(bound, true)));
-        assertEquals(Set.of(1L), ids(indexer.getEnvelopeDisjointUncertainCandidates(bound, true)));
-        assertEquals(Set.of(2L), definite(indexer.getEnvelopeDisjointCandidates(bound, true)));
+        assertEquals(Set.of(1L, 2L, 3L, 5L), ids(indexer.getEnvelopeIntersections(bound, true)));
+        assertEquals(Set.of(5L), ids(indexer.getEnvelopeDisjointUncertainCandidates(bound, true)));
+        assertEquals(Set.of(4L), definite(indexer.getEnvelopeDisjointCandidates(bound, true)));
     }
 
     /**

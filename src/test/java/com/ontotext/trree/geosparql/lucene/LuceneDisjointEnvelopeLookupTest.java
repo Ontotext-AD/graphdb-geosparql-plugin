@@ -120,7 +120,7 @@ public class LuceneDisjointEnvelopeLookupTest {
 					"GEOMETRYCOLLECTION(POLYGON((0 0,2 0,2 2,0 0)))",
 					"POLYGON((0 0,4 4,0 4,4 0,0 0))",
 					"<http://www.opengis.net/def/crs/EPSG/0/3857> POLYGON((0 0,100000 0,0 100000,0 0))")) {
-				assertSame(wkt, candidates, NativeCrs84DisjointPruning.prune(geometry(wkt), candidates, searcher));
+				assertSame(wkt, candidates, InteriorRectanglePruning.pruneByIndexEnvelopes(geometry(wkt), candidates, searcher));
 			}
 		}
 	}
@@ -135,7 +135,7 @@ public class LuceneDisjointEnvelopeLookupTest {
 		polygon.append(",12 8))");
 		Query candidates = new MatchAllDocsQuery();
 		try (MultiReader reader = new MultiReader()) {
-			assertSame(candidates, NativeCrs84DisjointPruning.prune(
+			assertSame(candidates, InteriorRectanglePruning.pruneByIndexEnvelopes(
 					geometry(polygon.toString()), candidates, new IndexSearcher(reader)));
 		}
 	}
@@ -150,7 +150,7 @@ public class LuceneDisjointEnvelopeLookupTest {
 				}
 			};
 			Query candidates = new MatchAllDocsQuery();
-			assertSame(candidates, NativeCrs84DisjointPruning.prune(
+			assertSame(candidates, InteriorRectanglePruning.pruneByIndexEnvelopes(
 					geometry("POLYGON((0 0,16 0,16 8,8 16,0 16,0 0))"), candidates, searcher));
 		}
 	}
@@ -159,7 +159,7 @@ public class LuceneDisjointEnvelopeLookupTest {
 	public void emptyCandidateCountsRetainTheCompleteQuery() throws Exception {
 		try (MultiReader reader = new MultiReader()) {
 			Query candidates = new MatchAllDocsQuery();
-			assertSame(candidates, NativeCrs84DisjointPruning.prune(
+			assertSame(candidates, InteriorRectanglePruning.pruneByIndexEnvelopes(
 					geometry("POLYGON((0 0,16 0,16 8,8 16,0 16,0 0))"),
 					candidates, new IndexSearcher(reader)));
 		}

@@ -164,34 +164,17 @@ public final class IndexGeometry {
 	public Optional<BoundEvaluationEnvelope> evaluationEnvelope(String sourceCrsUri, boolean sourceIsLeftOperand) {
 		GeometryWrapper bound = sourceGeometryLiteral.asGeometryWrapper();
 		if (sourceCrsUri.equals(bound.getSrsURI())) {
-			return Optional.of(evaluationEnvelopeOf(bound.getXYGeometry()));
+			return Optional.of(new BoundEvaluationEnvelope(bound));
 		}
 		if (!sourceIsLeftOperand) {
 			return Optional.empty();
 		}
 		try {
 			JenaCalculationPrecision.configure();
-			return Optional.of(evaluationEnvelopeOf(
-					sourceGeometryLiteral.asRightOperandIn(sourceCrsUri).getXYGeometry()));
+			return Optional.of(new BoundEvaluationEnvelope(sourceGeometryLiteral.asRightOperandIn(sourceCrsUri)));
 		} catch (Exception e) {
 			// Jena fails the same way in every exact evaluation against a source of this CRS.
 			return Optional.of(BoundEvaluationEnvelope.UNRELATED);
-		}
-	}
-
-	private static BoundEvaluationEnvelope evaluationEnvelopeOf(Geometry evaluated) {
-		return new BoundEvaluationEnvelope(new Envelope(evaluated.getEnvelopeInternal()), fillsEnvelope(evaluated));
-	}
-
-	private static boolean fillsEnvelope(Geometry geometry) {
-		if (geometry.isEmpty() || !(geometry instanceof Polygon)) {
-			return false;
-		}
-		try {
-			return RelateNG.relate(geometry, geometry.getEnvelope(), RelatePredicate.equalsTopo());
-		} catch (RuntimeException e) {
-			// Rectangle containment is an optional proof. Invalid topology must disable it, not fail the lookup.
-			return false;
 		}
 	}
 }

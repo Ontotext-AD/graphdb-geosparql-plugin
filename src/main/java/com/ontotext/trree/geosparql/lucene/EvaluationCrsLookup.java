@@ -5,6 +5,7 @@ import com.ontotext.trree.geosparql.jena.IndexGeometry;
 import org.apache.lucene.index.IndexReader;
 import org.apache.lucene.search.BooleanClause;
 import org.apache.lucene.search.BooleanQuery;
+import org.apache.lucene.search.IndexSearcher;
 import org.apache.lucene.search.MatchNoDocsQuery;
 import org.apache.lucene.search.Query;
 import org.locationtech.jts.geom.Envelope;
@@ -96,6 +97,22 @@ final class EvaluationCrsLookup {
 					.add(LuceneGeoDocumentSchema.sourceEnvelopeWithinQuery(bound.envelope()),
 							BooleanClause.Occur.MUST_NOT).build();
 		});
+	}
+
+	/**
+	 * Removes candidates that lie inside rectangles which Jena certifies within the bound, in each CRS where the
+	 * bound is a polygon that does not fill its envelope.
+	 */
+	Query withoutSourcesInsideTheBound(Query possiblyDisjoint, IndexSearcher searcher) {
+		Query remaining = possiblyDisjoint;
+		for (Map.Entry<String, BoundEvaluationEnvelope> placement : placements.entrySet()) {
+			if (placement.getValue().isRelated() && !placement.getValue().fillsEnvelope()) {
+				remaining = InteriorRectanglePruning.prune(placement.getValue(), remaining,
+						LuceneGeoDocumentSchema.sourceCrsQuery(placement.getKey()),
+						LuceneGeoDocumentSchema::sourceEnvelopeWithinQuery, searcher);
+			}
+		}
+		return remaining;
 	}
 
 	/**
