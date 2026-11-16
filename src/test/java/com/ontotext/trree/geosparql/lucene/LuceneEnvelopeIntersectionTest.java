@@ -24,9 +24,11 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Random;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertTrue;
 
 public class LuceneEnvelopeIntersectionTest {
     @Rule
@@ -64,6 +66,56 @@ public class LuceneEnvelopeIntersectionTest {
 
         assertEquals(List.of(1L, 3L), collect(indexer.getEnvelopeIntersections(geometry("POINT(10.01 10.01)"))));
         assertEquals(List.of(1L, 2L, 3L), collect(indexer.getEnvelopeIntersections(transformedBesideThePoint)));
+    }
+
+    /**
+     * A transformed bound is looked up by prefix cells. Index envelopes that overlap or only touch share a cell in
+     * either tree at any precision, so each such source stays a candidate. The fixed envelopes touch the first bound
+     * along grid lines of both trees: at an edge, at a corner and at a single point.
+     */
+    @Test
+    public void transformedSourcesWithOverlappingEnvelopesRemainIntersectionCandidates() throws Exception {
+        Random random = new Random(40);
+        List<Envelope> envelopes = new ArrayList<>(List.of(
+                new Envelope(11.25, 12, 1, 2),
+                new Envelope(-3, 0, 3, 4),
+                new Envelope(11.25, 13, 11.25, 13),
+                new Envelope(11.25, 11.25, 11.25, 11.25),
+                new Envelope(0, 0, -5, 0),
+                new Envelope(11.2500001, 12, 1, 2)));
+        for (int i = 0; i < 200; i++) {
+            double minX = -20 + random.nextDouble() * 60;
+            double minY = -20 + random.nextDouble() * 60;
+            envelopes.add(new Envelope(minX, minX + random.nextDouble() * 10, minY, minY + random.nextDouble() * 10));
+        }
+        List<Envelope> bounds = new ArrayList<>(List.of(new Envelope(0, 11.25, 0, 11.25)));
+        for (int i = 0; i < 20; i++) {
+            Envelope source = envelopes.get(6 + i);
+            bounds.add(new Envelope(source.getMaxX(), source.getMaxX() + random.nextDouble() * 5,
+                    source.getMinY(), source.getMaxY()));
+        }
+        for (GeoSparqlConfig.PrefixTree tree : GeoSparqlConfig.PrefixTree.values()) {
+            for (int precision : new int[]{1, 6, 11, 20}) {
+                StoredReadCountingIndexer indexer = createIndexer("overlap-" + tree.name() + precision, tree, precision);
+                List<IndexGeometry> sources = new ArrayList<>();
+                for (Envelope envelope : envelopes) {
+                    sources.add(transformed(envelope));
+                }
+                index(indexer, sources);
+                for (Envelope bound : bounds) {
+                    List<Long> overlapping = new ArrayList<>();
+                    for (int i = 0; i < envelopes.size(); i++) {
+                        if (bound.intersects(envelopes.get(i))) {
+                            overlapping.add(i + 1L);
+                        }
+                    }
+                    List<Long> candidates = collect(indexer.getEnvelopeIntersections(transformed(bound)));
+                    assertTrue(tree + " " + precision + " " + bound + " omits "
+                            + overlapping.stream().filter(id -> !candidates.contains(id)).toList(),
+                            candidates.containsAll(overlapping));
+                }
+            }
+        }
     }
 
     @Test

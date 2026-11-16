@@ -372,7 +372,7 @@ final class LuceneGeoDocumentSchema {
 	 * Matches envelopes that can meet the bound although their longitude ranges are apart, or returns null for a
 	 * bound away from the antimeridian and the poles.
 	 */
-	private static Query envelopeMeetsDespiteLongitudeQuery(Envelope boundEnvelope) {
+	static Query envelopeMeetsDespiteLongitudeQuery(Envelope boundEnvelope) {
 		Query acrossAntimeridian = envelopeMeetsAcrossAntimeridianQuery(boundEnvelope);
 		Query atPole = envelopeMeetsAtPoleQuery(boundEnvelope);
 		if (acrossAntimeridian == null || atPole == null) {

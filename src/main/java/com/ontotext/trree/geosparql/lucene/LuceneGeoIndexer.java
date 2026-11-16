@@ -383,15 +383,23 @@ public class LuceneGeoIndexer implements GeoSparqlIndexer {
 		if (boundSourceIndexGeometry == null || !boundSourceIndexGeometry.isSpatialCandidate()) {
 			return getCandidateEntitiesForQuery(new MatchNoDocsQuery("Empty source has no envelope intersections."));
 		}
-		Query envelopeIntersections = envelopeIntersectionsQuery(boundSourceIndexGeometry);
 		Query prefixCellIntersections = prefixCellIntersectionsQuery(strategy, boundSourceIndexGeometry);
 		if (boundSourceIndexGeometry.candidateBoundsKind() != CandidateBoundsKind.NATIVE_CRS84) {
-			// Every pair has a transformed or world-fallback side, so the prefix cells keep each of them.
+			/*
+			 * Every pair has a transformed or world-fallback side, so the prefix cells keep each of them. Envelopes
+			 * that overlap share a cell, which leaves the envelopes that meet the bound's despite their longitudes.
+			 */
+			Query meetingDespiteLongitude = LuceneGeoDocumentSchema.envelopeMeetsDespiteLongitudeQuery(
+					boundSourceIndexGeometry.indexEnvelope());
+			if (meetingDespiteLongitude == null) {
+				return getCandidateEntitiesForQuery(prefixCellIntersections);
+			}
 			return getCandidateEntitiesForQuery(new BooleanQuery.Builder()
-					.add(envelopeIntersections, BooleanClause.Occur.SHOULD)
 					.add(prefixCellIntersections, BooleanClause.Occur.SHOULD)
+					.add(meetingDespiteLongitude, BooleanClause.Occur.SHOULD)
 					.setMinimumNumberShouldMatch(1).build());
 		}
+		Query envelopeIntersections = envelopeIntersectionsQuery(boundSourceIndexGeometry);
 		// A native CRS84 source that meets the native CRS84 bound has a hull cell among the cells of the bound's envelope.
 		Query hullCellsApart = new BooleanQuery.Builder()
 				.add(LuceneGeoDocumentSchema.hasNativeHullCellsQuery(), BooleanClause.Occur.FILTER)
