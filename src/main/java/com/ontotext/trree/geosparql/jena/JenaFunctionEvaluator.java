@@ -178,11 +178,11 @@ public final class JenaFunctionEvaluator {
 		if (!permittedTopology(functionUri, left.getDimensionInfo(), right.getDimensionInfo())) {
 			return false;
 		}
+		// Each relation below needs its right operand in the left operand's CRS; a source keeps that operand.
+		right = rightSource.asRightOperandFor(left);
 		if (hasGenericCollection) {
 			return evaluateCollectionTopological(functionUri, left, right);
 		}
-		// Each relation below transforms its right operand into the left operand's CRS; a source keeps that operand.
-		right = rightSource.asRightOperandFor(left);
 		if (GeoConstants.GEOF_SF_EQUALS.stringValue().equals(functionUri)
 				|| GeoConstants.GEOF_EH_EQUALS.stringValue().equals(functionUri)
 				|| GeoConstants.GEOF_RCC8_EQ.stringValue().equals(functionUri)) {
@@ -263,11 +263,11 @@ public final class JenaFunctionEvaluator {
 		return left.relate(right, intersectionPattern);
 	}
 
+	/** Relates a generic collection pair whose right operand is in the left operand's CRS. */
 	private static boolean evaluateCollectionTopological(String functionUri, GeometryWrapper left,
 			GeometryWrapper right) throws Exception {
-		GeometryWrapper transformedRight = left.checkTransformSRS(right);
 		Geometry leftGeometry = left.getXYGeometry();
-		Geometry rightGeometry = transformedRight.getXYGeometry();
+		Geometry rightGeometry = right.getXYGeometry();
 		if (GeoConstants.GEOF_SF_EQUALS.stringValue().equals(functionUri)
 				|| GeoConstants.GEOF_EH_EQUALS.stringValue().equals(functionUri)) {
 			return RelateNG.relate(leftGeometry, rightGeometry, SimpleFeaturesIntersectionPattern.EQUALS);

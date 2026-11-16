@@ -81,4 +81,23 @@ public class SourceGeometryLiteralRightOperandTest {
 		assertTrue(GeoSparqlPropertyRelation.SF_DISJOINT.evaluate(
 				SourceGeometryLiteral.fromWkt(MERCATOR_SOURCES.get(1)), kept));
 	}
+
+	/** A generic collection is related by its own evaluation path, which uses the kept right operand as well. */
+	@Test
+	public void keptCollectionRightOperandGivesTheResultOfTransformingForEachEvaluation() {
+		String collection = "GEOMETRYCOLLECTION(" + CRS84_POLYGON + ",POINT(14 59))";
+		SourceGeometryLiteral kept = SourceGeometryLiteral.fromWkt(collection);
+		for (GeoSparqlPropertyRelation relation : GeoSparqlPropertyRelation.values()) {
+			for (String left : MERCATOR_SOURCES) {
+				assertEquals(relation + " " + left,
+						relation.evaluate(SourceGeometryLiteral.fromWkt(left),
+								SourceGeometryLiteral.fromWkt(collection)),
+						relation.evaluate(SourceGeometryLiteral.fromWkt(left), kept));
+			}
+		}
+		assertTrue(GeoSparqlPropertyRelation.SF_INTERSECTS.evaluate(
+				SourceGeometryLiteral.fromWkt(MERCATOR_SOURCES.get(0)), kept));
+		assertTrue(GeoSparqlPropertyRelation.SF_DISJOINT.evaluate(
+				SourceGeometryLiteral.fromWkt(MERCATOR_SOURCES.get(1)), kept));
+	}
 }
