@@ -5,6 +5,7 @@ import com.ontotext.trree.geosparql.vocabulary.GeoConstants;
 import org.eclipse.rdf4j.model.Literal;
 import org.eclipse.rdf4j.model.ValueFactory;
 import org.eclipse.rdf4j.model.impl.SimpleValueFactory;
+import org.eclipse.rdf4j.query.algebra.evaluation.ValueExprEvaluationException;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -12,6 +13,7 @@ import java.util.List;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotSame;
 import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertThrows;
@@ -115,6 +117,32 @@ public class RecentSourceGeometryLiteralsTest {
 						((Literal) JenaFunctionEvaluator.evaluate(VALUES, function, wkt(CRS84_POLYGON),
 								wkt(changing))).booleanValue());
 			}
+		}
+	}
+
+	/**
+	 * A literal whose geometry is rejected is rejected by every call that receives it. The same error is raised
+	 * each time, and the validity function answers false each time.
+	 */
+	@Test
+	public void rejectedLiteralIsRejectedOnEveryCall() throws Exception {
+		String sfEquals = GeoConstants.GEOF_SF_EQUALS.stringValue();
+		String isValid = GeoConstants.EXT_IS_VALID.stringValue();
+		Literal outsideTheCrsDomain = wkt("POINT(200 200)");
+		Literal inAnUnknownCrs = wkt("<http://example.com/crs/unknown> POINT(1 2)");
+		for (int call = 0; call < 3; call++) {
+			for (Literal rejected : List.of(outsideTheCrsDomain, inAnUnknownCrs)) {
+				assertThrows(ValueExprEvaluationException.class,
+						() -> JenaFunctionEvaluator.evaluate(VALUES, sfEquals, rejected, rejected));
+				assertThrows(ValueExprEvaluationException.class,
+						() -> JenaFunctionEvaluator.evaluate(VALUES, sfEquals, wkt("POINT(1 1)"), rejected));
+				assertThrows(ValueExprEvaluationException.class,
+						() -> JenaFunctionEvaluator.evaluate(VALUES, sfEquals, rejected, wkt("POINT(1 1)")));
+			}
+			assertFalse(((Literal) JenaFunctionEvaluator.evaluate(VALUES, isValid, outsideTheCrsDomain))
+					.booleanValue());
+			assertThrows(ValueExprEvaluationException.class,
+					() -> JenaFunctionEvaluator.evaluate(VALUES, isValid, inAnUnknownCrs));
 		}
 	}
 

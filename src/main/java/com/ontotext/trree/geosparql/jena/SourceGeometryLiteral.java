@@ -76,9 +76,10 @@ public final class SourceGeometryLiteral {
 		try {
 			Geometry parsingGeometry = toParsingCoordinateOrder(sourceGeometry, effectiveCrsUri,
 					storedDimensionInfo);
-			source.geometryWrapper = new StoredGeometryWrapper(parsingGeometry, sourceGeometry,
+			GeometryWrapper stored = new StoredGeometryWrapper(parsingGeometry, sourceGeometry,
 					effectiveCrsUri, jenaDatatype.stringValue(), storedDimensionInfo, source.jenaLexicalForm);
-			source.validateGeometryWrapper();
+			validate(stored);
+			source.geometryWrapper = stored;
 			return source;
 		} catch (JenaGeoSparqlException e) {
 			throw e;
@@ -141,8 +142,9 @@ public final class SourceGeometryLiteral {
 
 	public GeometryWrapper asGeometryWrapper() {
 		if (geometryWrapper == null) {
+			GeometryWrapper parsed;
 			try {
-				geometryWrapper = GeometryWrapper.extract(jenaLexicalForm, jenaDatatype.stringValue());
+				parsed = GeometryWrapper.extract(jenaLexicalForm, jenaDatatype.stringValue());
 			} catch (DatatypeFormatException e) {
 				throw new JenaGeoSparqlException("Invalid GeoSPARQL geometry literal: " + e.getMessage(), e);
 			} catch (ServiceConfigurationError e) {
@@ -150,8 +152,9 @@ public final class SourceGeometryLiteral {
 			} catch (RuntimeException e) {
 				throw new JenaGeoSparqlException("Invalid GeoSPARQL geometry literal: " + e.getMessage(), e);
 			}
-
-			validateGeometryWrapper();
+			// A source keeps a geometry only once it is valid, so a rejected literal is rejected on every use.
+			validate(parsed);
+			geometryWrapper = parsed;
 		}
 		return geometryWrapper;
 	}
@@ -200,16 +203,16 @@ public final class SourceGeometryLiteral {
 	private record RightOperand(String leftCrsUri, GeometryWrapper operand, RightOperand next) {
 	}
 
-	private void validateGeometryWrapper() {
-		if (!geometryWrapper.isSRSRecognised()) {
-			throw new JenaGeoSparqlException(unsupportedCrsMessage(geometryWrapper.getSrsURI()), null, true);
+	private static void validate(GeometryWrapper wrapper) {
+		if (!wrapper.isSRSRecognised()) {
+			throw new JenaGeoSparqlException(unsupportedCrsMessage(wrapper.getSrsURI()), null, true);
 		}
-		if (geometryWrapper.getSrsInfo().isGeographic()
-				&& !geometryWrapper.isEmpty()
-				&& !geometryWrapper.getSrsInfo().getDomainEnvelope()
-						.contains(geometryWrapper.getXYGeometry().getEnvelopeInternal())) {
+		if (wrapper.getSrsInfo().isGeographic()
+				&& !wrapper.isEmpty()
+				&& !wrapper.getSrsInfo().getDomainEnvelope()
+						.contains(wrapper.getXYGeometry().getEnvelopeInternal())) {
 			throw new JenaGeoSparqlException("Geometry coordinates are outside the CRS domain for "
-					+ geometryWrapper.getSrsURI());
+					+ wrapper.getSrsURI());
 		}
 	}
 

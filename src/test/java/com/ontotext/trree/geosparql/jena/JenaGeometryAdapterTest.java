@@ -16,6 +16,8 @@ import org.junit.Test;
 import org.locationtech.jts.geom.Dimension;
 import org.locationtech.jts.geom.Envelope;
 
+import java.util.List;
+
 import static org.junit.Assert.*;
 
 public class JenaGeometryAdapterTest {
@@ -484,6 +486,18 @@ public class JenaGeometryAdapterTest {
 
 		assertTrue(exception.getMessage().contains("Unsupported CRS")
 				|| exception.getMessage().contains("Invalid GeoSPARQL geometry literal"));
+	}
+
+	/** A source that is used again after its geometry was rejected rejects it again. */
+	@Test
+	public void rejectedGeometryIsRejectedOnEveryUseOfItsSource() {
+		for (String wkt : List.of("POINT(200 200)", "<http://example.com/crs/unknown> POINT(1 2)",
+				"POINT(not a coordinate)")) {
+			SourceGeometryLiteral source = SourceGeometryLiteral.fromWkt(wkt);
+			for (int use = 0; use < 3; use++) {
+				assertThrows(wkt, JenaGeoSparqlException.class, source::asGeometryWrapper);
+			}
+		}
 	}
 
 	@Test
