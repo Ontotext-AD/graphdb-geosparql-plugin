@@ -133,9 +133,11 @@ public final class IndexGeometry {
 	}
 
 	/**
-	 * Returns whether the source is a non-empty CRS84 polygon that covers every point in its index envelope.
+	 * Returns whether the source is a valid, non-empty CRS84 polygon that covers every point in its index envelope.
 	 *
-	 * <p>This deliberately excludes transformed sources, holes, rotated polygons, and collections. For an eligible
+	 * <p>This deliberately excludes transformed sources, holes, rotated polygons, and collections. An invalid polygon
+	 * is excluded because JTS may find that a self-overlapping ring fills its envelope while Jena finds a point inside
+	 * that envelope disjoint from it. For an eligible
 	 * native CRS84 bound, containment of another source's index envelope proves that the two sources cannot be
 	 * disjoint, on the conservative-envelope engineering assumption documented by
 	 * {@link ConservativeCrs84EnvelopeProjector} when that other envelope is SIS-transformed.
@@ -149,7 +151,7 @@ public final class IndexGeometry {
 			return false;
 		}
 		try {
-			return RelateNG.relate(
+			return sourceGeometry.isValid() && RelateNG.relate(
 					sourceGeometry, sourceGeometry.getEnvelope(), RelatePredicate.equalsTopo());
 		} catch (RuntimeException e) {
 			// Rectangle containment is an optional proof. Invalid topology must disable pruning,

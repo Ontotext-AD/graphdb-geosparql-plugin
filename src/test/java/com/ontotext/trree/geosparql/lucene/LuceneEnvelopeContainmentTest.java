@@ -123,6 +123,8 @@ public class LuceneEnvelopeContainmentTest {
 				+ "POLYGON((799990 4589770,799990 4589790,800010 4589790,"
 				+ "800010 4589770,799990 4589770))");
 		IndexGeometry invalidPolygon = geometry("POLYGON((0 0,10 10,0 10,10 0,0 0))");
+		IndexGeometry selfOverlapping = geometry(
+				"POLYGON((0 0,10 0,10 10,0 10,0 0,10 0,10 10,0 10,0 0))");
 		IndexGeometry empty = geometry("POLYGON EMPTY");
 
 		assertTrue(rectangle.isEnvelopeCoveringRectangle());
@@ -131,6 +133,7 @@ public class LuceneEnvelopeContainmentTest {
 		assertFalse(collection.isEnvelopeCoveringRectangle());
 		assertFalse(projectedRectangle.isEnvelopeCoveringRectangle());
 		assertFalse(invalidPolygon.isEnvelopeCoveringRectangle());
+		assertFalse(selfOverlapping.isEnvelopeCoveringRectangle());
 		assertFalse(empty.isEnvelopeCoveringRectangle());
 		assertTrue(GeoSparqlPropertyRelation.SF_DISJOINT.evaluate(
 				pointInHole.sourceGeometryLiteral(), boundWithHole.sourceGeometryLiteral()));

@@ -67,17 +67,19 @@ public final class BoundEvaluationEnvelope {
 	}
 
 	/**
-	 * Whether the bound, as Jena evaluates it, is a polygon that covers every point of its envelope. A source whose
-	 * envelope lies inside that envelope then meets the bound and cannot be disjoint from it.
+	 * Whether the bound, as Jena evaluates it, is a valid polygon that covers every point of its envelope. A source
+	 * whose envelope lies inside that envelope then meets the bound and cannot be disjoint from it.
 	 *
 	 * <p>The proof compares the whole polygon with its envelope, and only disjoint pruning uses it, so it is made on
 	 * first use. A bound that cannot be placed again proves nothing, and nor does one whose envelope is unbounded:
-	 * the proof would hold for its raw envelope, not for the unbounded one lookup compares.
+	 * the proof would hold for its raw envelope, not for the unbounded one lookup compares. An invalid bound proves
+	 * nothing either: JTS may find that a self-overlapping ring fills its envelope while Jena finds a point inside
+	 * that envelope disjoint from it.
 	 */
 	public boolean fillsEnvelope() {
 		if (fillsEnvelope == null) {
 			try {
-				fillsEnvelope = polygonPoints >= 0 && !IndexGeometry.isUnbounded(envelope)
+				fillsEnvelope = polygonPoints >= 0 && !IndexGeometry.isUnbounded(envelope) && isValid()
 						&& fillsEnvelope(bound().getXYGeometry());
 			} catch (FactoryException | TransformException e) {
 				fillsEnvelope = false;

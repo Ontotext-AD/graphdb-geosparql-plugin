@@ -32,6 +32,7 @@ public class GeoSparqlRegisteredFunctionDifferentialTest extends AbstractGeoSpar
 	private static final String EPSG_4326 = "http://www.opengis.net/def/crs/EPSG/0/4326";
 	private static final String EPSG_4955 = "http://www.opengis.net/def/crs/EPSG/0/4955";
 	private static final String UTM_34N = "http://www.opengis.net/def/crs/EPSG/0/32634";
+	private static final String MERCATOR = "http://www.opengis.net/def/crs/EPSG/0/3857";
 	private static final String WEB_MERCATOR = "<http://www.opengis.net/def/crs/EPSG/0/3857> ";
 	/**
 	 * Collections of area dimension, separated from {@code distantArea}. The first four hold no polygon, and the
@@ -53,6 +54,7 @@ public class GeoSparqlRegisteredFunctionDifferentialTest extends AbstractGeoSpar
 	public void insertFixtureAndEnablePlugin() throws Exception {
 		String crs84AtCleanedCoordinate = transformedPoint(UTM_32_POINT, IndexGeometry.INDEX_CRS, false);
 		String utm33AtCleanedCoordinate = transformedPoint(UTM_32_POINT, UTM_33N, true);
+		String mercatorOverlappingCentre = transformedPoint("POINT(50.5 50.5)", MERCATOR, true);
 		executeSparqlUpdateQuery(PREFIXES
 				+ "INSERT DATA {\n"
 				+ feature("utm32", "utm32Geom", UTM_32_POINT)
@@ -95,6 +97,17 @@ public class GeoSparqlRegisteredFunctionDifferentialTest extends AbstractGeoSpar
 				+ feature("besideBrisbane", "besideBrisbaneGeom", "LINESTRING(153 -27.5,153.06 -27.5,153.06 -27.44)")
 				+ feature("utmPoint", "utmPointGeom", "<" + UTM_34N + "> POINT(500000 6700000)")
 				+ feature("utmControl", "utmControlGeom", "<" + UTM_34N + "> POINT(400000 6600000)")
+				+ feature("overlappingSquare", "overlappingSquareGeom", "<" + MERCATOR + "> POLYGON((2000000 2000000,"
+						+ "2010000 2000000,2010000 2010000,2000000 2010000,2000000 2000000,2010000 2000000,"
+						+ "2010000 2010000,2000000 2010000,2000000 2000000))")
+				+ feature("overlappingSquareCentre", "overlappingSquareCentreGeom",
+						"<" + MERCATOR + "> POINT(2005000 2005000)")
+				+ feature("overlappingSquareOutside", "overlappingSquareOutsideGeom",
+						"<" + MERCATOR + "> POINT(2020000 2005000)")
+				+ feature("crs84OverlappingSquare", "crs84OverlappingSquareGeom",
+						"POLYGON((50 50,51 50,51 51,50 51,50 50,51 50,51 51,50 51,50 50))")
+				+ feature("crs84OverlappingCentre", "crs84OverlappingCentreGeom", "POINT(50.5 50.5)")
+				+ feature("projectedOverlappingCentre", "projectedOverlappingCentreGeom", mercatorOverlappingCentre)
 				+ feature("infiniteRectangle", "infiniteRectangleGeom", "<" + UTM_34N
 						+ "> POLYGON((400000 6600000,1e309 6600000,1e309 6700000,400000 6700000,400000 6600000))")
 				+ feature("utmInside", "utmInsideGeom", "<" + UTM_34N + "> POINT(450000 6650000)")
@@ -237,6 +250,23 @@ public class GeoSparqlRegisteredFunctionDifferentialTest extends AbstractGeoSpar
 			for (String relation : List.of("sfDisjoint", "ehDisjoint")) {
 				assertDifferential(relation, "infiniteRectangle", boundSubject, "utmInside", "utmWest", "utmPoint",
 						"utmControl");
+			}
+		}
+	}
+
+	/**
+	 * A polygon whose ring winds twice around a square is invalid. JTS can find that it fills its envelope, while
+	 * Jena finds a point inside the square disjoint from it, so filling proves nothing about an invalid bound, in a
+	 * projected CRS or in CRS84.
+	 */
+	@Test
+	public void disjointRelationsAgreeForASelfOverlappingBound() throws Exception {
+		for (boolean boundSubject : new boolean[] { false, true }) {
+			for (String relation : List.of("sfDisjoint", "ehDisjoint")) {
+				assertDifferential(relation, "overlappingSquare", boundSubject, "overlappingSquareCentre",
+						"overlappingSquareOutside");
+				assertDifferential(relation, "crs84OverlappingSquare", boundSubject, "crs84OverlappingCentre",
+						"projectedOverlappingCentre");
 			}
 		}
 	}
