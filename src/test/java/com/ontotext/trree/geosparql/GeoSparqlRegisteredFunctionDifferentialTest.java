@@ -80,6 +80,13 @@ public class GeoSparqlRegisteredFunctionDifferentialTest extends AbstractGeoSpar
 				+ feature("nearBrisbane", "nearBrisbaneGeom", "POINT(153.031 -27.47)")
 				+ feature("infiniteHeight", "infiniteHeightGeom", "<" + EPSG_4326 + "> POINT Z(-27.47 153.03 1e309)")
 				+ feature("finiteHeight", "finiteHeightGeom", "<" + EPSG_4326 + "> POINT Z(-27.47 153.03 55)")
+				+ feature("eastOfBrisbane", "eastOfBrisbaneGeom", "POINT(153.481 -27.47)")
+				+ feature("aroundBrisbane", "aroundBrisbaneGeom",
+						"POLYGON((153 -27.5,153.1 -27.5,153.1 -27.4,153 -27.4,153 -27.5))")
+				+ feature("mixedHeights", "mixedHeightsGeom", "<" + EPSG_4326
+						+ "> GEOMETRYCOLLECTION Z(POINT(-27.47 153.03),POINT Z(-27.47 153.03 55))")
+				+ feature("uniformHeights", "uniformHeightsGeom", "<" + EPSG_4326
+						+ "> GEOMETRYCOLLECTION Z(POINT Z(-27.47 153.03 54),POINT Z(-27.47 153.03 55))")
 				+ feature("tiles", "tilesGeom", TILES_FROM_CENTRE)
 				+ feature("projectedTiles", "projectedTilesGeom", WEB_MERCATOR
 						+ "GEOMETRYCOLLECTION(POLYGON((0 0,1000 0,1000 1000,0 1000,0 0)),"
@@ -149,6 +156,19 @@ public class GeoSparqlRegisteredFunctionDifferentialTest extends AbstractGeoSpar
 	public void disjointRelationsAgreeForASourceJenaCannotTransform() throws Exception {
 		assertDifferential("sfDisjoint", "nearBrisbane", true, "infiniteHeight", "finiteHeight");
 		assertDifferential("ehDisjoint", "nearBrisbane", true, "infiniteHeight", "finiteHeight");
+	}
+
+	/**
+	 * A collection of an XY point and an XYZ point is related as written, with its separated envelope and through
+	 * exact evaluation, like a collection whose points share a dimension.
+	 */
+	@Test
+	public void relationsAgreeForACollectionOfMembersInDifferentDimensions() throws Exception {
+		for (boolean boundSubject : new boolean[] { true, false }) {
+			assertDifferential("sfDisjoint", "eastOfBrisbane", boundSubject, "mixedHeights", "uniformHeights");
+			assertDifferential("ehDisjoint", "eastOfBrisbane", boundSubject, "mixedHeights", "uniformHeights");
+			assertDifferential("sfIntersects", "aroundBrisbane", boundSubject, "mixedHeights", "uniformHeights");
+		}
 	}
 
 	@Test

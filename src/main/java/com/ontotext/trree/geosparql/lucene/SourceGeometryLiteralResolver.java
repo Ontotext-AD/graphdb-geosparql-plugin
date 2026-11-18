@@ -15,8 +15,12 @@ import java.util.Map;
 final class SourceGeometryLiteralResolver {
 	private final Map<StoredSourceGeometryIdentity, ResolvedSource> cache = new HashMap<>();
 
+	/**
+	 * @param fromLexicalForm whether the WKB cannot keep every ordinate of the source, so the source is parsed from
+	 *        its stored lexical form instead
+	 */
 	SourceGeometryLiteral resolve(StoredSourceGeometryIdentity identity, byte[] sourceGeometryWkb,
-			DimensionInfo dimensionInfo) {
+			DimensionInfo dimensionInfo, boolean fromLexicalForm) {
 		ResolvedSource resolved = cache.get(identity);
 		if (resolved != null) {
 			if (!resolved.matches(sourceGeometryWkb, dimensionInfo)) {
@@ -24,13 +28,22 @@ final class SourceGeometryLiteralResolver {
 			}
 			return resolved.source;
 		}
-		SourceGeometryLiteral source = loadAndValidate(identity, sourceGeometryWkb, dimensionInfo);
+		SourceGeometryLiteral source = fromLexicalForm ? parse(identity)
+				: loadAndValidate(identity, sourceGeometryWkb, dimensionInfo);
 		cache.put(identity, new ResolvedSource(source, sourceGeometryWkb, dimensionInfo));
 		return source;
 	}
 
 	void clear() {
 		cache.clear();
+	}
+
+	private static SourceGeometryLiteral parse(StoredSourceGeometryIdentity identity) {
+		SimpleValueFactory values = SimpleValueFactory.getInstance();
+		SourceGeometryLiteral source = SourceGeometryLiteral.fromLiteral(values.createLiteral(identity.lexicalForm(),
+				values.createIRI(identity.datatype())));
+		source.asGeometryWrapper();
+		return source;
 	}
 
 	private static SourceGeometryLiteral loadAndValidate(StoredSourceGeometryIdentity identity,

@@ -19,8 +19,8 @@ public class SourceGeometryLiteralResolverTest {
 		StoredSourceGeometryIdentity identity = identity(source);
 		SourceGeometryLiteralResolver resolver = new SourceGeometryLiteralResolver();
 
-		assertSame(resolver.resolve(identity, sourceWkb, dimensions),
-				resolver.resolve(identity, sourceWkb, dimensions));
+		assertSame(resolver.resolve(identity, sourceWkb, dimensions, false),
+				resolver.resolve(identity, sourceWkb, dimensions, false));
 	}
 
 	@Test
@@ -30,10 +30,10 @@ public class SourceGeometryLiteralResolverTest {
 		StoredSourceGeometryIdentity identity = identity(first);
 		SourceGeometryLiteralResolver resolver = new SourceGeometryLiteralResolver();
 		resolver.resolve(identity, SourceGeometryWkbCodec.encode(first),
-				first.asGeometryWrapper().getDimensionInfo());
+				first.asGeometryWrapper().getDimensionInfo(), false);
 
 		PluginException exception = assertThrows(PluginException.class, () -> resolver.resolve(identity,
-				SourceGeometryWkbCodec.encode(conflicting), conflicting.asGeometryWrapper().getDimensionInfo()));
+				SourceGeometryWkbCodec.encode(conflicting), conflicting.asGeometryWrapper().getDimensionInfo(), false));
 
 		assertTrue(exception.getMessage().contains("force-reindex"));
 	}
@@ -44,10 +44,10 @@ public class SourceGeometryLiteralResolverTest {
 		StoredSourceGeometryIdentity identity = identity(source);
 		byte[] sourceWkb = SourceGeometryWkbCodec.encode(source);
 		SourceGeometryLiteralResolver resolver = new SourceGeometryLiteralResolver();
-		resolver.resolve(identity, sourceWkb, source.asGeometryWrapper().getDimensionInfo());
+		resolver.resolve(identity, sourceWkb, source.asGeometryWrapper().getDimensionInfo(), false);
 
 		PluginException exception = assertThrows(PluginException.class,
-				() -> resolver.resolve(identity, sourceWkb, new DimensionInfo(3, 3, 0)));
+				() -> resolver.resolve(identity, sourceWkb, new DimensionInfo(3, 3, 0), false));
 
 		assertTrue(exception.getMessage().contains("force-reindex"));
 	}
@@ -59,11 +59,11 @@ public class SourceGeometryLiteralResolverTest {
 		StoredSourceGeometryIdentity identity = identity(first);
 		SourceGeometryLiteralResolver resolver = new SourceGeometryLiteralResolver();
 		SourceGeometryLiteral firstResolved = resolver.resolve(identity, SourceGeometryWkbCodec.encode(first),
-				first.asGeometryWrapper().getDimensionInfo());
+				first.asGeometryWrapper().getDimensionInfo(), false);
 
 		resolver.clear();
 		SourceGeometryLiteral secondResolved = resolver.resolve(identity, SourceGeometryWkbCodec.encode(second),
-				second.asGeometryWrapper().getDimensionInfo());
+				second.asGeometryWrapper().getDimensionInfo(), false);
 
 		assertNotSame(firstResolved, secondResolved);
 		assertTrue(secondResolved.asGeometryWrapper().getXYGeometry()

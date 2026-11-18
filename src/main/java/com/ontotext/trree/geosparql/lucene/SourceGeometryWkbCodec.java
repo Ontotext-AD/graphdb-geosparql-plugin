@@ -44,6 +44,36 @@ final class SourceGeometryWkbCodec {
 	private SourceGeometryWkbCodec() {
 	}
 
+	/**
+	 * Whether WKB keeps every ordinate of the source. WKB gives a geometry one coordinate dimension, so a collection
+	 * whose members differ in it, such as an XY point beside an XYZ point, would come back with every member in the
+	 * collection's dimension.
+	 */
+	static boolean preservesOrdinates(SourceGeometryLiteral source) {
+		GeometryWrapper wrapper = source.asGeometryWrapper();
+		CoordinateSequenceDimensions dimensions = wrapper.getCoordinateSequenceDimensions();
+		boolean hasZ = dimensions == CoordinateSequenceDimensions.XYZ || dimensions == CoordinateSequenceDimensions.XYZM;
+		boolean hasM = dimensions == CoordinateSequenceDimensions.XYM || dimensions == CoordinateSequenceDimensions.XYZM;
+		boolean[] preserved = {true};
+		wrapper.getParsingGeometry().apply(new CoordinateSequenceFilter() {
+			@Override
+			public void filter(CoordinateSequence sequence, int index) {
+				preserved[0] = sequence.hasZ() == hasZ && sequence.hasM() == hasM;
+			}
+
+			@Override
+			public boolean isDone() {
+				return !preserved[0];
+			}
+
+			@Override
+			public boolean isGeometryChanged() {
+				return false;
+			}
+		});
+		return preserved[0];
+	}
+
 	static byte[] encode(SourceGeometryLiteral source) {
 		GeometryWrapper wrapper = source.asGeometryWrapper();
 		CoordinateSequenceDimensions dimensions = wrapper.getCoordinateSequenceDimensions();

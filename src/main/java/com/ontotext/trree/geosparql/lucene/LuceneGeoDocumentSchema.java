@@ -74,6 +74,11 @@ final class LuceneGeoDocumentSchema {
 	private static final int MAX_Y = 3;
 	/** Stored WKB for the complete native-CRS source geometry used to construct Jena exact-evaluation input. */
 	static final String FIELD_SOURCE_GEOMETRY = "geoData";
+	/**
+	 * Stored marker on exactly the documents whose WKB cannot keep every ordinate of the source; exact evaluation
+	 * parses their stored lexical form instead. See {@link SourceGeometryWkbCodec#preservesOrdinates}.
+	 */
+	static final String FIELD_SOURCE_FROM_LEXICAL_FORM = "geoSourceFromLexicalForm";
 	/** Stored per-document schema number used for defensive validation after the commit-level check. */
 	static final String FIELD_SCHEMA_VERSION = "geoSchemaVersion";
 	/** Stored authoritative RDF lexical form; the compatibility name does not denote a CRS84 geometry. */
@@ -111,10 +116,10 @@ final class LuceneGeoDocumentSchema {
 	/**
 	 * Commit metadata value requiring source WKB, the envelope marker, indexed source CRS, each spatial source's
 	 * envelope in its own CRS, the CRS84 index envelope of each source in another CRS, cover boxes for large
-	 * sources, and the area collection marker.
+	 * sources, the area collection marker, and the marker for sources parsed from their lexical form.
 	 */
 	static final String COMMIT_SCHEMA_LAYOUT_VALUE =
-			"prefix-envelope-ordinate-preserving-source-wkb-envelope-marker-topology-dv-indexed-source-crs-source-envelope-index-envelope-source-cover-area-collection";
+			"prefix-envelope-ordinate-preserving-source-wkb-envelope-marker-topology-dv-indexed-source-crs-source-envelope-index-envelope-source-cover-area-collection-lexical-sources";
 	/** Commit metadata key identifying the CRS transformation inputs used for candidate envelopes. */
 	static final String COMMIT_CRS_ENVIRONMENT_FINGERPRINT_KEY = "geosparql.crsEnvironmentFingerprint";
 	static final String SCHEMA_MISMATCH_MESSAGE =
@@ -174,6 +179,9 @@ final class LuceneGeoDocumentSchema {
 		// them for exact predicate evaluation. Their sentinel document deliberately has no Lucene spatial fields.
 
 		doc.add(new StoredField(FIELD_SOURCE_GEOMETRY, sourceGeometryWkb));
+		if (!SourceGeometryWkbCodec.preservesOrdinates(source)) {
+			doc.add(new StoredField(FIELD_SOURCE_FROM_LEXICAL_FORM, 1));
+		}
 		doc.add(new StoredField(FIELD_SCHEMA_VERSION, SCHEMA_VERSION));
 		doc.add(new StoredField(FIELD_SOURCE_LEXICAL_FORM, source.lexicalForm()));
 		doc.add(new StoredField(FIELD_SOURCE_DATATYPE, source.datatype().stringValue()));
@@ -217,7 +225,8 @@ final class LuceneGeoDocumentSchema {
 				doc.get(FIELD_SOURCE_LEXICAL_FORM),
 				doc.get(FIELD_SOURCE_DATATYPE),
 				doc.get(FIELD_SOURCE_CRS));
-		return sourceResolver.resolve(identity, sourceGeometryWkb, dimensions);
+		return sourceResolver.resolve(identity, sourceGeometryWkb, dimensions,
+				doc.getField(FIELD_SOURCE_FROM_LEXICAL_FORM) != null);
 	}
 
 	static long entityId(Document doc) {

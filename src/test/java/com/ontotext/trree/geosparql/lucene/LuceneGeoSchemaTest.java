@@ -5,6 +5,7 @@ import com.ontotext.trree.geosparql.CandidateEntity;
 import com.ontotext.trree.geosparql.CloseableIterator;
 import com.ontotext.trree.geosparql.GeoSparqlConfig;
 import com.ontotext.trree.geosparql.GeoSparqlPlugin;
+import com.ontotext.trree.geosparql.GeoSparqlPropertyRelation;
 import com.ontotext.trree.geosparql.TestIndexGeometries;
 import com.ontotext.trree.geosparql.jena.IndexGeometry;
 import com.ontotext.trree.geosparql.jena.SourceGeometryLiteral;
@@ -27,6 +28,8 @@ import org.apache.lucene.spatial.prefix.tree.QuadPrefixTree;
 import org.apache.lucene.store.ByteBuffersDirectory;
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.store.FSDirectory;
+import org.locationtech.jts.geom.Geometry;
+import org.locationtech.jts.geom.Point;
 import org.locationtech.spatial4j.context.SpatialContext;
 import org.junit.Before;
 import org.junit.Rule;
@@ -158,6 +161,34 @@ public class LuceneGeoSchemaTest {
 		FailingCommitLuceneGeoIndexer indexer = new FailingCommitLuceneGeoIndexer(parent);
 		indexer.initialize();
 		return indexer;
+	}
+
+	/**
+	 * WKB gives a geometry one coordinate dimension. A collection of an XY point and an XYZ point is marked and parsed
+	 * from its lexical form when read back, so exact evaluation sees each member as written and Jena can transform
+	 * it. A collection whose members share a dimension is read back from WKB.
+	 */
+	@Test
+	public void collectionOfMembersInDifferentDimensionsIsReadFromItsLexicalForm() throws Exception {
+		String epsg4326 = "<http://www.opengis.net/def/crs/EPSG/0/4326> ";
+		SourceGeometryLiteral mixed = SourceGeometryLiteral.fromWkt(
+				epsg4326 + "GEOMETRYCOLLECTION Z(POINT(-27.47 153.03),POINT Z(-27.47 153.03 55))");
+		SourceGeometryLiteral uniform = SourceGeometryLiteral.fromWkt(
+				epsg4326 + "GEOMETRYCOLLECTION Z(POINT Z(-27.47 153.03 54),POINT Z(-27.47 153.03 55))");
+		Document mixedDocument = currentSchemaDocument(1L, IndexGeometry.fromSourceGeometryLiteral(mixed));
+		Document uniformDocument = currentSchemaDocument(2L, IndexGeometry.fromSourceGeometryLiteral(uniform));
+
+		assertNotNull(mixedDocument.getField(LuceneGeoDocumentSchema.FIELD_SOURCE_FROM_LEXICAL_FORM));
+		assertNull(uniformDocument.getField(LuceneGeoDocumentSchema.FIELD_SOURCE_FROM_LEXICAL_FORM));
+		SourceGeometryLiteral readMixed = LuceneGeoDocumentSchema.sourceGeometryLiteral(mixedDocument,
+				new SourceGeometryLiteralResolver());
+		Geometry readMembers = readMixed.asGeometryWrapper().getParsingGeometry();
+		assertFalse(((Point) readMembers.getGeometryN(0)).getCoordinateSequence().hasZ());
+		assertTrue(((Point) readMembers.getGeometryN(1)).getCoordinateSequence().hasZ());
+		assertTrue(GeoSparqlPropertyRelation.SF_DISJOINT.evaluate(
+				SourceGeometryLiteral.fromWkt("POINT(153.481 -27.47)"), readMixed));
+		assertTrue(LuceneGeoDocumentSchema.sourceGeometryLiteral(uniformDocument, new SourceGeometryLiteralResolver())
+				.asGeometryWrapper().getXYGeometry().equalsExact(uniform.asGeometryWrapper().getXYGeometry()));
 	}
 
 	private Document currentSchemaDocument(long entityId, IndexGeometry geometry) {
