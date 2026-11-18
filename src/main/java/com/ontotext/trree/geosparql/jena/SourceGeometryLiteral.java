@@ -19,6 +19,7 @@ import org.eclipse.rdf4j.model.impl.SimpleValueFactory;
 import org.eclipse.rdf4j.model.vocabulary.XSD;
 import org.locationtech.jts.geom.Geometry;
 import org.locationtech.jts.geom.CoordinateSequence;
+import org.locationtech.jts.geom.GeometryComponentFilter;
 import org.locationtech.jts.geom.util.GeometryEditor;
 import org.opengis.referencing.operation.TransformException;
 import org.opengis.util.FactoryException;
@@ -31,17 +32,23 @@ import java.util.Objects;
  */
 public final class SourceGeometryLiteral {
 	/**
-	 * Most coordinates that the right operands kept by one source hold together. A large source evaluated in many
-	 * CRSs keeps the operands that fit and is transformed again, as Jena does, for each evaluation in the others.
+	 * Most coordinates that the right operands kept by one source hold together, each geometry component counting
+	 * {@link #COMPONENT_COORDINATES} more. A large source evaluated in many CRSs keeps the operands that fit and is
+	 * transformed again, as Jena does, for each evaluation in the others.
 	 */
 	static final int MAX_KEPT_RIGHT_OPERAND_COORDINATES = 250_000;
+	/**
+	 * Coordinates that one geometry component counts for besides its own: a polygon, ring, line, point or collection,
+	 * empty or not, takes about as much memory for its objects and coordinate sequence as four coordinates do.
+	 */
+	static final int COMPONENT_COORDINATES = 4;
 	private final String lexicalForm;
 	private final String jenaLexicalForm;
 	private final IRI datatype;
 	private final IRI jenaDatatype;
 	private transient GeometryWrapper geometryWrapper;
 	private transient RightOperand rightOperands;
-	private transient int keptRightOperandCoordinates;
+	private transient long keptRightOperandCoordinates;
 
 	private SourceGeometryLiteral(String lexicalForm, IRI datatype, IRI jenaDatatype) {
 		this.lexicalForm = lexicalForm;
@@ -201,12 +208,19 @@ public final class SourceGeometryLiteral {
 		GeometryWrapper leftOperand = left != null
 				? left : new GeometryWrapper(leftCrsUri, source.getGeometryDatatypeURI());
 		GeometryWrapper operand = leftOperand.checkTransformSRS(source);
-		int coordinates = operand.getXYGeometry().getNumPoints();
+		long coordinates = keptCoordinates(operand.getXYGeometry());
 		if (coordinates <= MAX_KEPT_RIGHT_OPERAND_COORDINATES - keptRightOperandCoordinates) {
 			keptRightOperandCoordinates += coordinates;
 			rightOperands = new RightOperand(leftCrsUri, operand, rightOperands);
 		}
 		return operand;
+	}
+
+	/** The coordinates a geometry counts for against {@link #MAX_KEPT_RIGHT_OPERAND_COORDINATES}. */
+	static long keptCoordinates(Geometry geometry) {
+		long[] components = {0};
+		geometry.apply((GeometryComponentFilter) component -> components[0]++);
+		return geometry.getNumPoints() + COMPONENT_COORDINATES * components[0];
 	}
 
 	/** One kept right operand and the operands kept before it. A source meets few left CRSs, so a list serves. */

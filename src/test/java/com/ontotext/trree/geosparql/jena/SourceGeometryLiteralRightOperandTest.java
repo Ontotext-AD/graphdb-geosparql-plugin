@@ -2,6 +2,9 @@ package com.ontotext.trree.geosparql.jena;
 
 import com.ontotext.trree.geosparql.GeoSparqlPropertyRelation;
 import org.apache.jena.geosparql.implementation.GeometryWrapper;
+import org.locationtech.jts.geom.Coordinate;
+import org.locationtech.jts.geom.Geometry;
+import org.locationtech.jts.geom.GeometryFactory;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -82,6 +85,44 @@ public class SourceGeometryLiteralRightOperandTest {
 		assertSame(inMercator, source.asRightOperandIn(mercator));
 		assertNotSame(inUtm, inUtmAgain);
 		assertEquals(inUtm.getXYGeometry(), inUtmAgain.getXYGeometry());
+	}
+
+	/**
+	 * Each component of a geometry counts against the limit besides its coordinates, so a source of many small parts
+	 * keeps no right operand once they take more than the limit, though its coordinates alone would fit.
+	 */
+	@Test
+	public void sourceOfManyPartsKeepsNoRightOperandPastTheLimit() throws Exception {
+		StringBuilder parts = new StringBuilder("MULTIPOLYGON(");
+		for (int i = 0; i < 40_000; i++) {
+			double x = 15 + i % 200 * 0.004;
+			double y = 60 + i / 200 * 0.004;
+			parts.append(i == 0 ? "((" : ",((").append(x).append(' ').append(y).append(',').append(x + 0.001)
+					.append(' ').append(y).append(',').append(x).append(' ').append(y + 0.001).append(',').append(x)
+					.append(' ').append(y).append("))");
+		}
+		SourceGeometryLiteral source = SourceGeometryLiteral.fromWkt(parts.append(')').toString());
+		String mercator = "http://www.opengis.net/def/crs/EPSG/0/3857";
+
+		GeometryWrapper inMercator = source.asRightOperandIn(mercator);
+
+		assertTrue(inMercator.getXYGeometry().getNumPoints()
+				< SourceGeometryLiteral.MAX_KEPT_RIGHT_OPERAND_COORDINATES);
+		assertNotSame(inMercator, source.asRightOperandIn(mercator));
+	}
+
+	/** An empty member counts against the limit like any other component: a polygon and its ring. */
+	@Test
+	public void emptyMembersCountTowardsTheLimit() {
+		GeometryFactory factory = new GeometryFactory();
+		Geometry[] members = new Geometry[1_001];
+		members[0] = factory.createPoint(new Coordinate(15, 60));
+		for (int i = 1; i < members.length; i++) {
+			members[i] = factory.createPolygon();
+		}
+
+		assertEquals(1 + SourceGeometryLiteral.COMPONENT_COORDINATES * (2 + 2 * 1_000L),
+				SourceGeometryLiteral.keptCoordinates(factory.createGeometryCollection(members)));
 	}
 
 	/**
