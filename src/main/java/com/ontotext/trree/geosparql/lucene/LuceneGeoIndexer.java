@@ -504,10 +504,15 @@ public class LuceneGeoIndexer implements GeoSparqlIndexer {
 		if (!boundSourceIndexGeometry.isEnvelopeCoveringRectangle()) {
 			return envelopeIntersections;
 		}
+		Query notShownInside = new BooleanQuery.Builder()
+				.add(LuceneGeoDocumentSchema.envelopeNotWithinQuery(boundSourceIndexGeometry.indexEnvelope()),
+						BooleanClause.Occur.SHOULD)
+				.add(LuceneGeoDocumentSchema.worldFallbackIndexEnvelopeQuery(), BooleanClause.Occur.SHOULD)
+				.setMinimumNumberShouldMatch(1)
+				.build();
 		return new BooleanQuery.Builder()
 				.add(envelopeIntersections, BooleanClause.Occur.FILTER)
-				.add(LuceneGeoDocumentSchema.envelopeNotWithinQuery(
-						boundSourceIndexGeometry.indexEnvelope()), BooleanClause.Occur.FILTER)
+				.add(notShownInside, BooleanClause.Occur.FILTER)
 				.build();
 	}
 
