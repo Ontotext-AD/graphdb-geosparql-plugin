@@ -375,22 +375,36 @@ final class LuceneGeoDocumentSchema {
 
 	/**
 	 * Matches sources whose own envelopes reach beyond at least one side of the closed envelope, both taken in one
-	 * CRS: every source that {@link #sourceEnvelopeWithinQuery} does not match.
+	 * CRS: every source that {@link #sourceEnvelopeWithinQuery} does not match. The four sides are joined in pairs,
+	 * so no query holds more than two clauses.
 	 */
 	static Query sourceEnvelopeBeyondQuery(Envelope envelope) {
-		BooleanQuery.Builder beyond = new BooleanQuery.Builder().setMinimumNumberShouldMatch(1);
-		for (int ordinate = 0; ordinate < 4; ordinate++) {
-			double[] lower = unbounded(Double.NEGATIVE_INFINITY);
-			double[] upper = unbounded(Double.POSITIVE_INFINITY);
-			switch (ordinate) {
-				case MIN_X -> upper[MIN_X] = Math.nextDown(lowerBound(envelope.getMinX()));
-				case MAX_X -> lower[MAX_X] = Math.nextUp(upperBound(envelope.getMaxX()));
-				case MIN_Y -> upper[MIN_Y] = Math.nextDown(lowerBound(envelope.getMinY()));
-				default -> lower[MAX_Y] = Math.nextUp(upperBound(envelope.getMaxY()));
-			}
-			beyond.add(DoublePoint.newRangeQuery(FIELD_SOURCE_ENVELOPE, lower, upper), BooleanClause.Occur.SHOULD);
-		}
-		return beyond.build();
+		return either(
+				either(sourceEnvelopeOrdinateIn(MIN_X, Double.NEGATIVE_INFINITY,
+								Math.nextDown(lowerBound(envelope.getMinX()))),
+						sourceEnvelopeOrdinateIn(MAX_X, Math.nextUp(upperBound(envelope.getMaxX())),
+								Double.POSITIVE_INFINITY)),
+				either(sourceEnvelopeOrdinateIn(MIN_Y, Double.NEGATIVE_INFINITY,
+								Math.nextDown(lowerBound(envelope.getMinY()))),
+						sourceEnvelopeOrdinateIn(MAX_Y, Math.nextUp(upperBound(envelope.getMaxY())),
+								Double.POSITIVE_INFINITY)));
+	}
+
+	private static Query sourceEnvelopeOrdinateIn(int ordinate, double from, double to) {
+		double[] lower = unbounded(Double.NEGATIVE_INFINITY);
+		double[] upper = unbounded(Double.POSITIVE_INFINITY);
+		lower[ordinate] = from;
+		upper[ordinate] = to;
+		return DoublePoint.newRangeQuery(FIELD_SOURCE_ENVELOPE, lower, upper);
+	}
+
+	/** Matches what either query matches. Joining four sides in pairs keeps every query within two clauses. */
+	private static Query either(Query first, Query second) {
+		return new BooleanQuery.Builder()
+				.add(first, BooleanClause.Occur.SHOULD)
+				.add(second, BooleanClause.Occur.SHOULD)
+				.setMinimumNumberShouldMatch(1)
+				.build();
 	}
 
 	/** Matches sources whose own envelopes lie inside the closed envelope, both taken in one CRS. */
@@ -444,17 +458,11 @@ final class LuceneGeoDocumentSchema {
 	 */
 	static Query envelopeDisjointQuery(Envelope boundEnvelope) {
 		// Mathematical nextDown/nextUp exclude both signed zeros when the bound is zero.
-		Query separated = new BooleanQuery.Builder()
-				.add(indexEnvelopeOrdinateAtMost(MAX_X, Math.nextDown(boundEnvelope.getMinX())),
-						BooleanClause.Occur.SHOULD)
-				.add(indexEnvelopeOrdinateAtLeast(MIN_X, Math.nextUp(boundEnvelope.getMaxX())),
-						BooleanClause.Occur.SHOULD)
-				.add(indexEnvelopeOrdinateAtMost(MAX_Y, Math.nextDown(boundEnvelope.getMinY())),
-						BooleanClause.Occur.SHOULD)
-				.add(indexEnvelopeOrdinateAtLeast(MIN_Y, Math.nextUp(boundEnvelope.getMaxY())),
-						BooleanClause.Occur.SHOULD)
-				.setMinimumNumberShouldMatch(1)
-				.build();
+		Query separated = either(
+				either(indexEnvelopeOrdinateAtMost(MAX_X, Math.nextDown(boundEnvelope.getMinX())),
+						indexEnvelopeOrdinateAtLeast(MIN_X, Math.nextUp(boundEnvelope.getMaxX()))),
+				either(indexEnvelopeOrdinateAtMost(MAX_Y, Math.nextDown(boundEnvelope.getMinY())),
+						indexEnvelopeOrdinateAtLeast(MIN_Y, Math.nextUp(boundEnvelope.getMaxY()))));
 		Query meetingDespiteLongitude = envelopeMeetsDespiteLongitudeQuery(boundEnvelope);
 		if (meetingDespiteLongitude == null) {
 			return separated;
@@ -557,17 +565,11 @@ final class LuceneGeoDocumentSchema {
 
 	/** Matches CRS84 index envelopes extending beyond at least one side of the closed bound. */
 	static Query envelopeNotWithinQuery(Envelope boundEnvelope) {
-		return new BooleanQuery.Builder()
-				.add(indexEnvelopeOrdinateAtMost(MIN_X, Math.nextDown(boundEnvelope.getMinX())),
-						BooleanClause.Occur.SHOULD)
-				.add(indexEnvelopeOrdinateAtLeast(MAX_X, Math.nextUp(boundEnvelope.getMaxX())),
-						BooleanClause.Occur.SHOULD)
-				.add(indexEnvelopeOrdinateAtMost(MIN_Y, Math.nextDown(boundEnvelope.getMinY())),
-						BooleanClause.Occur.SHOULD)
-				.add(indexEnvelopeOrdinateAtLeast(MAX_Y, Math.nextUp(boundEnvelope.getMaxY())),
-						BooleanClause.Occur.SHOULD)
-				.setMinimumNumberShouldMatch(1)
-				.build();
+		return either(
+				either(indexEnvelopeOrdinateAtMost(MIN_X, Math.nextDown(boundEnvelope.getMinX())),
+						indexEnvelopeOrdinateAtLeast(MAX_X, Math.nextUp(boundEnvelope.getMaxX()))),
+				either(indexEnvelopeOrdinateAtMost(MIN_Y, Math.nextDown(boundEnvelope.getMinY())),
+						indexEnvelopeOrdinateAtLeast(MAX_Y, Math.nextUp(boundEnvelope.getMaxY()))));
 	}
 
 	private static Query indexEnvelopeOrdinateAtMost(int ordinate, double value) {

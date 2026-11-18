@@ -13,6 +13,7 @@ import com.ontotext.trree.geosparql.jena.CandidateBoundsKind;
 import com.ontotext.trree.geosparql.jena.IndexGeometryFixtures;
 import com.ontotext.trree.geosparql.jena.SourceGeometryLiteral;
 import org.apache.lucene.index.MultiReader;
+import org.apache.lucene.search.BooleanQuery;
 import org.apache.lucene.search.IndexSearcher;
 import org.apache.lucene.search.MatchAllDocsQuery;
 import org.apache.lucene.search.Query;
@@ -74,6 +75,41 @@ public class LuceneDisjointEnvelopeLookupTest {
 		assertEquals(Set.of(3L, 4L, 6L, 7L), definite(indexer.getEnvelopeDisjointCandidates(bound, true)));
 		assertEquals(Set.of(), uncertain(indexer.getEnvelopeDisjointUncertainCandidates(bound, false)));
 		assertEquals(Set.of(5L), uncertain(indexer.getNonSpatialCandidates()));
+	}
+
+	/**
+	 * Every disjoint lookup keeps within a Lucene clause limit of three: for sources in the bound's CRS and in
+	 * another one, which a CRS84 bound that is the subject looks up by CRS84 index envelopes, for a bound that fills
+	 * its envelope and one that does not, in both binding directions.
+	 */
+	@Test
+	public void disjointLookupsFitInThreeClauses() throws Exception {
+		String mercator = "<http://www.opengis.net/def/crs/EPSG/0/3857> ";
+		LuceneGeoIndexer indexer = createIndexer("three-clauses", GeoSparqlConfig.PrefixTree.QUAD, 1);
+		index(indexer, List.of(geometry("POINT(0 0)"), geometry("POINT(1 1)"), geometry("POINT(1.00001 1)"),
+				geometry("POINT(1 1.00001)"), geometry(mercator + "POINT(50000 50000)"),
+				geometry(mercator + "POINT(500000 500000)")));
+		for (IndexGeometry bound : List.of(geometry("POLYGON((-1 -1,-1 1,1 1,1 -1,-1 -1))"),
+				geometry("POINT(0.5 0.5)"))) {
+			for (boolean candidateIsSubject : new boolean[]{true, false}) {
+				List<Set<Long>> expected = disjointLookups(indexer, bound, candidateIsSubject);
+				int maxClauseCount = BooleanQuery.getMaxClauseCount();
+				BooleanQuery.setMaxClauseCount(3);
+				try {
+					assertEquals(bound.sourceGeometryLiteral().lexicalForm() + " " + candidateIsSubject, expected,
+							disjointLookups(indexer, bound, candidateIsSubject));
+				} finally {
+					BooleanQuery.setMaxClauseCount(maxClauseCount);
+				}
+			}
+		}
+	}
+
+	private static List<Set<Long>> disjointLookups(LuceneGeoIndexer indexer, IndexGeometry bound,
+			boolean candidateIsSubject) throws Exception {
+		return List.of(definite(indexer.getEnvelopeDisjointCandidates(bound, candidateIsSubject)),
+				uncertain(indexer.getEnvelopeDisjointUncertainCandidates(bound, candidateIsSubject)),
+				uncertain(indexer.getDisjointTransformCleanupCandidates(bound, candidateIsSubject)));
 	}
 
 	/**
