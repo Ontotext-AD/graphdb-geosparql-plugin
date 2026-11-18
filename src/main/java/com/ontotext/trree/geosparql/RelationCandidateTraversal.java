@@ -53,6 +53,7 @@ final class RelationCandidateTraversal implements CloseableIterator<RelationCand
 	private CloseableIterator<EnvelopeDisjointCandidate> currentDefiniteCandidates;
 	private CloseableIterator<CandidateEntity> currentExactCandidates;
 	private DisjointCandidateLookup disjointLookup;
+	private RuntimeException endingFailure;
 	private Candidate next;
 	private boolean closed;
 
@@ -83,12 +84,9 @@ final class RelationCandidateTraversal implements CloseableIterator<RelationCand
 			next = loadNextCandidate();
 			return next != null;
 		} catch (RuntimeException e) {
-			// A failure in releasing the readers is kept with the failure that ended the traversal.
-			try {
-				close();
-			} catch (RuntimeException closeFailure) {
-				e.addSuppressed(closeFailure);
-			}
+			// Every failure in releasing the readers is kept with the failure that ended the traversal.
+			endingFailure = e;
+			close();
 			throw e;
 		}
 	}
@@ -341,8 +339,14 @@ final class RelationCandidateTraversal implements CloseableIterator<RelationCand
 		}
 		try {
 			iterator.close();
-		} catch (IOException e) {
-			logger.warn("Unable to close GeoSPARQL iterator.", e);
+		} catch (IOException | RuntimeException e) {
+			if (endingFailure != null) {
+				endingFailure.addSuppressed(e);
+			} else if (e instanceof RuntimeException runtimeFailure) {
+				throw runtimeFailure;
+			} else {
+				logger.warn("Unable to close GeoSPARQL iterator.", e);
+			}
 		}
 	}
 

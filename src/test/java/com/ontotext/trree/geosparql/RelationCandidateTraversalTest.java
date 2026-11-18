@@ -7,6 +7,7 @@ import org.locationtech.jts.geom.Dimension;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Iterator;
@@ -296,19 +297,22 @@ public class RelationCandidateTraversalTest {
 
 	@Test
 	public void failureInClosingTheLookupIsKeptWithTheCandidateFailure() {
-		IndexGeometry bound = geometry("POINT(0 0)");
-		TrackingGeoSparqlIndexer indexer = new TrackingGeoSparqlIndexer();
-		indexer.envelopeFailure = new IllegalStateException("candidate failure");
-		indexer.lookupCloseFailure = new IllegalStateException("close failure");
+		for (Exception closeFailure : List.of(new IllegalStateException("close failure"),
+				new IOException("close failure"))) {
+			IndexGeometry bound = geometry("POINT(0 0)");
+			TrackingGeoSparqlIndexer indexer = new TrackingGeoSparqlIndexer();
+			indexer.envelopeFailure = new IllegalStateException("candidate failure");
+			indexer.lookupCloseFailure = closeFailure;
 
-		RelationCandidateTraversal traversal = new RelationCandidateTraversal(indexer,
-				GeoSparqlPropertyRelation.SF_DISJOINT, List.of(bound), LOG);
+			RelationCandidateTraversal traversal = new RelationCandidateTraversal(indexer,
+					GeoSparqlPropertyRelation.SF_DISJOINT, List.of(bound), LOG);
 
-		IllegalStateException failure = assertThrows(IllegalStateException.class, traversal::hasNext);
-		assertEquals("candidate failure", failure.getMessage());
-		assertEquals(List.of(indexer.lookupCloseFailure), List.of(failure.getSuppressed()));
-		assertTrue(indexer.failingEnvelopeIterator.closed);
-		assertFalse(traversal.hasNext());
+			IllegalStateException failure = assertThrows(IllegalStateException.class, traversal::hasNext);
+			assertEquals("candidate failure", failure.getMessage());
+			assertEquals(List.of(closeFailure), List.of(failure.getSuppressed()));
+			assertTrue(indexer.failingEnvelopeIterator.closed);
+			assertFalse(traversal.hasNext());
+		}
 	}
 
 	@Test
@@ -425,7 +429,7 @@ public class RelationCandidateTraversalTest {
 		private TrackingIterator<CandidateEntity> fullScanIterator;
 		private TrackingIterator<EnvelopeDisjointCandidate> lastDefiniteIterator;
 		private RuntimeException envelopeFailure;
-		private RuntimeException lookupCloseFailure;
+		private Exception lookupCloseFailure;
 		private FailingIterator<CandidateEntity> failingEnvelopeIterator;
 		private int fullScanLookupCount;
 
@@ -494,10 +498,13 @@ public class RelationCandidateTraversalTest {
 				}
 
 				@Override
-				public void close() {
+				public void close() throws IOException {
 					events.add("close:lookup");
+					if (lookupCloseFailure instanceof IOException ioFailure) {
+						throw ioFailure;
+					}
 					if (lookupCloseFailure != null) {
-						throw lookupCloseFailure;
+						throw (RuntimeException) lookupCloseFailure;
 					}
 				}
 			};
