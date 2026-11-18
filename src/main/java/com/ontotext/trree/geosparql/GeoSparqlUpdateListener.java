@@ -126,8 +126,10 @@ class GeoSparqlUpdateListener implements ParallelTransactionListener, StatementL
 				parent.indexer.indexGeometryList(value, source.subjectMapper(),
 						source.geometriesForGeometryResource(value));
 				source.forEachFeatureUsingGeometry(value, (featureId, geometries) -> {
-					parent.indexer.indexGeometryList(featureId, source.subjectMapper(), geometries);
-					processedFeatures.add(featureId);
+					// A feature that uses several changed geometries is indexed once, from all of them.
+					if (processedFeatures.add(featureId)) {
+						parent.indexer.indexGeometryList(featureId, source.subjectMapper(), geometries);
+					}
 				});
 				return true;
 			}

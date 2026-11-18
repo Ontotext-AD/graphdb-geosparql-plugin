@@ -170,11 +170,11 @@ public class RepositoryGeometrySourceTest {
 		}
 	}
 
-	private static final class FakePluginConnection implements PluginConnection {
+	static final class FakePluginConnection implements PluginConnection {
 		private final Entities entities;
 		private final Statements statements;
 
-		private FakePluginConnection(Entities entities, Statements statements) {
+		FakePluginConnection(Entities entities, Statements statements) {
 			this.entities = entities;
 			this.statements = statements;
 		}
@@ -230,10 +230,10 @@ public class RepositoryGeometrySourceTest {
 		}
 	}
 
-	private static final class FakeEntities implements Entities {
+	static final class FakeEntities implements Entities {
 		private final Map<Long, Value> values = new HashMap<>();
 
-		private void add(long id, Value value) {
+		void add(long id, Value value) {
 			values.put(id, value);
 		}
 
@@ -293,10 +293,10 @@ public class RepositoryGeometrySourceTest {
 		}
 	}
 
-	private static final class FakeStatements implements Statements {
+	static final class FakeStatements implements Statements {
 		private final List<Triple> triples = new ArrayList<>();
 
-		private void add(long subject, long predicate, long object) {
+		void add(long subject, long predicate, long object) {
 			triples.add(new Triple(subject, predicate, object));
 		}
 
