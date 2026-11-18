@@ -109,6 +109,12 @@ public class GeoSparqlRegisteredFunctionDifferentialTest extends AbstractGeoSpar
 				+ feature("crs84OverlappingCentre", "crs84OverlappingCentreGeom", "POINT(50.5 50.5)")
 				+ feature("projectedOverlappingCentre", "projectedOverlappingCentreGeom", mercatorOverlappingCentre)
 				+ feature("world", "worldGeom", "POLYGON((-180 -90,180 -90,180 90,-180 90,-180 -90))")
+				+ feature("collapsingPartLines", "collapsingPartLinesGeom",
+						"<" + EPSG_4326 + "> MULTILINESTRING((-30 -40,-30 -39),"
+								+ "(-28 -38,-28 -37.9999999))")
+				+ feature("zeroLengthPartLines", "zeroLengthPartLinesGeom",
+						"MULTILINESTRING((-40 -30,-39 -30),(-38 -28,-38 -28))")
+				+ feature("plainLine", "plainLineGeom", "LINESTRING(-40 -30,-39 -30)")
 				+ feature("beyondAntimeridian", "beyondAntimeridianGeom", "<" + MERCATOR + "> POINT(21000000 0)")
 				+ feature("infiniteRectangle", "infiniteRectangleGeom", "<" + UTM_34N
 						+ "> POLYGON((400000 6600000,1e309 6600000,1e309 6700000,400000 6700000,400000 6600000))")
@@ -282,6 +288,22 @@ public class GeoSparqlRegisteredFunctionDifferentialTest extends AbstractGeoSpar
 		for (String relation : List.of("sfDisjoint", "ehDisjoint", "rcc8dc")) {
 			assertDifferential(relation, "world", true, "beyondAntimeridian", "nearBrisbane");
 			assertDifferential(relation, "world", false, "beyondAntimeridian", "nearBrisbane");
+		}
+	}
+
+	/**
+	 * Jena rounds a geometry it transforms to the pinned precision, which can collapse a short part to one point, and
+	 * a literal can hold such a part itself. The part still widens the geometry's envelope.
+	 */
+	@Test
+	public void equalityRelationsAgreeForGeometriesWithCollapsedParts() throws Exception {
+		for (String relation : List.of("sfEquals", "ehEquals")) {
+			for (boolean boundSubject : new boolean[] { false, true }) {
+				assertDifferential(relation, "collapsingPartLines", boundSubject, "plainLine", "zeroLengthPartLines");
+				assertDifferential(relation, "zeroLengthPartLines", boundSubject, "plainLine");
+				assertDifferential(relation, "plainLine", boundSubject, "zeroLengthPartLines",
+						"collapsingPartLines");
+			}
 		}
 	}
 

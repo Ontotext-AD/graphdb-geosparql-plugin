@@ -59,6 +59,12 @@ final class LuceneGeoDocumentSchema {
 	/** Indexed marker present on exactly the spatial documents of area collections; see {@link IndexGeometry}. */
 	static final String FIELD_AREA_COLLECTION = "geoAreaCollection";
 	/**
+	 * Indexed marker present on exactly the spatial documents whose geometry, as Jena evaluates it in its own CRS, is
+	 * invalid. Equal envelopes do not show that such a geometry differs from another; see
+	 * {@link EvaluationCrsLookup#withEqualEnvelope}.
+	 */
+	static final String FIELD_INVALID_SOURCE = "geoInvalidSource";
+	/**
 	 * XY envelope of the source in its own CRS, as one point of four dimensions: minimum X, maximum X, minimum Y
 	 * and maximum Y. It serves lookup in the CRS where Jena evaluates a pair. Absent on empty sentinels.
 	 */
@@ -101,6 +107,7 @@ final class LuceneGeoDocumentSchema {
 	static final String NO_ENVELOPE_VALUE = "0";
 	static final String HAS_SOURCE_COVER_VALUE = "1";
 	static final String AREA_COLLECTION_VALUE = "1";
+	static final String INVALID_SOURCE_VALUE = "1";
 	/** Ends of the CRS84 longitude range, which name the same meridian. */
 	private static final double MINIMUM_LONGITUDE = -180.0;
 	private static final double MAXIMUM_LONGITUDE = 180.0;
@@ -117,10 +124,11 @@ final class LuceneGeoDocumentSchema {
 	 * Commit metadata value requiring source WKB, the envelope marker, indexed source CRS, each spatial source's
 	 * envelope in its own CRS, the CRS84 index envelope of each source in another CRS, cover boxes for large
 	 * sources, the area collection marker, the marker for sources parsed from their lexical form, a CRS84 index
-	 * envelope checked against Jena's transformation, and cover boxes built only from cells of normal area.
+	 * envelope checked against Jena's transformation, cover boxes built only from cells of normal area, and the
+	 * marker for invalid sources.
 	 */
 	static final String COMMIT_SCHEMA_LAYOUT_VALUE =
-			"prefix-envelope-ordinate-preserving-source-wkb-envelope-marker-topology-dv-indexed-source-crs-source-envelope-index-envelope-source-cover-area-collection-lexical-sources-jena-crs84-envelope-normal-area-cover";
+			"prefix-envelope-ordinate-preserving-source-wkb-envelope-marker-topology-dv-indexed-source-crs-source-envelope-index-envelope-source-cover-area-collection-lexical-sources-jena-crs84-envelope-normal-area-cover-invalid-source";
 	/** Commit metadata key identifying the CRS transformation inputs used for candidate envelopes. */
 	static final String COMMIT_CRS_ENVIRONMENT_FINGERPRINT_KEY = "geosparql.crsEnvironmentFingerprint";
 	static final String SCHEMA_MISMATCH_MESSAGE =
@@ -166,6 +174,9 @@ final class LuceneGeoDocumentSchema {
 			doc.add(new DoublePoint(FIELD_SOURCE_ENVELOPE, sourceEnvelope.getMinX(), sourceEnvelope.getMaxX(),
 					sourceEnvelope.getMinY(), sourceEnvelope.getMaxY()));
 			addSourceCover(doc, geometry);
+			if (!isValid(source)) {
+				doc.add(new StringField(FIELD_INVALID_SOURCE, INVALID_SOURCE_VALUE, Field.Store.NO));
+			}
 			if (geometry.isAreaCollection()) {
 				doc.add(new StringField(FIELD_AREA_COLLECTION, AREA_COLLECTION_VALUE, Field.Store.NO));
 			}
@@ -304,6 +315,18 @@ final class LuceneGeoDocumentSchema {
 
 	static Query areaCollectionQuery() {
 		return new TermQuery(new Term(FIELD_AREA_COLLECTION, AREA_COLLECTION_VALUE));
+	}
+
+	static Query invalidSourceQuery() {
+		return new TermQuery(new Term(FIELD_INVALID_SOURCE, INVALID_SOURCE_VALUE));
+	}
+
+	private static boolean isValid(SourceGeometryLiteral source) {
+		try {
+			return source.asGeometryWrapper().getXYGeometry().isValid();
+		} catch (RuntimeException e) {
+			return false;
+		}
 	}
 
 	/** Whether any document of the reader carries cover boxes. */

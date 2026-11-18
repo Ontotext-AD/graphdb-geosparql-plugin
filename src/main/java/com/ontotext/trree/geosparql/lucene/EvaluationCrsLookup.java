@@ -96,10 +96,27 @@ final class EvaluationCrsLookup {
 				.build();
 	}
 
-	/** Sources whose envelopes equal the bound's, which geometries that are equal share. */
+	/**
+	 * Sources that may equal the bound. Every corner of a valid geometry's envelope belongs to the geometry, so two
+	 * valid geometries that are equal have equal envelopes. An invalid one can have a part that Jena's equality
+	 * leaves out, such as a line whose ends coincide, though the part still widens its envelope: an invalid source,
+	 * and every source against an invalid bound, is kept wherever the envelopes meet.
+	 */
 	Query withEqualEnvelope() {
-		return inEachCrs((sourceCrsUri, bound) ->
-				LuceneGeoDocumentSchema.sourceEnvelopeEqualsQuery(bound.envelope()));
+		return inEachCrs((sourceCrsUri, bound) -> {
+			Query meeting = mayMeet(bound);
+			if (!bound.isValid()) {
+				return meeting;
+			}
+			return new BooleanQuery.Builder()
+					.add(LuceneGeoDocumentSchema.sourceEnvelopeEqualsQuery(bound.envelope()), BooleanClause.Occur.SHOULD)
+					.add(new BooleanQuery.Builder()
+							.add(meeting, BooleanClause.Occur.FILTER)
+							.add(LuceneGeoDocumentSchema.invalidSourceQuery(), BooleanClause.Occur.FILTER)
+							.build(), BooleanClause.Occur.SHOULD)
+					.setMinimumNumberShouldMatch(1)
+					.build();
+		});
 	}
 
 	/**
