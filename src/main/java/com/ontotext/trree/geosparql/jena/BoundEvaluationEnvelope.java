@@ -71,12 +71,14 @@ public final class BoundEvaluationEnvelope {
 	 * envelope lies inside that envelope then meets the bound and cannot be disjoint from it.
 	 *
 	 * <p>The proof compares the whole polygon with its envelope, and only disjoint pruning uses it, so it is made on
-	 * first use. A bound that cannot be placed again proves nothing.
+	 * first use. A bound that cannot be placed again proves nothing, and nor does one whose envelope is unbounded:
+	 * the proof would hold for its raw envelope, not for the unbounded one lookup compares.
 	 */
 	public boolean fillsEnvelope() {
 		if (fillsEnvelope == null) {
 			try {
-				fillsEnvelope = polygonPoints >= 0 && fillsEnvelope(bound().getXYGeometry());
+				fillsEnvelope = polygonPoints >= 0 && !IndexGeometry.isUnbounded(envelope)
+						&& fillsEnvelope(bound().getXYGeometry());
 			} catch (FactoryException | TransformException e) {
 				fillsEnvelope = false;
 			}

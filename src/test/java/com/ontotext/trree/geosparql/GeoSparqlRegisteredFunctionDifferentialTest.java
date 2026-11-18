@@ -95,6 +95,10 @@ public class GeoSparqlRegisteredFunctionDifferentialTest extends AbstractGeoSpar
 				+ feature("besideBrisbane", "besideBrisbaneGeom", "LINESTRING(153 -27.5,153.06 -27.5,153.06 -27.44)")
 				+ feature("utmPoint", "utmPointGeom", "<" + UTM_34N + "> POINT(500000 6700000)")
 				+ feature("utmControl", "utmControlGeom", "<" + UTM_34N + "> POINT(400000 6600000)")
+				+ feature("infiniteRectangle", "infiniteRectangleGeom", "<" + UTM_34N
+						+ "> POLYGON((400000 6600000,1e309 6600000,1e309 6700000,400000 6700000,400000 6600000))")
+				+ feature("utmInside", "utmInsideGeom", "<" + UTM_34N + "> POINT(450000 6650000)")
+				+ feature("utmWest", "utmWestGeom", "<" + UTM_34N + "> POINT(300000 6650000)")
 				+ feature("infiniteCollection", "infiniteCollectionGeom", "<" + UTM_34N
 						+ "> GEOMETRYCOLLECTION(POINT(1e309 5),POINT(500000 6700000))")
 				+ "  ex:nanCollection a geo:Feature ; geo:hasDefaultGeometry ex:nanCollectionGeom .\n"
@@ -217,6 +221,21 @@ public class GeoSparqlRegisteredFunctionDifferentialTest extends AbstractGeoSpar
 		for (boolean boundSubject : new boolean[] { false, true }) {
 			for (String relation : List.of("sfIntersects", "sfDisjoint", "ehDisjoint", "sfEquals")) {
 				assertDifferential(relation, "utmPoint", boundSubject, "nanCollection", "infiniteCollection",
+						"utmControl");
+			}
+		}
+	}
+
+	/**
+	 * A polygon with an infinite coordinate fills its raw envelope, but lookup compares the unbounded envelope that
+	 * replaces it, so filling proves nothing about which sources lie inside the bound. The disjoint relations agree
+	 * with Jena for sources inside and outside its finite corner.
+	 */
+	@Test
+	public void disjointRelationsAgreeForABoundWithAnInfiniteCoordinate() throws Exception {
+		for (boolean boundSubject : new boolean[] { false, true }) {
+			for (String relation : List.of("sfDisjoint", "ehDisjoint")) {
+				assertDifferential(relation, "infiniteRectangle", boundSubject, "utmInside", "utmWest", "utmPoint",
 						"utmControl");
 			}
 		}
