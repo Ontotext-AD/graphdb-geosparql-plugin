@@ -20,8 +20,8 @@ import static org.junit.Assert.assertTrue;
  * Compares indexed property relations with their registered filter functions over seeded random geometries that
  * stress candidate lookup: six CRSs, two- and three-dimensional, geographic and projected; points, lines, polygons,
  * multi-geometries and collections; heights and measures that are sometimes huge or infinite; collections with
- * members of different dimensions or with empty members; self-intersecting polygons; and, in projected CRSs, an
- * infinite coordinate. All lie within a few kilometres of each other near Brisbane, so many pairs meet, touch or
+ * members of different dimensions or with empty members; self-intersecting polygons; and, in projected CRSs,
+ * points and polygons with an infinite coordinate. All lie within a few kilometres of each other near Brisbane, so many pairs meet, touch or
  * nearly do. Half of the geometries are indexed when the plugin is enabled and the rest by later updates. One seed
  * compares with a Lucene clause limit low enough that the bound cannot be placed in every CRS.
  */
@@ -150,7 +150,7 @@ public class GeoSparqlRandomizedDifferentialTest extends AbstractGeoSparqlPlugin
 				LATITUDE + (random.nextDouble() * 2 - 1) * SPREAD };
 		double size = 0.0005 + random.nextDouble() * 0.01;
 		String srs = "<" + crs.uri() + "> ";
-		return srs + switch (random.nextInt(9)) {
+		return srs + switch (random.nextInt(10)) {
 			case 0 -> "POINT" + ordinates.tag() + "(" + position(crs, ordinates, random, centre[0], centre[1]) + ")";
 			case 1 -> "LINESTRING" + ordinates.tag() + "(" + positions(crs, ordinates, random,
 					centre[0], centre[1], centre[0] + size, centre[1] + size * (random.nextDouble() - 0.5),
@@ -168,6 +168,9 @@ public class GeoSparqlRandomizedDifferentialTest extends AbstractGeoSparqlPlugin
 					+ rectangle(crs, ordinates, random, new double[] { centre[0] + 2 * size, centre[1] }, size)
 					+ ")";
 			case 7 -> collection(crs, ordinates, random, centre, size);
+			case 8 -> crs.projected()
+					? "POLYGON((" + infiniteRectangle(crs, centre, size) + "))"
+					: "POLYGON" + ordinates.tag() + "(" + rectangle(crs, ordinates, random, centre, size) + ")";
 			default -> "GEOMETRYCOLLECTION" + ordinates.tag() + "(POINT" + ordinates.tag() + "("
 					+ position(crs, ordinates, random, centre[0], centre[1]) + "),POLYGON" + ordinates.tag() + "("
 					+ rectangle(crs, ordinates, random, new double[] { centre[0] + size, centre[1] }, size) + "))";
@@ -190,6 +193,14 @@ public class GeoSparqlRandomizedDifferentialTest extends AbstractGeoSparqlPlugin
 					: "GEOMETRYCOLLECTION" + ordinates.tag() + "(" + point + ",POINT" + ordinates.tag() + "("
 							+ position(crs, ordinates, random, centre[0] + size, centre[1] + size) + "))";
 		};
+	}
+
+	/** A rectangle in a projected CRS whose east side lies at infinity. */
+	private static String infiniteRectangle(Crs crs, double[] corner, double size) {
+		double[] low = xy(crs, corner[0], corner[1]);
+		double[] high = xy(crs, corner[0] + size, corner[1] + size);
+		return ordinate(low[0]) + " " + ordinate(low[1]) + ",1e309 " + ordinate(low[1]) + ",1e309 " + ordinate(high[1])
+				+ "," + ordinate(low[0]) + " " + ordinate(high[1]) + "," + ordinate(low[0]) + " " + ordinate(low[1]);
 	}
 
 	private static String rectangle(Crs crs, Ordinates ordinates, Random random, double[] corner, double size) {
