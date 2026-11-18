@@ -36,10 +36,11 @@ The first two rows compare the coordinates that Jena evaluates. Lookup there nee
 envelopes, and a disjoint relation is decided by bounding boxes for every source that is clearly apart from the bound
 geometry or clearly inside it.
 
-A geometry with many points also stores a set of smaller boxes that follow its outline, in its own CRS. In the first
-two rows, a bound geometry that falls in an empty part of such a geometry's bounding box, such as a bay, a hole or a
-corner, does not select it. Geometries with fewer points, and invalid geometries, are selected by their bounding box
-alone.
+A geometry with many points also stores a set of smaller boxes that together contain it, in its own CRS. In the
+first two rows, a bound geometry whose bounding box misses every one of those boxes does not select it. The boxes
+follow the outline only coarsely: a bound geometry in a small hole or bay can still meet a box and select the
+geometry, and a geometry whose boxes would cover most of its bounding box stores none. Geometries with fewer points,
+and invalid geometries, are selected by their bounding box alone.
 
 The last two rows rely on CRS84 index envelopes. A CRS84 index envelope of a source in another CRS is derived with
 Apache SIS and includes Jena's pinned cleanup displacement in CRS84 units. Apache SIS does not provide a universal
@@ -64,7 +65,9 @@ occurs in another CRS.
 - A bound geometry that is the subject in a projected or other non-CRS84 CRS, over data in a different CRS, uses the
   coarse case. Writing that geometry in the data's CRS or in CRS84, or using the converse relation with the stored
   geometries as the subject, avoids it. A relation and its converse are evaluated in different CRSs when the two
-  geometries differ in CRS, so their results can differ for geometries that lie on a boundary.
+  geometries differ in CRS, and Jena joins the vertices of each geometry with straight lines in the CRS of the
+  evaluation. Their results can therefore differ for geometries near a boundary, not only on it: a point just
+  outside a CRS84 polygon can lie inside the same polygon transformed into a projected CRS.
 - CRS URIs are compared as strings, as Jena compares them. Two URIs that name one CRS are different CRSs to candidate
   lookup and to exact evaluation.
 - When the stored geometries are the subject, a lookup transforms the bound geometry into each CRS that the stored
