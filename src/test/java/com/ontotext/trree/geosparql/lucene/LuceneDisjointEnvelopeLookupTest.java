@@ -481,9 +481,14 @@ public class LuceneDisjointEnvelopeLookupTest {
 		return sources;
 	}
 
+	/**
+	 * A source in another CRS than CRS84 at the centre of the given index envelope, which then stays its
+	 * stored envelope.
+	 */
 	private static IndexGeometry transformed(Envelope indexEnvelope) {
 		return IndexGeometryFixtures.withIndexEnvelope(SourceGeometryLiteral.fromWkt(
-				"<http://www.opengis.net/def/crs/EPSG/0/3857> POINT(0 0)"), indexEnvelope);
+				"<http://www.opengis.net/def/crs/EPSG/0/4326> POINT(" + indexEnvelope.centre().y + " "
+						+ indexEnvelope.centre().x + ")"), indexEnvelope);
 	}
 
 	/** A polygon that counts how often it builds its envelope as a geometry, which proving that it fills it does. */

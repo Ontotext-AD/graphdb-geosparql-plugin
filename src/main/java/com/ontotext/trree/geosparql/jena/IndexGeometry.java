@@ -96,6 +96,23 @@ public final class IndexGeometry {
 		return new Envelope(indexEnvelope);
 	}
 
+	/**
+	 * Returns the CRS84 index envelope to store for this source. Exact evaluation with a CRS84 subject has Jena
+	 * transform the source into CRS84, so the stored envelope also contains the geometry Jena produces there, and it
+	 * is the world envelope when Jena cannot transform the source. Looking up a bound uses {@link #indexEnvelope()},
+	 * which needs no such transformation.
+	 */
+	public Envelope storedIndexEnvelope() {
+		return new Envelope(storedBounds().envelope());
+	}
+
+	ProjectedCandidateBounds storedBounds() {
+		if (candidateBoundsKind != CandidateBoundsKind.TRANSFORMED) {
+			return new ProjectedCandidateBounds(indexEnvelope, candidateBoundsKind, candidateBoundsFallbackReason);
+		}
+		return ENVELOPE_PROJECTOR.widenToExactTransform(sourceGeometryLiteral, indexEnvelope);
+	}
+
 	public String indexCrs() {
 		return INDEX_CRS;
 	}

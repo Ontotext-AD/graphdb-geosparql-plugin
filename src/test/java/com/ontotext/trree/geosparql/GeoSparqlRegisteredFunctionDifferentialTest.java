@@ -29,6 +29,7 @@ public class GeoSparqlRegisteredFunctionDifferentialTest extends AbstractGeoSpar
 	private static final String UTM_33N = "http://www.opengis.net/def/crs/EPSG/0/32633";
 	private static final String EPSG_4979 = "http://www.opengis.net/def/crs/EPSG/0/4979";
 	private static final String EPSG_4326 = "http://www.opengis.net/def/crs/EPSG/0/4326";
+	private static final String EPSG_4955 = "http://www.opengis.net/def/crs/EPSG/0/4955";
 	private static final String WEB_MERCATOR = "<http://www.opengis.net/def/crs/EPSG/0/3857> ";
 	/**
 	 * Collections of area dimension, separated from {@code distantArea}. The first four hold no polygon, and the
@@ -80,6 +81,12 @@ public class GeoSparqlRegisteredFunctionDifferentialTest extends AbstractGeoSpar
 				+ feature("nearBrisbane", "nearBrisbaneGeom", "POINT(153.031 -27.47)")
 				+ feature("infiniteHeight", "infiniteHeightGeom", "<" + EPSG_4326 + "> POINT Z(-27.47 153.03 1e309)")
 				+ feature("finiteHeight", "finiteHeightGeom", "<" + EPSG_4326 + "> POINT Z(-27.47 153.03 55)")
+				+ feature("nearVancouver", "nearVancouverGeom",
+						"POLYGON((-123.002 49,-123.002 49.0005,-123.0015 49.0005,-123.002 49))")
+				+ feature("openingRing", "openingRingGeom", "<" + EPSG_4955
+						+ "> POLYGON Z((49 -123 0,49 -123.001 1,49.001 -123.001 2,49 -123 1000000))")
+				+ feature("closingRing", "closingRingGeom", "<" + EPSG_4955
+						+ "> POLYGON Z((49 -123 0,49 -123.001 1,49.001 -123.001 2,49 -123 0))")
 				+ feature("eastOfBrisbane", "eastOfBrisbaneGeom", "POINT(153.481 -27.47)")
 				+ feature("aroundBrisbane", "aroundBrisbaneGeom",
 						"POLYGON((153 -27.5,153.1 -27.5,153.1 -27.4,153 -27.4,153 -27.5))")
@@ -156,6 +163,19 @@ public class GeoSparqlRegisteredFunctionDifferentialTest extends AbstractGeoSpar
 	public void disjointRelationsAgreeForASourceJenaCannotTransform() throws Exception {
 		assertDifferential("sfDisjoint", "nearBrisbane", true, "infiniteHeight", "finiteHeight");
 		assertDifferential("ehDisjoint", "nearBrisbane", true, "infiniteHeight", "finiteHeight");
+	}
+
+	/**
+	 * A height-dependent datum shift moves the ends of a ring in EPSG:4955 apart when their heights differ, so Jena
+	 * cannot transform that ring into CRS84 although its horizontal envelope transforms, and no relation holds with
+	 * a CRS84 subject. The same ring with matching heights is disjoint from the subject.
+	 */
+	@Test
+	public void disjointRelationsAgreeForARingThatOpensWhenTransformed() throws Exception {
+		for (boolean boundSubject : new boolean[] { true, false }) {
+			assertDifferential("sfDisjoint", "nearVancouver", boundSubject, "openingRing", "closingRing");
+			assertDifferential("ehDisjoint", "nearVancouver", boundSubject, "openingRing", "closingRing");
+		}
 	}
 
 	/**

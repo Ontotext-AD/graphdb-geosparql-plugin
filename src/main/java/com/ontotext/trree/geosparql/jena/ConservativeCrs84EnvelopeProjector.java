@@ -1,14 +1,11 @@
 package com.ontotext.trree.geosparql.jena;
 
-import org.apache.jena.geosparql.implementation.DimensionInfo;
 import org.apache.jena.geosparql.implementation.GeometryWrapper;
 import org.apache.jena.geosparql.implementation.registry.SRSRegistry;
 import org.apache.sis.geometry.Envelopes;
 import org.apache.sis.geometry.GeneralEnvelope;
 import org.apache.sis.referencing.CRS;
 import org.locationtech.jts.geom.Coordinate;
-import org.locationtech.jts.geom.CoordinateSequence;
-import org.locationtech.jts.geom.CoordinateSequenceFilter;
 import org.locationtech.jts.geom.Envelope;
 import org.locationtech.spatial4j.context.SpatialContext;
 import org.locationtech.spatial4j.shape.Rectangle;
@@ -70,9 +67,9 @@ import org.opengis.util.FactoryException;
  * latitude, when that is what SIS reports through {@code getMinimum}/{@code getMaximum}. The world CRS84 envelope is
  * used only when the result still cannot be stored as one Lucene geographic rectangle: inverted lower/upper ordering,
  * non-finite ordinates, bounds outside the geographic world, missing two-dimensional horizontal CRS, or transform
- * failure. A source with a non-finite ordinate, Z and M included, also uses it: Jena rounds every ordinate of a
- * geometry it transforms and cannot evaluate such a source in another CRS, while its horizontal envelope may still
- * transform. Cleanup-displacement and unit-in-the-last-place widening do not close a geographically large miss.
+ * failure.
+ *
+ * <p>The bounds stored for a source are also checked against Jena itself; see {@link #widenToExactTransform}. Cleanup-displacement and unit-in-the-last-place widening do not close a geographically large miss.
  *
  * <p>If a future SIS implementation, EPSG dataset, datum grid, or selected coordinate operation violates the
  * assumption, candidate pruning could produce a false negative. The transformed-envelope coverage and differential
@@ -85,7 +82,7 @@ final class ConservativeCrs84EnvelopeProjector {
 	static final String FALLBACK_MISSING_HORIZONTAL_CRS = "missing-horizontal-crs";
 	static final String FALLBACK_TRANSFORM_FAILURE = "transform-failure";
 	static final String FALLBACK_UNREPRESENTABLE_RECTANGLE = "unrepresentable-rectangle";
-	static final String FALLBACK_NON_FINITE_ORDINATE = "non-finite-ordinate";
+	static final String FALLBACK_EXACT_TRANSFORM_FAILURE = "exact-transform-failure";
 
 	Envelope project(SourceGeometryLiteral source) {
 		return projectBounds(source).envelope();
@@ -101,9 +98,6 @@ final class ConservativeCrs84EnvelopeProjector {
 			return ProjectedCandidateBounds.nativeCrs84(
 					new Envelope(sourceWrapper.getXYGeometry().getEnvelopeInternal()));
 		}
-		if (hasNonFiniteOrdinate(sourceWrapper)) {
-			return ProjectedCandidateBounds.worldFallback(FALLBACK_NON_FINITE_ORDINATE);
-		}
 		try {
 			return transformSourceBounds(sourceWrapper);
 		} catch (FactoryException | TransformException | RuntimeException ignored) {
@@ -111,31 +105,36 @@ final class ConservativeCrs84EnvelopeProjector {
 		}
 	}
 
-	/** Whether an ordinate the source has, Z and M included, is infinite or NaN. */
-	private static boolean hasNonFiniteOrdinate(GeometryWrapper sourceWrapper) {
-		DimensionInfo dimensions = sourceWrapper.getDimensionInfo();
-		boolean hasZ = dimensions.getSpatial() == 3;
-		boolean hasM = dimensions.getCoordinate() > dimensions.getSpatial();
-		boolean[] nonFinite = {false};
-		sourceWrapper.getParsingGeometry().apply(new CoordinateSequenceFilter() {
-			@Override
-			public void filter(CoordinateSequence sequence, int index) {
-				nonFinite[0] = !Double.isFinite(sequence.getX(index)) || !Double.isFinite(sequence.getY(index))
-						|| hasZ && !Double.isFinite(sequence.getZ(index))
-						|| hasM && !Double.isFinite(sequence.getM(index));
-			}
-
-			@Override
-			public boolean isDone() {
-				return nonFinite[0];
-			}
-
-			@Override
-			public boolean isGeometryChanged() {
-				return false;
-			}
-		});
-		return nonFinite[0];
+	/**
+	 * Widens the transformed bounds of a source to contain the geometry Jena produces when it transforms the source
+	 * into CRS84, as exact evaluation does when a CRS84 geometry is the subject. Separated envelopes then prove a
+	 * disjoint pair from Jena's own result. When Jena cannot transform the source, exact evaluation relates it to no
+	 * CRS84 subject, and the world envelope keeps it from being classified by its envelope; so does a widened envelope
+	 * that cannot be stored.
+	 *
+	 * <p>Storing a source pays for this transformation, while looking up a bound does not need it.
+	 */
+	ProjectedCandidateBounds widenToExactTransform(SourceGeometryLiteral source, Envelope transformedBounds) {
+		JenaCalculationPrecision.configure();
+		GeometryWrapper sourceWrapper = source.asGeometryWrapper();
+		Envelope exact;
+		try {
+			// The right operand exact evaluation produces for a CRS84 left operand.
+			exact = new GeometryWrapper(IndexGeometry.INDEX_CRS, sourceWrapper.getGeometryDatatypeURI())
+					.checkTransformSRS(sourceWrapper).getXYGeometry().getEnvelopeInternal();
+		} catch (FactoryException | TransformException | RuntimeException e) {
+			return ProjectedCandidateBounds.worldFallback(FALLBACK_EXACT_TRANSFORM_FAILURE);
+		}
+		Envelope widened = new Envelope(transformedBounds);
+		widened.expandToInclude(exact);
+		Rectangle world = SpatialContext.GEO.getWorldBounds();
+		if (!Double.isFinite(widened.getMinX()) || !Double.isFinite(widened.getMaxX())
+				|| !Double.isFinite(widened.getMinY()) || !Double.isFinite(widened.getMaxY())
+				|| widened.getMinX() < world.getMinX() || widened.getMaxX() > world.getMaxX()
+				|| widened.getMinY() < world.getMinY() || widened.getMaxY() > world.getMaxY()) {
+			return ProjectedCandidateBounds.worldFallback(FALLBACK_UNREPRESENTABLE_RECTANGLE);
+		}
+		return ProjectedCandidateBounds.transformed(widened);
 	}
 
 	private static ProjectedCandidateBounds transformSourceBounds(GeometryWrapper sourceWrapper)
