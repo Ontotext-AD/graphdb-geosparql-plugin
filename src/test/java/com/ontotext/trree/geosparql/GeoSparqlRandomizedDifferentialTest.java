@@ -179,11 +179,14 @@ public class GeoSparqlRandomizedDifferentialTest extends AbstractGeoSparqlPlugin
 		}).collect(Collectors.joining("; "));
 	}
 
-	/** Whether Jena accepts the geometry as a source geometry literal, as the plugin requires to index it. */
+	/**
+	 * Whether Jena accepts the geometry as a source geometry literal, without the index's own processing: an index
+	 * that rejects such a geometry fails the test rather than excludes the geometry from it.
+	 */
 	private static boolean isValidSource(String wkt) {
 		try {
-			JenaGeometryAdapter.toIndexGeometry(JenaGeometryAdapter.toSourceGeometryLiteral(
-					VF.createLiteral(wkt, GeoConstants.GEO_WKT_LITERAL), GeoConstants.GEO_WKT_LITERAL));
+			JenaGeometryAdapter.toSourceGeometryLiteral(VF.createLiteral(wkt, GeoConstants.GEO_WKT_LITERAL),
+					GeoConstants.GEO_WKT_LITERAL).asGeometryWrapper();
 			return true;
 		} catch (JenaGeoSparqlException e) {
 			return false;
