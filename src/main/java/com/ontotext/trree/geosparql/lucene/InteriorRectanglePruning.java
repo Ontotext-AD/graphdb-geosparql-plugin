@@ -88,7 +88,9 @@ final class InteriorRectanglePruning {
 	private void certify() throws FactoryException, TransformException {
 		Deque<Cell> cells = new ArrayDeque<>();
 		cells.add(new Cell(bound.envelope(), MAX_DEPTH));
-		while (!cells.isEmpty() && remainingCells > 0 && rectangles.size() < MAX_RECTANGLES) {
+		// The rectangles become the clauses of one query, which Lucene's clause limit also bounds.
+		int maxRectangles = Math.min(MAX_RECTANGLES, BooleanQuery.getMaxClauseCount());
+		while (!cells.isEmpty() && remainingCells > 0 && rectangles.size() < maxRectangles) {
 			Cell cell = cells.remove();
 			remainingCells--;
 			Envelope envelope = cell.envelope();
