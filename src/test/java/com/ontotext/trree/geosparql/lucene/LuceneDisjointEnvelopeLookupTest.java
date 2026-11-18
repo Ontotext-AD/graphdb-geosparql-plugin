@@ -91,6 +91,37 @@ public class LuceneDisjointEnvelopeLookupTest {
 		}
 	}
 
+	/**
+	 * A bound with more points than its source keeps transformed copies of is placed again in the CRSs past that
+	 * limit, and finds the same sources there as in the CRSs whose copies are kept. The staircase line carries cover
+	 * boxes, so the lookup also needs the bound's validity in each CRS.
+	 */
+	@Test
+	public void boundPastTheKeptCopyLimitFindsTheSameSourcesInEveryCrs() throws Exception {
+		LuceneGeoIndexer indexer = createIndexer("large-bound", GeoSparqlConfig.PrefixTree.QUAD, 11);
+		String mercator = "<http://www.opengis.net/def/crs/EPSG/0/3857> ";
+		String utm32 = "<http://www.opengis.net/def/crs/EPSG/0/32632> ";
+		StringBuilder staircase = new StringBuilder("LINESTRING(30 30");
+		for (int i = 1; i < 200; i++) {
+			staircase.append(',').append(30 + (i + 1) / 2 * 0.01).append(' ').append(30 + i / 2 * 0.01);
+		}
+		// Sources 1, 3 and 5 lie at the centre of the bound in three CRSs; the others are apart from it.
+		index(indexer, List.of(
+				geometry("POINT(8 8)"), geometry("POINT(20 20)"),
+				geometry(mercator + "POINT(890556 893859)"), geometry(mercator + "POINT(2226390 2273031)"),
+				geometry(utm32 + "POINT(390000 884000)"), geometry(utm32 + "POINT(500000 2200000)"),
+				geometry(staircase.append(')').toString())));
+		IndexGeometry bound = geometry(circle(200_000));
+
+		for (boolean candidateIsSubject : new boolean[]{true, false}) {
+			assertEquals(Set.of(1L, 3L, 5L), uncertain(indexer.getEnvelopeIntersections(bound, candidateIsSubject)));
+			assertEquals(Set.of(2L, 4L, 6L, 7L),
+					definite(indexer.getEnvelopeDisjointCandidates(bound, candidateIsSubject)));
+			assertEquals(Set.of(1L, 3L, 5L),
+					uncertain(indexer.getEnvelopeDisjointUncertainCandidates(bound, candidateIsSubject)));
+		}
+	}
+
 	/** Sources 6 and later lie inside the bound with sources 1 and 3; there are enough of them to certify it. */
 	@Test
 	public void nonRectangularBoundPrunesContainedSourcesAndRetainsDisjointCandidates() throws Exception {

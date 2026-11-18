@@ -192,14 +192,15 @@ public final class IndexGeometry {
 	public Optional<BoundEvaluationEnvelope> evaluationEnvelope(String sourceCrsUri, boolean sourceIsLeftOperand) {
 		GeometryWrapper bound = sourceGeometryLiteral.asGeometryWrapper();
 		if (sourceCrsUri.equals(bound.getSrsURI())) {
-			return Optional.of(new BoundEvaluationEnvelope(bound));
+			return Optional.of(new BoundEvaluationEnvelope(sourceGeometryLiteral, sourceCrsUri, bound));
 		}
 		if (!sourceIsLeftOperand) {
 			return Optional.empty();
 		}
 		try {
 			JenaCalculationPrecision.configure();
-			return Optional.of(new BoundEvaluationEnvelope(sourceGeometryLiteral.asRightOperandIn(sourceCrsUri)));
+			return Optional.of(new BoundEvaluationEnvelope(sourceGeometryLiteral, sourceCrsUri,
+					sourceGeometryLiteral.asRightOperandIn(sourceCrsUri)));
 		} catch (Exception e) {
 			// Jena fails the same way in every exact evaluation against a source of this CRS.
 			LOGGER.debug("Relating no source of {} to a bound of {} that Jena cannot place there", sourceCrsUri,

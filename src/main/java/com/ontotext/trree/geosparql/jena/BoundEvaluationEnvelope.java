@@ -21,27 +21,51 @@ import org.opengis.util.FactoryException;
  *
  * <p>{@link #UNRELATED} describes a CRS in which Jena cannot place the bound. Every exact evaluation against a
  * source of that CRS fails, so no relation, disjoint included, holds for such a pair.
+ *
+ * <p>This keeps what it derives from the placed bound, not the placed bound itself. The bound source keeps its
+ * placement within a limit and otherwise places it again where the geometry is needed, so a lookup in many CRSs
+ * holds no more transformed copies of a large bound than its source keeps.
  */
 public final class BoundEvaluationEnvelope {
-	public static final BoundEvaluationEnvelope UNRELATED = new BoundEvaluationEnvelope(null);
+	public static final BoundEvaluationEnvelope UNRELATED = new BoundEvaluationEnvelope();
 
-	private final GeometryWrapper bound;
+	private final SourceGeometryLiteral source;
+	private final String crsUri;
+	private final Envelope envelope;
 	private final boolean fillsEnvelope;
+	/** Points of the placed bound when it is a non-empty polygon, otherwise -1. */
+	private final int polygonPoints;
 	private Boolean valid;
 
-	/** @param bound the bound as Jena evaluates it in its CRS, or null when Jena cannot place it */
-	BoundEvaluationEnvelope(GeometryWrapper bound) {
-		this.bound = bound;
-		this.fillsEnvelope = bound != null && fillsEnvelope(bound.getXYGeometry());
+	private BoundEvaluationEnvelope() {
+		this.source = null;
+		this.crsUri = null;
+		this.envelope = null;
+		this.fillsEnvelope = false;
+		this.polygonPoints = -1;
+	}
+
+	/**
+	 * @param source the bound source
+	 * @param crsUri the CRS of the sources the bound is evaluated against
+	 * @param bound the bound as Jena evaluates it in that CRS
+	 */
+	BoundEvaluationEnvelope(SourceGeometryLiteral source, String crsUri, GeometryWrapper bound) {
+		this.source = source;
+		this.crsUri = crsUri;
+		Geometry geometry = bound.getXYGeometry();
+		this.envelope = new Envelope(geometry.getEnvelopeInternal());
+		this.fillsEnvelope = fillsEnvelope(geometry);
+		this.polygonPoints = geometry instanceof Polygon && !geometry.isEmpty() ? geometry.getNumPoints() : -1;
 	}
 
 	/** Whether Jena can evaluate the bound against sources of the CRS. */
 	public boolean isRelated() {
-		return bound != null;
+		return source != null;
 	}
 
 	public Envelope envelope() {
-		return new Envelope(bound.getXYGeometry().getEnvelopeInternal());
+		return new Envelope(envelope);
 	}
 
 	/**
@@ -54,8 +78,7 @@ public final class BoundEvaluationEnvelope {
 
 	/** Whether the bound, as Jena evaluates it, is a valid polygon of at most the given number of points. */
 	public boolean isValidPolygonOfAtMost(int points) {
-		return bound.getXYGeometry() instanceof Polygon polygon && !polygon.isEmpty()
-				&& polygon.getNumPoints() <= points && isValid();
+		return polygonPoints >= 0 && polygonPoints <= points && isValid();
 	}
 
 	/**
@@ -65,8 +88,8 @@ public final class BoundEvaluationEnvelope {
 	public boolean isValid() {
 		if (valid == null) {
 			try {
-				valid = bound.getXYGeometry().isValid();
-			} catch (RuntimeException e) {
+				valid = bound().getXYGeometry().isValid();
+			} catch (FactoryException | TransformException | RuntimeException e) {
 				valid = false;
 			}
 		}
@@ -78,22 +101,27 @@ public final class BoundEvaluationEnvelope {
 	 * such a rectangle lies inside the bound and cannot be disjoint from it.
 	 */
 	public boolean covers(Envelope rectangle) throws FactoryException, TransformException {
-		return rectangle.getWidth() > 0 && rectangle.getHeight() > 0 && rectangle(rectangle).within(bound);
+		return rectangle.getWidth() > 0 && rectangle.getHeight() > 0 && rectangle(rectangle).within(bound());
 	}
 
 	/** Whether Jena finds a rectangle of the evaluation CRS disjoint from the bound. */
 	public boolean isApartFrom(Envelope rectangle) throws FactoryException, TransformException {
-		return rectangle(rectangle).disjoint(bound);
+		return rectangle(rectangle).disjoint(bound());
+	}
+
+	/** The bound as Jena evaluates it in the CRS, which its source keeps or places again. */
+	private GeometryWrapper bound() throws FactoryException, TransformException {
+		return source.asRightOperandIn(crsUri);
 	}
 
 	private GeometryWrapper rectangle(Envelope xy) {
 		// Coordinates are written in the axis order of the CRS and read back unchanged.
-		boolean axisXY = SRSRegistry.getAxisXY(bound.getSrsURI());
+		boolean axisXY = SRSRegistry.getAxisXY(crsUri);
 		String low = coordinate(xy.getMinX(), xy.getMinY(), axisXY);
 		String lowHigh = coordinate(xy.getMinX(), xy.getMaxY(), axisXY);
 		String high = coordinate(xy.getMaxX(), xy.getMaxY(), axisXY);
 		String highLow = coordinate(xy.getMaxX(), xy.getMinY(), axisXY);
-		return SourceGeometryLiteral.fromWkt("<" + bound.getSrsURI() + "> POLYGON((" + low + "," + highLow + ","
+		return SourceGeometryLiteral.fromWkt("<" + crsUri + "> POLYGON((" + low + "," + highLow + ","
 				+ high + "," + lowHigh + "," + low + "))").asGeometryWrapper();
 	}
 

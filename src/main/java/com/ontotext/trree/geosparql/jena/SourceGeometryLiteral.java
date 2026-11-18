@@ -30,12 +30,18 @@ import java.util.Objects;
  * CRS-preserving source geometry literal used for exact evaluation.
  */
 public final class SourceGeometryLiteral {
+	/**
+	 * Most coordinates that the right operands kept by one source hold together. A large source evaluated in many
+	 * CRSs keeps the operands that fit and is transformed again, as Jena does, for each evaluation in the others.
+	 */
+	static final int MAX_KEPT_RIGHT_OPERAND_COORDINATES = 250_000;
 	private final String lexicalForm;
 	private final String jenaLexicalForm;
 	private final IRI datatype;
 	private final IRI jenaDatatype;
 	private transient GeometryWrapper geometryWrapper;
 	private transient RightOperand rightOperands;
+	private transient int keptRightOperandCoordinates;
 
 	private SourceGeometryLiteral(String lexicalForm, IRI datatype, IRI jenaDatatype) {
 		this.lexicalForm = lexicalForm;
@@ -164,8 +170,8 @@ public final class SourceGeometryLiteral {
 	 *
 	 * <p>Jena evaluates a pair in the left operand's CRS. It transforms a right operand in another CRS and cleans up
 	 * its coordinates before every evaluation. This returns the operand Jena produces and keeps it per left CRS, so a
-	 * source evaluated against many left operands in one CRS is transformed once. A source in the left operand's CRS
-	 * is its own right operand.
+	 * source evaluated against many left operands in one CRS is transformed once. It keeps operands up to
+	 * {@link #MAX_KEPT_RIGHT_OPERAND_COORDINATES} in all. A source in the left operand's CRS is its own right operand.
 	 */
 	GeometryWrapper asRightOperandFor(GeometryWrapper left) throws FactoryException, TransformException {
 		return asRightOperand(left.getSrsURI(), left);
@@ -195,7 +201,11 @@ public final class SourceGeometryLiteral {
 		GeometryWrapper leftOperand = left != null
 				? left : new GeometryWrapper(leftCrsUri, source.getGeometryDatatypeURI());
 		GeometryWrapper operand = leftOperand.checkTransformSRS(source);
-		rightOperands = new RightOperand(leftCrsUri, operand, rightOperands);
+		int coordinates = operand.getXYGeometry().getNumPoints();
+		if (coordinates <= MAX_KEPT_RIGHT_OPERAND_COORDINATES - keptRightOperandCoordinates) {
+			keptRightOperandCoordinates += coordinates;
+			rightOperands = new RightOperand(leftCrsUri, operand, rightOperands);
+		}
 		return operand;
 	}
 

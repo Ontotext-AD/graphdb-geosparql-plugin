@@ -62,6 +62,29 @@ public class SourceGeometryLiteralRightOperandTest {
 	}
 
 	/**
+	 * A source keeps right operands up to a number of coordinates in all. Past that, it transforms again for each
+	 * evaluation and gives the same operand.
+	 */
+	@Test
+	public void sourceKeepsRightOperandsUpToItsCoordinateLimit() throws Exception {
+		StringBuilder line = new StringBuilder("LINESTRING(15 60.5");
+		for (int i = 1; i < 2 * SourceGeometryLiteral.MAX_KEPT_RIGHT_OPERAND_COORDINATES / 3; i++) {
+			line.append(',').append(15 + i * 0.000005).append(" 60.5");
+		}
+		SourceGeometryLiteral source = SourceGeometryLiteral.fromWkt(line.append(')').toString());
+		String mercator = "http://www.opengis.net/def/crs/EPSG/0/3857";
+		String utm33 = "http://www.opengis.net/def/crs/EPSG/0/32633";
+
+		GeometryWrapper inMercator = source.asRightOperandIn(mercator);
+		GeometryWrapper inUtm = source.asRightOperandIn(utm33);
+		GeometryWrapper inUtmAgain = source.asRightOperandIn(utm33);
+
+		assertSame(inMercator, source.asRightOperandIn(mercator));
+		assertNotSame(inUtm, inUtmAgain);
+		assertEquals(inUtm.getXYGeometry(), inUtmAgain.getXYGeometry());
+	}
+
+	/**
 	 * A right operand evaluated against many left operands gives each relation the result of a source that Jena
 	 * transforms for that evaluation alone.
 	 */
