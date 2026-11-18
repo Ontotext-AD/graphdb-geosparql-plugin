@@ -83,7 +83,12 @@ final class RelationCandidateTraversal implements CloseableIterator<RelationCand
 			next = loadNextCandidate();
 			return next != null;
 		} catch (RuntimeException e) {
-			close();
+			// A failure in releasing the readers is kept with the failure that ended the traversal.
+			try {
+				close();
+			} catch (RuntimeException closeFailure) {
+				e.addSuppressed(closeFailure);
+			}
 			throw e;
 		}
 	}
@@ -315,10 +320,11 @@ final class RelationCandidateTraversal implements CloseableIterator<RelationCand
 	}
 
 	private void finishTraversal() {
-		closeActiveIterator();
-		closeIterator(disjointLookup);
+		DisjointCandidateLookup lookup = disjointLookup;
 		disjointLookup = null;
 		phase = TraversalPhase.DONE;
+		closeActiveIterator();
+		closeIterator(lookup);
 	}
 
 	private void closeActiveIterator() {

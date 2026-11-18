@@ -443,24 +443,28 @@ public class LuceneGeoIndexer implements GeoSparqlIndexer {
 	@Override
 	public CloseableIterator<CandidateEntity> getDisjointTransformCleanupCandidates(
 			IndexGeometry boundSourceIndexGeometry, boolean candidateIsSubject) {
-		try (LuceneDisjointCandidateLookup lookup = openDisjointCandidateLookup(candidateIsSubject)) {
-			return lookup.transformCleanupCandidates(boundSourceIndexGeometry);
-		}
+		return withDisjointLookup(candidateIsSubject,
+				lookup -> lookup.transformCleanupCandidates(boundSourceIndexGeometry));
 	}
 
 	@Override
 	public CloseableIterator<CandidateEntity> getEnvelopeDisjointUncertainCandidates(
 			IndexGeometry boundSourceIndexGeometry, boolean candidateIsSubject) {
-		try (LuceneDisjointCandidateLookup lookup = openDisjointCandidateLookup(candidateIsSubject)) {
-			return lookup.uncertainCandidates(boundSourceIndexGeometry);
-		}
+		return withDisjointLookup(candidateIsSubject, lookup -> lookup.uncertainCandidates(boundSourceIndexGeometry));
 	}
 
 	@Override
 	public CloseableIterator<EnvelopeDisjointCandidate> getEnvelopeDisjointCandidates(
 			IndexGeometry boundSourceIndexGeometry, boolean candidateIsSubject) {
+		return withDisjointLookup(candidateIsSubject, lookup -> lookup.definiteMatches(boundSourceIndexGeometry));
+	}
+
+	/** Runs one lookup of its own; the iterator it returns keeps the reader open after the lookup closes. */
+	private <T> T withDisjointLookup(boolean candidateIsSubject, Function<DisjointCandidateLookup, T> lookupCall) {
 		try (LuceneDisjointCandidateLookup lookup = openDisjointCandidateLookup(candidateIsSubject)) {
-			return lookup.definiteMatches(boundSourceIndexGeometry);
+			return lookupCall.apply(lookup);
+		} catch (IOException e) {
+			throw new PluginException("Unable to close the GeoSPARQL index reader.", e);
 		}
 	}
 
@@ -540,15 +544,10 @@ public class LuceneGeoIndexer implements GeoSparqlIndexer {
 		}
 
 		@Override
-		public void close() {
-			if (closed) {
-				return;
-			}
-			closed = true;
-			try {
+		public void close() throws IOException {
+			if (!closed) {
+				closed = true;
 				reader.decRef();
-			} catch (IOException e) {
-				throw new PluginException("Unable to close the GeoSPARQL index reader.", e);
 			}
 		}
 	}

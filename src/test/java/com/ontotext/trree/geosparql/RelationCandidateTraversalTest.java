@@ -295,6 +295,23 @@ public class RelationCandidateTraversalTest {
 	}
 
 	@Test
+	public void failureInClosingTheLookupIsKeptWithTheCandidateFailure() {
+		IndexGeometry bound = geometry("POINT(0 0)");
+		TrackingGeoSparqlIndexer indexer = new TrackingGeoSparqlIndexer();
+		indexer.envelopeFailure = new IllegalStateException("candidate failure");
+		indexer.lookupCloseFailure = new IllegalStateException("close failure");
+
+		RelationCandidateTraversal traversal = new RelationCandidateTraversal(indexer,
+				GeoSparqlPropertyRelation.SF_DISJOINT, List.of(bound), LOG);
+
+		IllegalStateException failure = assertThrows(IllegalStateException.class, traversal::hasNext);
+		assertEquals("candidate failure", failure.getMessage());
+		assertEquals(List.of(indexer.lookupCloseFailure), List.of(failure.getSuppressed()));
+		assertTrue(indexer.failingEnvelopeIterator.closed);
+		assertFalse(traversal.hasNext());
+	}
+
+	@Test
 	public void fullScanOpensOnceAndClosesItsReaderOnExhaustion() {
 		IndexGeometry emptyBound = geometry("GEOMETRYCOLLECTION EMPTY");
 		TrackingGeoSparqlIndexer indexer = new TrackingGeoSparqlIndexer();
@@ -408,6 +425,7 @@ public class RelationCandidateTraversalTest {
 		private TrackingIterator<CandidateEntity> fullScanIterator;
 		private TrackingIterator<EnvelopeDisjointCandidate> lastDefiniteIterator;
 		private RuntimeException envelopeFailure;
+		private RuntimeException lookupCloseFailure;
 		private FailingIterator<CandidateEntity> failingEnvelopeIterator;
 		private int fullScanLookupCount;
 
@@ -478,6 +496,9 @@ public class RelationCandidateTraversalTest {
 				@Override
 				public void close() {
 					events.add("close:lookup");
+					if (lookupCloseFailure != null) {
+						throw lookupCloseFailure;
+					}
 				}
 			};
 		}
