@@ -28,8 +28,8 @@ import java.util.List;
  * <p>The number of boxes follows the size of the geometry, because a box is worth storing for the cost of loading
  * and evaluating the geometry it spares. A geometry too small for enough boxes to follow its outline gets none and
  * is described by its envelope, as is a geometry that is invalid, since the ways Jena decides inside and outside
- * can disagree on one. A cell is quartered only into cells of {@link IndexGeometry#hasNormalArea normal area}, so a
- * geometry too small for that gets no boxes.
+ * can disagree on one. A geometry whose envelope lacks a {@link IndexGeometry#hasNormalArea normal area} gets no
+ * boxes either, and a cell is quartered only into cells of normal area.
  */
 final class SourceCoverBoxes {
 	private static final int MIN_POINTS = 128;
@@ -49,7 +49,7 @@ final class SourceCoverBoxes {
 	static List<Envelope> of(Geometry geometry) {
 		int points = geometry.getNumPoints();
 		Envelope envelope = geometry.getEnvelopeInternal();
-		if (points < MIN_POINTS || !(envelope.getWidth() > 0 && envelope.getHeight() > 0) || !geometry.isValid()) {
+		if (points < MIN_POINTS || !IndexGeometry.hasNormalArea(envelope) || !geometry.isValid()) {
 			return List.of();
 		}
 		int budget = Math.min(MAX_BOXES, points / POINTS_PER_BOX);

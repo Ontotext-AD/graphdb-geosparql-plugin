@@ -111,14 +111,17 @@ public class SourceCoverBoxesTest {
 	 */
 	@Test
 	public void geometryWithCoordinatesNearTheUnderflowLimitHasNoBoxes() throws Exception {
-		Geometry stairs = read(STAIRS);
-		stairs.apply((CoordinateFilter) coordinate -> {
-			coordinate.x = Math.scalb(coordinate.x, -540);
-			coordinate.y = Math.scalb(coordinate.y, -540);
-		});
-		stairs.geometryChanged();
+		assertEquals(List.of(), SourceCoverBoxes.of(scaled(read(STAIRS), -540)));
+	}
 
-		assertEquals(List.of(), SourceCoverBoxes.of(stairs));
+	/** The geometry scaled by a power of two, so that its shape is exact. */
+	private static Geometry scaled(Geometry geometry, int exponent) {
+		geometry.apply((CoordinateFilter) coordinate -> {
+			coordinate.x = Math.scalb(coordinate.x, exponent);
+			coordinate.y = Math.scalb(coordinate.y, exponent);
+		});
+		geometry.geometryChanged();
+		return geometry;
 	}
 
 	/** The checks Jena uses to tell inside from outside can disagree on an invalid geometry. */

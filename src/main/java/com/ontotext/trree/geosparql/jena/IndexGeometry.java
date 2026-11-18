@@ -223,13 +223,16 @@ public final class IndexGeometry {
 	}
 
 	/**
-	 * Whether the envelope's area is a normal double. JTS decides topology from products of coordinate
-	 * differences, and once those products underflow, as they do for coordinates near 10⁻¹⁶², it can find a
-	 * rectangle within a polygon that reaches outside it, or no point of a line in a rectangle that holds one. A
-	 * rectangle or envelope is used as a proof only when its area is normal.
+	 * Whether the envelope's area is a normal double: finite, and not so small that it underflows. JTS decides
+	 * topology from products of coordinate differences, which the area of an envelope bounds for the geometries
+	 * inside it. Once those products underflow, as they do for coordinates near 10⁻¹⁶², it can find a rectangle
+	 * within a polygon that reaches outside it, or no point of a line in a rectangle that holds one, and they can
+	 * overflow likewise. A rectangle or envelope is used as a proof only when its area is normal, and a geometry is
+	 * split into such rectangles only when its own envelope's area is.
 	 */
 	public static boolean hasNormalArea(Envelope envelope) {
-		return envelope.getWidth() * envelope.getHeight() >= Double.MIN_NORMAL;
+		double area = envelope.getWidth() * envelope.getHeight();
+		return Double.isFinite(area) && area >= Double.MIN_NORMAL;
 	}
 
 	/**

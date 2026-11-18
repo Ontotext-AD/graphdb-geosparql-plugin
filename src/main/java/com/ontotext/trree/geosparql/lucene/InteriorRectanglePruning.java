@@ -1,6 +1,7 @@
 package com.ontotext.trree.geosparql.lucene;
 
 import com.ontotext.trree.geosparql.jena.BoundEvaluationEnvelope;
+import com.ontotext.trree.geosparql.jena.IndexGeometry;
 import org.apache.lucene.search.BooleanClause;
 import org.apache.lucene.search.BooleanQuery;
 import org.apache.lucene.search.IndexSearcher;
@@ -65,7 +66,7 @@ final class InteriorRectanglePruning {
 	 */
 	static Query prune(BoundEvaluationEnvelope bound, Query meeting, Query sourceCrs, IndexSearcher searcher) {
 		try {
-			if (!bound.isValidPolygonOfAtMost(MAX_BOUND_POINTS)) {
+			if (!bound.isValidPolygonOfAtMost(MAX_BOUND_POINTS) || !IndexGeometry.hasNormalArea(bound.envelope())) {
 				return meeting;
 			}
 			Query eligible = new BooleanQuery.Builder()
