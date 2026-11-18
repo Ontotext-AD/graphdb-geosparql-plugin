@@ -67,11 +67,13 @@ occurs in another CRS.
   geometries differ in CRS, so their results can differ for geometries that lie on a boundary.
 - CRS URIs are compared as strings, as Jena compares them. Two URIs that name one CRS are different CRSs to candidate
   lookup and to exact evaluation.
-- A lookup transforms the bound geometry into every CRS that the stored data uses, so its cost grows with the
-  number of CRSs in the repository and with the size of the bound geometry. The bound geometry keeps these copies
-  for the rest of the query, up to 250,000 coordinates in all, with each geometry part counting as four. A copy
-  past that limit is made again by each lookup that needs it, including each phase of a disjoint query, and by
-  each exact evaluation in that CRS.
+- When the stored geometries are the subject, a lookup transforms the bound geometry into each CRS that the stored
+  data uses, as many as Lucene's clause limit allows, so its cost grows with the number of CRSs in the repository
+  and with the size of the bound geometry. A bound geometry that is the subject stays in its own CRS. The phases of
+  a disjoint query share one lookup. The bound geometry keeps its transformed copies for the rest of the query, up
+  to 250,000 coordinates in all, with each geometry part counting as four and a copy in a latitude-first CRS
+  counting twice, because Jena holds it in both axis orders. A copy past that limit is made again by each exact
+  evaluation in that CRS.
 - GeoSPARQL filter functions such as `geof:sfWithin` evaluate every pair they are given and do not use the index. A
   property relation with one side bound is the indexed form.
 
