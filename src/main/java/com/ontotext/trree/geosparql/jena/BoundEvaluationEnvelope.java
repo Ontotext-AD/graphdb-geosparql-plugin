@@ -74,13 +74,14 @@ public final class BoundEvaluationEnvelope {
 	 * first use. A bound that cannot be placed again proves nothing, and nor does one whose envelope is unbounded:
 	 * the proof would hold for its raw envelope, not for the unbounded one lookup compares. An invalid bound proves
 	 * nothing either: JTS may find that a self-overlapping ring fills its envelope while Jena finds a point inside
-	 * that envelope disjoint from it.
+	 * that envelope disjoint from it. Nor does a bound whose envelope lacks a
+	 * {@link IndexGeometry#hasNormalArea normal area}.
 	 */
 	public boolean fillsEnvelope() {
 		if (fillsEnvelope == null) {
 			try {
-				fillsEnvelope = polygonPoints >= 0 && !IndexGeometry.isUnbounded(envelope) && isValid()
-						&& fillsEnvelope(bound().getXYGeometry());
+				fillsEnvelope = polygonPoints >= 0 && !IndexGeometry.isUnbounded(envelope)
+						&& IndexGeometry.hasNormalArea(envelope) && isValid() && fillsEnvelope(bound().getXYGeometry());
 			} catch (FactoryException | TransformException e) {
 				fillsEnvelope = false;
 			}
@@ -110,10 +111,11 @@ public final class BoundEvaluationEnvelope {
 
 	/**
 	 * Whether Jena finds a rectangle of the evaluation CRS within the bound. A source whose envelope lies inside
-	 * such a rectangle lies inside the bound and cannot be disjoint from it.
+	 * such a rectangle lies inside the bound and cannot be disjoint from it. A rectangle without a
+	 * {@link IndexGeometry#hasNormalArea normal area} is never found within it.
 	 */
 	public boolean covers(Envelope rectangle) throws FactoryException, TransformException {
-		return rectangle.getWidth() > 0 && rectangle.getHeight() > 0 && rectangle(rectangle).within(bound());
+		return IndexGeometry.hasNormalArea(rectangle) && rectangle(rectangle).within(bound());
 	}
 
 	/** Whether Jena finds a rectangle of the evaluation CRS disjoint from the bound. */

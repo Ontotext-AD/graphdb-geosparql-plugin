@@ -1,5 +1,6 @@
 package com.ontotext.trree.geosparql.lucene;
 
+import com.ontotext.trree.geosparql.jena.IndexGeometry;
 import org.locationtech.jts.geom.Envelope;
 import org.locationtech.jts.geom.Geometry;
 import org.locationtech.jts.geom.GeometryFactory;
@@ -27,7 +28,8 @@ import java.util.List;
  * <p>The number of boxes follows the size of the geometry, because a box is worth storing for the cost of loading
  * and evaluating the geometry it spares. A geometry too small for enough boxes to follow its outline gets none and
  * is described by its envelope, as is a geometry that is invalid, since the ways Jena decides inside and outside
- * can disagree on one.
+ * can disagree on one. A cell is quartered only into cells of {@link IndexGeometry#hasNormalArea normal area}, so a
+ * geometry too small for that gets no boxes.
  */
 final class SourceCoverBoxes {
 	private static final int MIN_POINTS = 128;
@@ -63,18 +65,20 @@ final class SourceCoverBoxes {
 			Envelope whole = cell.envelope();
 			double midX = whole.getMinX() + whole.getWidth() / 2;
 			double midY = whole.getMinY() + whole.getHeight() / 2;
+			List<Envelope> quarters = List.of(
+					new Envelope(whole.getMinX(), midX, whole.getMinY(), midY),
+					new Envelope(midX, whole.getMaxX(), whole.getMinY(), midY),
+					new Envelope(whole.getMinX(), midX, midY, whole.getMaxY()),
+					new Envelope(midX, whole.getMaxX(), midY, whole.getMaxY()));
 			boolean quartered = cell.depth() > 0 && boxes.size() + open.size() + 4 <= budget
 					&& whole.getMinX() < midX && midX < whole.getMaxX()
-					&& whole.getMinY() < midY && midY < whole.getMaxY();
+					&& whole.getMinY() < midY && midY < whole.getMaxY()
+					&& quarters.stream().allMatch(IndexGeometry::hasNormalArea);
 			if (!quartered) {
 				boxes.add(whole);
 				continue;
 			}
-			for (Envelope quarter : List.of(
-					new Envelope(whole.getMinX(), midX, whole.getMinY(), midY),
-					new Envelope(midX, whole.getMaxX(), whole.getMinY(), midY),
-					new Envelope(whole.getMinX(), midX, midY, whole.getMaxY()),
-					new Envelope(midX, whole.getMaxX(), midY, whole.getMaxY()))) {
+			for (Envelope quarter : quarters) {
 				Geometry rectangle = factory.toGeometry(quarter);
 				if (!prepared.evaluate(rectangle, RelatePredicate.intersects())) {
 					continue;

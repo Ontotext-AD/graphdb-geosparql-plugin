@@ -2,6 +2,7 @@ package com.ontotext.trree.geosparql.lucene;
 
 import org.junit.Test;
 import org.locationtech.jts.geom.Coordinate;
+import org.locationtech.jts.geom.CoordinateFilter;
 import org.locationtech.jts.geom.Envelope;
 import org.locationtech.jts.geom.Geometry;
 import org.locationtech.jts.geom.GeometryFactory;
@@ -102,6 +103,22 @@ public class SourceCoverBoxesTest {
 
 		assertEquals(List.of(), SourceCoverBoxes.of(read(square.toString())));
 		assertEquals(List.of(), SourceCoverBoxes.of(read(flat.toString())));
+	}
+
+	/**
+	 * JTS cannot tell which cells of a line hold its points once products of its coordinate differences underflow.
+	 * The line is the stairs scaled by a power of two, so that its shape is exact.
+	 */
+	@Test
+	public void geometryWithCoordinatesNearTheUnderflowLimitHasNoBoxes() throws Exception {
+		Geometry stairs = read(STAIRS);
+		stairs.apply((CoordinateFilter) coordinate -> {
+			coordinate.x = Math.scalb(coordinate.x, -540);
+			coordinate.y = Math.scalb(coordinate.y, -540);
+		});
+		stairs.geometryChanged();
+
+		assertEquals(List.of(), SourceCoverBoxes.of(stairs));
 	}
 
 	/** The checks Jena uses to tell inside from outside can disagree on an invalid geometry. */

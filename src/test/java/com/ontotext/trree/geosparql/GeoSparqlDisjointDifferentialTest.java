@@ -101,6 +101,52 @@ public class GeoSparqlDisjointDifferentialTest {
 		}
 	}
 
+	/**
+	 * At coordinates near 10⁻¹⁶², products of coordinate differences underflow and JTS can certify a rectangle
+	 * within a polygon that reaches outside it, or find that a polygon fills its envelope when it does not. Each
+	 * bound is scaled by a power of two so that its shape is exact. The L-shaped bound is the one of the shape test
+	 * above; its sources are a grid over the quarter of its envelope that holds its corner, mostly inside the bound
+	 * so that interior pruning runs, and a ninth of the grid lies in the missing corner. The second bound does not
+	 * fill its envelope, and its sources are a grid over that envelope.
+	 */
+	@Test
+	public void disjointLookupMatchesExhaustiveEvaluationAtUnderflowingScale() throws Exception {
+		assertMatchesExhaustiveEvaluationAtUnderflowingScale("underflowing-l-shape",
+				new int[] { 0, 0, 6, 0, 6, 2, 2, 2, 2, 6, 0, 6, 0, 0 }, new Envelope(0, 3, 0, 3));
+		assertMatchesExhaustiveEvaluationAtUnderflowingScale("underflowing-hexagon",
+				new int[] { 9, 13, 1, 10, 0, 6, 3, 4, 8, 7, 11, 5, 9, 13 }, new Envelope(0, 11, 4, 13));
+	}
+
+	private void assertMatchesExhaustiveEvaluationAtUnderflowingScale(String name, int[] boundCoordinates,
+			Envelope grid) throws Exception {
+		int exponent = -540;
+		StringBuilder ring = new StringBuilder();
+		for (int i = 0; i < boundCoordinates.length; i += 2) {
+			ring.append(i == 0 ? "" : ",").append(scaled(boundCoordinates[i], boundCoordinates[i + 1], exponent));
+		}
+		Map<Long, List<IndexGeometry>> sources = new HashMap<>();
+		sources.put(BOUND, geometries("POLYGON((" + ring + "))"));
+		long id = BOUND + 1;
+		for (int x = 0; x <= 12; x++) {
+			for (int y = 0; y <= 12; y++) {
+				sources.put(id++, geometries("POINT(" + scaled(grid.getMinX() + grid.getWidth() * x / 12,
+						grid.getMinY() + grid.getHeight() * y / 12, exponent) + ")"));
+			}
+		}
+		Fixture fixture = createFixture(name, sources);
+		for (GeoSparqlPropertyRelation relation : List.of(GeoSparqlPropertyRelation.SF_DISJOINT,
+				GeoSparqlPropertyRelation.EH_DISJOINT, GeoSparqlPropertyRelation.RCC8_DC)) {
+			assertEquals(name + " " + relation + " object-bound",
+					runReference(fixture, relation, 0, BOUND), runPartitioned(fixture, relation, 0, BOUND));
+			assertEquals(name + " " + relation + " subject-bound",
+					runReference(fixture, relation, BOUND, 0), runPartitioned(fixture, relation, BOUND, 0));
+		}
+	}
+
+	private static String scaled(double x, double y, int exponent) {
+		return Math.scalb(x, exponent) + " " + Math.scalb(y, exponent);
+	}
+
 	@Test
 	public void interiorPruningIsLocalToEachBoundAndEachCandidateSource() throws Exception {
 		Map<Long, List<IndexGeometry>> sources = new HashMap<>();

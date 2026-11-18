@@ -137,7 +137,8 @@ public final class IndexGeometry {
 	 *
 	 * <p>This deliberately excludes transformed sources, holes, rotated polygons, and collections. An invalid polygon
 	 * is excluded because JTS may find that a self-overlapping ring fills its envelope while Jena finds a point inside
-	 * that envelope disjoint from it. For an eligible
+	 * that envelope disjoint from it, and so is a polygon whose envelope lacks a {@link #hasNormalArea normal area}.
+	 * For an eligible
 	 * native CRS84 bound, containment of another source's index envelope proves that the two sources cannot be
 	 * disjoint, on the conservative-envelope engineering assumption documented by
 	 * {@link ConservativeCrs84EnvelopeProjector} when that other envelope is SIS-transformed.
@@ -147,7 +148,8 @@ public final class IndexGeometry {
 		Geometry sourceGeometry = sourceWrapper.getXYGeometry();
 		if (!INDEX_CRS.equals(sourceWrapper.getSrsURI())
 				|| sourceGeometry.isEmpty()
-				|| !(sourceGeometry instanceof Polygon)) {
+				|| !(sourceGeometry instanceof Polygon)
+				|| !hasNormalArea(sourceGeometry.getEnvelopeInternal())) {
 			return false;
 		}
 		try {
@@ -210,6 +212,16 @@ public final class IndexGeometry {
 	/** Whether the envelope is the {@link #unboundedEnvelope}. */
 	public static boolean isUnbounded(Envelope envelope) {
 		return unboundedEnvelope().equals(envelope);
+	}
+
+	/**
+	 * Whether the envelope's area is a normal double. JTS decides topology from products of coordinate
+	 * differences, and once those products underflow, as they do for coordinates near 10⁻¹⁶², it can find a
+	 * rectangle within a polygon that reaches outside it, or no point of a line in a rectangle that holds one. A
+	 * rectangle or envelope is used as a proof only when its area is normal.
+	 */
+	public static boolean hasNormalArea(Envelope envelope) {
+		return envelope.getWidth() * envelope.getHeight() >= Double.MIN_NORMAL;
 	}
 
 	/**

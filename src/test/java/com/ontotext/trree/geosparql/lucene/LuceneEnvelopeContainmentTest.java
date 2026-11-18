@@ -125,6 +125,11 @@ public class LuceneEnvelopeContainmentTest {
 		IndexGeometry invalidPolygon = geometry("POLYGON((0 0,10 10,0 10,10 0,0 0))");
 		IndexGeometry selfOverlapping = geometry(
 				"POLYGON((0 0,10 0,10 10,0 10,0 0,10 0,10 10,0 10,0 0))");
+		// JTS finds that this polygon fills its envelope once products of its coordinate differences underflow.
+		double unit = Math.scalb(1.0, -540);
+		IndexGeometry underflowing = geometry("POLYGON((" + 9 * unit + " " + 13 * unit + "," + unit + " "
+				+ 10 * unit + ",0 " + 6 * unit + "," + 3 * unit + " " + 4 * unit + "," + 8 * unit + " " + 7 * unit
+				+ "," + 11 * unit + " " + 5 * unit + "," + 9 * unit + " " + 13 * unit + "))");
 		IndexGeometry empty = geometry("POLYGON EMPTY");
 
 		assertTrue(rectangle.isEnvelopeCoveringRectangle());
@@ -134,6 +139,7 @@ public class LuceneEnvelopeContainmentTest {
 		assertFalse(projectedRectangle.isEnvelopeCoveringRectangle());
 		assertFalse(invalidPolygon.isEnvelopeCoveringRectangle());
 		assertFalse(selfOverlapping.isEnvelopeCoveringRectangle());
+		assertFalse(underflowing.isEnvelopeCoveringRectangle());
 		assertFalse(empty.isEnvelopeCoveringRectangle());
 		assertTrue(GeoSparqlPropertyRelation.SF_DISJOINT.evaluate(
 				pointInHole.sourceGeometryLiteral(), boundWithHole.sourceGeometryLiteral()));
