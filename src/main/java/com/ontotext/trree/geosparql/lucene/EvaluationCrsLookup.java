@@ -97,10 +97,11 @@ final class EvaluationCrsLookup {
 	}
 
 	/**
-	 * Sources that may equal the bound. Every corner of a valid geometry's envelope belongs to the geometry, so two
-	 * valid geometries that are equal have equal envelopes. An invalid one can have a part that Jena's equality
-	 * leaves out, such as a line whose ends coincide, though the part still widens its envelope: an invalid source,
-	 * and every source against an invalid bound, is kept wherever the envelopes meet.
+	 * Sources that may equal the bound. Equal point sets have the same least and greatest X and Y, and the envelope
+	 * of a valid geometry is exactly those of its points, so two valid geometries that are equal have equal
+	 * envelopes. An invalid one can have a part that Jena's equality leaves out, such as a line whose ends coincide,
+	 * though the part still widens its envelope: an invalid source, and every source against an invalid bound, is
+	 * kept wherever the envelopes meet.
 	 */
 	Query withEqualEnvelope() {
 		return inEachCrs((sourceCrsUri, bound) -> {
