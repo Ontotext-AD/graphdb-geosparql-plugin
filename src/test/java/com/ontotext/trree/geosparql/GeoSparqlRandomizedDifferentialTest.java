@@ -1,5 +1,8 @@
 package com.ontotext.trree.geosparql;
 
+import com.ontotext.trree.geosparql.jena.JenaGeoSparqlException;
+import com.ontotext.trree.geosparql.jena.JenaGeometryAdapter;
+import com.ontotext.trree.geosparql.vocabulary.GeoConstants;
 import org.apache.lucene.search.BooleanQuery;
 import org.eclipse.rdf4j.model.Value;
 import org.junit.Test;
@@ -88,14 +91,29 @@ public class GeoSparqlRandomizedDifferentialTest extends AbstractGeoSparqlPlugin
 			}
 			String name = "f" + i;
 			String wkt = randomGeometry(random);
+			boolean valid = isValidSource(wkt);
+			// The plugin indexes nothing before it is enabled, and an invalid geometry would then fail enabling it.
+			if (!valid && i < FEATURES / 2) {
+				rejected.add(name + " " + wkt);
+				continue;
+			}
+			// An enabled plugin rejects an insert exactly when Jena rejects its geometry; any other failure is a fault.
 			try {
 				executeSparqlUpdateQuery(PREFIXES + "INSERT DATA {\n"
 						+ "  ex:" + name + " a geo:Feature ; geo:hasDefaultGeometry ex:" + name + "Geom .\n"
 						+ "  ex:" + name + "Geom a geo:Geometry ; geo:asWKT \"" + wkt + "\"^^geo:wktLiteral .\n}");
-				features.put(name, wkt);
 			} catch (Exception e) {
+				if (valid) {
+					throw new AssertionError("insert of a valid geometry failed: " + wkt, e);
+				}
+				if (!rejectedByJena(e)) {
+					throw new AssertionError("insert of an invalid geometry failed for another reason: " + wkt, e);
+				}
 				rejected.add(name + " " + wkt);
+				continue;
 			}
+			assertTrue("insert of an invalid geometry succeeded: " + wkt, valid);
+			features.put(name, wkt);
 		}
 		assertTrue("too few geometries accepted: " + rejected, features.size() >= FEATURES * 3 / 4);
 		for (Map.Entry<String, String> bound : new TreeMap<>(FIXED_BOUNDS).entrySet()) {
@@ -159,6 +177,26 @@ public class GeoSparqlRandomizedDifferentialTest extends AbstractGeoSparqlPlugin
 			String name = value.stringValue().substring(NAMESPACE.length());
 			return name + " " + features.get(name);
 		}).collect(Collectors.joining("; "));
+	}
+
+	/** Whether Jena accepts the geometry as a source geometry literal, as the plugin requires to index it. */
+	private static boolean isValidSource(String wkt) {
+		try {
+			JenaGeometryAdapter.toIndexGeometry(JenaGeometryAdapter.toSourceGeometryLiteral(
+					VF.createLiteral(wkt, GeoConstants.GEO_WKT_LITERAL), GeoConstants.GEO_WKT_LITERAL));
+			return true;
+		} catch (JenaGeoSparqlException e) {
+			return false;
+		}
+	}
+
+	private static boolean rejectedByJena(Throwable failure) {
+		for (Throwable cause = failure; cause != null; cause = cause.getCause()) {
+			if (cause instanceof JenaGeoSparqlException) {
+				return true;
+			}
+		}
+		return false;
 	}
 
 	private Set<Value> query(String query) throws Exception {
