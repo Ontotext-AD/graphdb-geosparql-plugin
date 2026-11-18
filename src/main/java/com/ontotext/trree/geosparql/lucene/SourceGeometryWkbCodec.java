@@ -64,8 +64,13 @@ final class SourceGeometryWkbCodec {
 		} catch (RuntimeException e) {
 			return false;
 		}
-		return sameGeometry(parsed.getParsingGeometry(), stored.getParsingGeometry())
-				&& sameGeometry(parsed.getXYGeometry(), stored.getXYGeometry());
+		if (!sameGeometry(parsed.getParsingGeometry(), stored.getParsingGeometry())) {
+			return false;
+		}
+		// In a CRS with east-north axes, Jena holds one geometry as both.
+		return parsed.getXYGeometry() == parsed.getParsingGeometry()
+				&& stored.getXYGeometry() == stored.getParsingGeometry()
+				|| sameGeometry(parsed.getXYGeometry(), stored.getXYGeometry());
 	}
 
 	private static boolean sameGeometry(Geometry expected, Geometry actual) {
@@ -135,10 +140,11 @@ final class SourceGeometryWkbCodec {
 	}
 
 	private static Geometry xyGeometryPreservingOrdinates(GeometryWrapper wrapper) {
-		Geometry geometry = wrapper.getParsingGeometry().copy();
 		if (SRSRegistry.getAxisXY(wrapper.getSrsURI())) {
-			return geometry;
+			// Encoding reads the geometry and leaves it unchanged.
+			return wrapper.getParsingGeometry();
 		}
+		Geometry geometry = wrapper.getParsingGeometry().copy();
 		geometry.apply(new CoordinateSequenceFilter() {
 			@Override
 			public void filter(CoordinateSequence sequence, int index) {
