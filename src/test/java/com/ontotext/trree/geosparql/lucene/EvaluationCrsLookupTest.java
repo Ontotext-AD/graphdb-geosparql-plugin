@@ -142,6 +142,52 @@ public class EvaluationCrsLookupTest {
     }
 
     /**
+     * An infinite coordinate leaves a source's own envelope with a non-finite bound, which shows nothing about where
+     * the source lies. The source stays a candidate wherever the bound may meet it and is never proved disjoint, and a
+     * bound with such an envelope proves no source of its CRS disjoint.
+     */
+    @Test
+    public void nonFiniteEnvelopesDecideNothing() throws Exception {
+        String utm34 = "<http://www.opengis.net/def/crs/EPSG/0/32634> ";
+        LuceneGeoIndexer indexer = createIndexer("non-finite-envelopes");
+        index(indexer, List.of(geometry(utm34 + "GEOMETRYCOLLECTION(POINT(1e309 5),POINT(500000 6700000))"),
+                geometry(utm34 + "POINT(400000 6600000)")));
+        IndexGeometry point = geometry(utm34 + "POINT(500000 6700000)");
+        IndexGeometry unbounded = geometry(utm34 + "GEOMETRYCOLLECTION(POINT(1e309 5),POINT(450000 6650000))");
+
+        for (boolean candidateIsSubject : new boolean[]{true, false}) {
+            assertEquals(Set.of(1L), ids(indexer.getEnvelopeIntersections(point, candidateIsSubject)));
+            assertEquals(Set.of(1L), ids(indexer.getEnvelopeEqualityCandidates(point, candidateIsSubject)));
+            assertEquals(Set.of(2L), definite(indexer.getEnvelopeDisjointCandidates(point, candidateIsSubject)));
+            assertEquals(Set.of(1L, 2L), ids(indexer.getEnvelopeIntersections(unbounded, candidateIsSubject)));
+            assertEquals(Set.of(1L, 2L), ids(indexer.getEnvelopeEqualityCandidates(unbounded, candidateIsSubject)));
+            assertEquals(Set.of(), definite(indexer.getEnvelopeDisjointCandidates(unbounded, candidateIsSubject)));
+        }
+    }
+
+    /**
+     * Sources in twenty CRSs besides CRS84. Sources 1 to 4 lie inside the bound and beside it in EPSG:4326 and
+     * EPSG:3857; the others lie inside it, one in each of eighteen UTM CRSs. The ids of the sources inside the
+     * bound are added to the given set.
+     */
+    private static List<IndexGeometry> sourcesInManyCrss(Set<Long> inside) {
+        List<IndexGeometry> sources = new ArrayList<>();
+        for (String crs : List.of(EPSG_4326, MERCATOR)) {
+            sources.add(geometry(literal(crs, "POINT(15.5 60.5)")));
+            inside.add((long) sources.size());
+            sources.add(geometry(literal(crs, "POINT(16.01 60.5)")));
+        }
+        for (int zone = 29; zone <= 37; zone++) {
+            for (int hemisphere : new int[]{32600, 32700}) {
+                String utm = "http://www.opengis.net/def/crs/EPSG/0/" + (hemisphere + zone);
+                sources.add(geometry(literal(utm, "POINT(15.5 60.5)")));
+                inside.add((long) sources.size());
+            }
+        }
+        return sources;
+    }
+
+    /**
      * In UTM the CRS84 bound is a quadrilateral that does not fill its envelope. Sources 1 to 3 lie inside
      * rectangles that Jena finds within it and cannot be disjoint. Source 4 is far outside its envelope. Source 5
      * lies about a kilometre east of its slanted eastern edge, inside its envelope, and needs exact evaluation.

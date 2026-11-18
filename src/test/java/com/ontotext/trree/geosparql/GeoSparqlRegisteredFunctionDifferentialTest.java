@@ -9,6 +9,7 @@ import org.junit.Before;
 import org.junit.Test;
 
 import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Set;
 
 import static org.junit.Assert.assertEquals;
@@ -30,6 +31,7 @@ public class GeoSparqlRegisteredFunctionDifferentialTest extends AbstractGeoSpar
 	private static final String EPSG_4979 = "http://www.opengis.net/def/crs/EPSG/0/4979";
 	private static final String EPSG_4326 = "http://www.opengis.net/def/crs/EPSG/0/4326";
 	private static final String EPSG_4955 = "http://www.opengis.net/def/crs/EPSG/0/4955";
+	private static final String UTM_34N = "http://www.opengis.net/def/crs/EPSG/0/32634";
 	private static final String WEB_MERCATOR = "<http://www.opengis.net/def/crs/EPSG/0/3857> ";
 	/**
 	 * Collections of area dimension, separated from {@code distantArea}. The first four hold no polygon, and the
@@ -91,6 +93,16 @@ public class GeoSparqlRegisteredFunctionDifferentialTest extends AbstractGeoSpar
 				+ feature("aroundBrisbane", "aroundBrisbaneGeom",
 						"POLYGON((153 -27.5,153.1 -27.5,153.1 -27.4,153 -27.4,153 -27.5))")
 				+ feature("besideBrisbane", "besideBrisbaneGeom", "LINESTRING(153 -27.5,153.06 -27.5,153.06 -27.44)")
+				+ feature("utmPoint", "utmPointGeom", "<" + UTM_34N + "> POINT(500000 6700000)")
+				+ feature("utmControl", "utmControlGeom", "<" + UTM_34N + "> POINT(400000 6600000)")
+				+ feature("infiniteCollection", "infiniteCollectionGeom", "<" + UTM_34N
+						+ "> GEOMETRYCOLLECTION(POINT(1e309 5),POINT(500000 6700000))")
+				+ "  ex:nanCollection a geo:Feature ; geo:hasDefaultGeometry ex:nanCollectionGeom .\n"
+				+ "  ex:nanCollectionGeom a geo:Geometry ; geo:asGML '''<gml:MultiPoint"
+				+ " xmlns:gml=\"http://www.opengis.net/gml/3.2\" srsName=\"" + UTM_34N + "\">"
+				+ "<gml:pointMember><gml:Point><gml:pos>NaN 5</gml:pos></gml:Point></gml:pointMember>"
+				+ "<gml:pointMember><gml:Point><gml:pos>500000 6700000</gml:pos></gml:Point></gml:pointMember>"
+				+ "</gml:MultiPoint>'''^^geo:gmlLiteral .\n"
 				+ feature("mixedHeights", "mixedHeightsGeom", "<" + EPSG_4326
 						+ "> GEOMETRYCOLLECTION Z(POINT(-27.47 153.03),POINT Z(-27.47 153.03 55))")
 				+ feature("uniformHeights", "uniformHeightsGeom", "<" + EPSG_4326
@@ -195,6 +207,21 @@ public class GeoSparqlRegisteredFunctionDifferentialTest extends AbstractGeoSpar
 		}
 	}
 
+	/**
+	 * A NaN or infinite coordinate leaves a source's own envelope with a non-finite bound, which shows nothing about
+	 * where the source lies. Such a source is related exactly: it intersects a point it holds and is not disjoint from
+	 * it, while a distant point is disjoint from that point.
+	 */
+	@Test
+	public void relationsAgreeForSourcesWithNonFiniteEnvelopes() throws Exception {
+		for (boolean boundSubject : new boolean[] { false, true }) {
+			for (String relation : List.of("sfIntersects", "sfDisjoint", "ehDisjoint", "sfEquals")) {
+				assertDifferential(relation, "utmPoint", boundSubject, "nanCollection", "infiniteCollection",
+						"utmControl");
+			}
+		}
+	}
+
 	@Test
 	public void multipleDefaultGeometrySourcesUseExistentialEntitySemantics() throws Exception {
 		assertDifferential("sfIntersects", "leftArea", false, "multiSource");
@@ -230,8 +257,8 @@ public class GeoSparqlRegisteredFunctionDifferentialTest extends AbstractGeoSpar
 		Set<Value> functionResults = queryCandidates(""
 				+ "SELECT DISTINCT ?candidate WHERE {\n"
 				+ candidateValues(new String[] { unevaluableCandidate, matchingCandidate })
-				+ "  ?candidate geo:hasDefaultGeometry/geo:asWKT ?candidateWkt .\n"
-				+ "  ex:" + bound + " geo:hasDefaultGeometry/geo:asWKT ?boundWkt .\n"
+				+ "  ?candidate geo:hasDefaultGeometry/(geo:asWKT|geo:asGML) ?candidateWkt .\n"
+				+ "  ex:" + bound + " geo:hasDefaultGeometry/(geo:asWKT|geo:asGML) ?boundWkt .\n"
 				+ "  FILTER(geof:sfIntersects(?candidateWkt, ?boundWkt))\n"
 				+ "}");
 
@@ -256,8 +283,8 @@ public class GeoSparqlRegisteredFunctionDifferentialTest extends AbstractGeoSpar
 		Set<Value> functionResults = queryCandidates(""
 				+ "SELECT DISTINCT ?candidate WHERE {\n"
 				+ candidateValues(candidates)
-				+ "  ?candidate geo:hasDefaultGeometry/geo:asWKT ?candidateWkt .\n"
-				+ "  ex:" + bound + " geo:hasDefaultGeometry/geo:asWKT ?boundWkt .\n"
+				+ "  ?candidate geo:hasDefaultGeometry/(geo:asWKT|geo:asGML) ?candidateWkt .\n"
+				+ "  ex:" + bound + " geo:hasDefaultGeometry/(geo:asWKT|geo:asGML) ?boundWkt .\n"
 				+ "  FILTER(geof:" + relation + "(" + functionArguments + "))\n"
 				+ "}");
 

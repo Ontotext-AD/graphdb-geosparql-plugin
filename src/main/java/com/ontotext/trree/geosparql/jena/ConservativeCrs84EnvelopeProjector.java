@@ -95,8 +95,10 @@ final class ConservativeCrs84EnvelopeProjector {
 			return ProjectedCandidateBounds.empty();
 		}
 		if (IndexGeometry.INDEX_CRS.equals(sourceWrapper.getSrsURI())) {
-			return ProjectedCandidateBounds.nativeCrs84(
-					new Envelope(sourceWrapper.getXYGeometry().getEnvelopeInternal()));
+			Envelope own = sourceWrapper.getXYGeometry().getEnvelopeInternal();
+			return IndexGeometry.isUnbounded(IndexGeometry.comparableEnvelope(own))
+					? ProjectedCandidateBounds.worldFallback(FALLBACK_UNREPRESENTABLE_RECTANGLE)
+					: ProjectedCandidateBounds.nativeCrs84(new Envelope(own));
 		}
 		try {
 			return transformSourceBounds(sourceWrapper);

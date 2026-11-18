@@ -53,7 +53,7 @@ public final class BoundEvaluationEnvelope {
 		this.source = source;
 		this.crsUri = crsUri;
 		Geometry geometry = bound.getXYGeometry();
-		this.envelope = new Envelope(geometry.getEnvelopeInternal());
+		this.envelope = IndexGeometry.comparableEnvelope(geometry.getEnvelopeInternal());
 		this.polygonPoints = geometry instanceof Polygon && !geometry.isEmpty() ? geometry.getNumPoints() : -1;
 	}
 

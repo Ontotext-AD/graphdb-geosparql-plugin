@@ -175,13 +175,39 @@ public final class IndexGeometry {
 	}
 
 	/**
-	 * Returns the XY envelope of the source in its own CRS.
+	 * Returns the XY envelope of the source in its own CRS, or the {@link #comparableEnvelope unbounded envelope}
+	 * when it has a non-finite bound.
 	 *
 	 * <p>Jena evaluates a left operand on its own coordinates, so this envelope bounds the geometry of every exact
 	 * evaluation in which the source is the left operand.
 	 */
 	public Envelope sourceEnvelope() {
-		return new Envelope(sourceGeometryLiteral.asGeometryWrapper().getXYGeometry().getEnvelopeInternal());
+		return comparableEnvelope(sourceGeometryLiteral.asGeometryWrapper().getXYGeometry().getEnvelopeInternal());
+	}
+
+	/**
+	 * Returns the envelope to compare for a geometry: a copy of its own when every bound is finite, and otherwise the
+	 * unbounded envelope. A NaN or infinite coordinate leaves an envelope that shows nothing about where the geometry
+	 * lies; the unbounded envelope meets every envelope, lies inside none and equals only another unbounded one, so
+	 * candidate lookup never decides a pair from it.
+	 */
+	public static Envelope comparableEnvelope(Envelope envelope) {
+		if (envelope.isNull() || Double.isFinite(envelope.getMinX()) && Double.isFinite(envelope.getMaxX())
+				&& Double.isFinite(envelope.getMinY()) && Double.isFinite(envelope.getMaxY())) {
+			return new Envelope(envelope);
+		}
+		return unboundedEnvelope();
+	}
+
+	/** The envelope that {@link #comparableEnvelope} gives a geometry with a non-finite bound. */
+	public static Envelope unboundedEnvelope() {
+		return new Envelope(Double.NEGATIVE_INFINITY, Double.POSITIVE_INFINITY,
+				Double.NEGATIVE_INFINITY, Double.POSITIVE_INFINITY);
+	}
+
+	/** Whether the envelope is the {@link #unboundedEnvelope}. */
+	public static boolean isUnbounded(Envelope envelope) {
+		return unboundedEnvelope().equals(envelope);
 	}
 
 	/**

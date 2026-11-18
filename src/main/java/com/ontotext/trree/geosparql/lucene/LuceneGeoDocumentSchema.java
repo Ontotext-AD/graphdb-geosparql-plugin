@@ -350,8 +350,22 @@ final class LuceneGeoDocumentSchema {
 						upperBound(envelope.getMaxY()), Double.POSITIVE_INFINITY});
 	}
 
-	/** Matches sources whose own envelopes equal the envelope, both taken in one CRS. */
+	/**
+	 * Matches sources whose own envelopes equal the envelope, both taken in one CRS, and sources whose envelopes are
+	 * unbounded. Every source matches an unbounded envelope; see {@link IndexGeometry#comparableEnvelope}.
+	 */
 	static Query sourceEnvelopeEqualsQuery(Envelope envelope) {
+		if (IndexGeometry.isUnbounded(envelope)) {
+			return sourceEnvelopeIntersectsQuery(envelope);
+		}
+		return new BooleanQuery.Builder()
+				.add(equalEnvelopesQuery(envelope), BooleanClause.Occur.SHOULD)
+				.add(equalEnvelopesQuery(IndexGeometry.unboundedEnvelope()), BooleanClause.Occur.SHOULD)
+				.setMinimumNumberShouldMatch(1)
+				.build();
+	}
+
+	private static Query equalEnvelopesQuery(Envelope envelope) {
 		return DoublePoint.newRangeQuery(FIELD_SOURCE_ENVELOPE,
 				new double[]{lowerBound(envelope.getMinX()), lowerBound(envelope.getMaxX()),
 						lowerBound(envelope.getMinY()), lowerBound(envelope.getMaxY())},
