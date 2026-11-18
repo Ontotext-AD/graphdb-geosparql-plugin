@@ -401,6 +401,20 @@ public class LuceneGeoSchemaTest {
         assertForceReindexMessage(exception);
     }
 
+    /** Cover boxes written from cells of any area can leave out part of a geometry near 10⁻¹⁶². */
+    @Test
+    public void layoutWithCoverBoxesOfAnyAreaRequiresReindex() throws Exception {
+        Path dataDir = tmpFolder.getRoot().toPath().resolve("layout-cover-boxes-of-any-area");
+        Files.createDirectories(dataDir);
+        writeLayout(dataDir, "prefix-envelope-ordinate-preserving-source-wkb-envelope-marker-topology-dv-indexed-source-crs"
+                + "-source-envelope-index-envelope-source-cover-area-collection-lexical-sources-jena-crs84-envelope");
+
+        LuceneGeoIndexer indexer = createIndexer(dataDir.toFile());
+
+        assertForceReindexMessage(assertThrows(PluginException.class,
+                () -> indexer.getSourceGeometryLiteralsFor(0)));
+    }
+
     @Test
     public void testMarkedCurrentSchemaV2IndexPassesStartupGate() throws Exception {
         Path markedDataDir = tmpFolder.getRoot().toPath().resolve("marked-schema-v2");
@@ -807,6 +821,20 @@ public class LuceneGeoSchemaTest {
                     LuceneGeoDocumentSchema.COMMIT_SCHEMA_VERSION_VALUE);
             commitData.put(LuceneGeoDocumentSchema.COMMIT_SCHEMA_LAYOUT_KEY,
                     "prefix-envelope-source-wkb-envelope-marker-topology-dv-envelope-points");
+            writer.setLiveCommitData(commitData.entrySet());
+        }
+    }
+
+    private void writeLayout(Path dataDir, String layout) throws Exception {
+        Path indexDir = GeoSparqlConfig.resolveIndexPath(dataDir);
+        Files.createDirectories(indexDir);
+        try (FSDirectory dir = FSDirectory.open(indexDir);
+             IndexWriter writer = new IndexWriter(dir, new IndexWriterConfig())) {
+            writer.addDocument(currentSchemaDocument(1L, sampleGeometry));
+            Map<String, String> commitData = new HashMap<>();
+            commitData.put(LuceneGeoDocumentSchema.COMMIT_SCHEMA_VERSION_KEY,
+                    LuceneGeoDocumentSchema.COMMIT_SCHEMA_VERSION_VALUE);
+            commitData.put(LuceneGeoDocumentSchema.COMMIT_SCHEMA_LAYOUT_KEY, layout);
             writer.setLiveCommitData(commitData.entrySet());
         }
     }

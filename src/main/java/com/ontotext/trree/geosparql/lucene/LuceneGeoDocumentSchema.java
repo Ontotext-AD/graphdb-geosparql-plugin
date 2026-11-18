@@ -116,11 +116,11 @@ final class LuceneGeoDocumentSchema {
 	/**
 	 * Commit metadata value requiring source WKB, the envelope marker, indexed source CRS, each spatial source's
 	 * envelope in its own CRS, the CRS84 index envelope of each source in another CRS, cover boxes for large
-	 * sources, the area collection marker, the marker for sources parsed from their lexical form, and a CRS84 index
-	 * envelope checked against Jena's transformation.
+	 * sources, the area collection marker, the marker for sources parsed from their lexical form, a CRS84 index
+	 * envelope checked against Jena's transformation, and cover boxes built only from cells of normal area.
 	 */
 	static final String COMMIT_SCHEMA_LAYOUT_VALUE =
-			"prefix-envelope-ordinate-preserving-source-wkb-envelope-marker-topology-dv-indexed-source-crs-source-envelope-index-envelope-source-cover-area-collection-lexical-sources-jena-crs84-envelope";
+			"prefix-envelope-ordinate-preserving-source-wkb-envelope-marker-topology-dv-indexed-source-crs-source-envelope-index-envelope-source-cover-area-collection-lexical-sources-jena-crs84-envelope-normal-area-cover";
 	/** Commit metadata key identifying the CRS transformation inputs used for candidate envelopes. */
 	static final String COMMIT_CRS_ENVIRONMENT_FINGERPRINT_KEY = "geosparql.crsEnvironmentFingerprint";
 	static final String SCHEMA_MISMATCH_MESSAGE =
