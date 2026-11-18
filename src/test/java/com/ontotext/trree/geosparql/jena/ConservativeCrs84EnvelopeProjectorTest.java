@@ -17,6 +17,7 @@ import org.opengis.referencing.crs.CoordinateReferenceSystem;
 import org.opengis.referencing.operation.CoordinateOperation;
 
 import java.util.List;
+import java.util.Optional;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
@@ -86,6 +87,29 @@ public class ConservativeCrs84EnvelopeProjectorTest {
 		assertTrue(brisbane.indexEnvelope().getWidth() < 1.0);
 		assertTrue(brisbane.indexEnvelope().getHeight() < 1.0);
 		assertTrue(brisbane.indexEnvelope().contains(153.03, -27.47));
+	}
+
+	/**
+	 * Jena rounds every ordinate of a geometry it transforms, so it cannot evaluate a source with an infinite Z or M
+	 * in another CRS, although the source's horizontal envelope transforms. Such a source takes the world envelope;
+	 * the same point with finite ordinates does not.
+	 */
+	@Test
+	public void sourceWithANonFiniteOrdinateUsesTheWorldFallback() {
+		for (String wkt : List.of("POINT Z(-27.47 153.03 1e309)", "POINT M(-27.47 153.03 1e309)",
+				"POINT ZM(-27.47 153.03 55 -1e309)")) {
+			IndexGeometry point = IndexGeometry.fromSourceGeometryLiteral(
+					SourceGeometryLiteral.fromWkt("<http://www.opengis.net/def/crs/EPSG/0/4326> " + wkt));
+			assertEquals(wkt, CandidateBoundsKind.WORLD_FALLBACK, point.candidateBoundsKind());
+			assertEquals(wkt, Optional.of(ConservativeCrs84EnvelopeProjector.FALLBACK_NON_FINITE_ORDINATE),
+					point.candidateBoundsFallbackReason());
+		}
+		for (String wkt : List.of("POINT(-27.47 153.03)", "POINT Z(-27.47 153.03 55)",
+				"POINT ZM(-27.47 153.03 55 7)")) {
+			IndexGeometry point = IndexGeometry.fromSourceGeometryLiteral(
+					SourceGeometryLiteral.fromWkt("<http://www.opengis.net/def/crs/EPSG/0/4326> " + wkt));
+			assertEquals(wkt, CandidateBoundsKind.TRANSFORMED, point.candidateBoundsKind());
+		}
 	}
 
 	@Test

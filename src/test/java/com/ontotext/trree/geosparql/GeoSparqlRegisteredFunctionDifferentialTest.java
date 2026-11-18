@@ -28,6 +28,7 @@ public class GeoSparqlRegisteredFunctionDifferentialTest extends AbstractGeoSpar
 	private static final String UTM_32N = "http://www.opengis.net/def/crs/EPSG/0/32632";
 	private static final String UTM_33N = "http://www.opengis.net/def/crs/EPSG/0/32633";
 	private static final String EPSG_4979 = "http://www.opengis.net/def/crs/EPSG/0/4979";
+	private static final String EPSG_4326 = "http://www.opengis.net/def/crs/EPSG/0/4326";
 	private static final String WEB_MERCATOR = "<http://www.opengis.net/def/crs/EPSG/0/3857> ";
 	/**
 	 * Collections of area dimension, separated from {@code distantArea}. The first four hold no polygon, and the
@@ -76,6 +77,9 @@ public class GeoSparqlRegisteredFunctionDifferentialTest extends AbstractGeoSpar
 						WEB_MERCATOR + "GEOMETRYCOLLECTION(POINT(0 0),POLYGON((0 0,0 1000,1000 1000,1000 0,0 0)))")
 				+ feature("projectedArea", "projectedAreaGeom",
 						WEB_MERCATOR + "POLYGON((0 0,0 1000,1000 1000,1000 0,0 0))")
+				+ feature("nearBrisbane", "nearBrisbaneGeom", "POINT(153.031 -27.47)")
+				+ feature("infiniteHeight", "infiniteHeightGeom", "<" + EPSG_4326 + "> POINT Z(-27.47 153.03 1e309)")
+				+ feature("finiteHeight", "finiteHeightGeom", "<" + EPSG_4326 + "> POINT Z(-27.47 153.03 55)")
 				+ feature("tiles", "tilesGeom", TILES_FROM_CENTRE)
 				+ feature("projectedTiles", "projectedTilesGeom", WEB_MERCATOR
 						+ "GEOMETRYCOLLECTION(POLYGON((0 0,1000 0,1000 1000,0 1000,0 0)),"
@@ -134,6 +138,17 @@ public class GeoSparqlRegisteredFunctionDifferentialTest extends AbstractGeoSpar
 			assertDifferential("rcc8dc", "lineAndEmptyArea", boundSubject, "leftArea", "projectedArea");
 			assertDifferential("rcc8dc", "tiles", boundSubject, "leftArea", "projectedArea");
 		}
+	}
+
+	/**
+	 * Jena cannot transform a point with an infinite height into CRS84, so no relation holds between it and a CRS84
+	 * subject, although their envelopes are apart within one prefix cell. The same point with a finite height is
+	 * disjoint from the subject.
+	 */
+	@Test
+	public void disjointRelationsAgreeForASourceJenaCannotTransform() throws Exception {
+		assertDifferential("sfDisjoint", "nearBrisbane", true, "infiniteHeight", "finiteHeight");
+		assertDifferential("ehDisjoint", "nearBrisbane", true, "infiniteHeight", "finiteHeight");
 	}
 
 	@Test
