@@ -59,7 +59,8 @@ An index is written in the layout of the plugin version that built it. A plugin 
 the index as incompatible. Until the index is rebuilt it answers no index-backed GeoSPARQL query and rejects updates
 that add or remove geometries; restarting GraphDB does not change that. This holds in both directions. After
 upgrading the plugin, rebuild the index. After returning
-to an earlier plugin version, rebuild it with that version or restore an index that version built.
+to an earlier plugin version, rebuild it with that version. Restoring an index that version built instead is safe only
+together with the repository data it was built from; an older index does not reflect later geometry changes.
 
 If the plugin is disabled, enabling it performs a full index build. If the plugin is already enabled, run this SPARQL
 update to force a rebuild:
