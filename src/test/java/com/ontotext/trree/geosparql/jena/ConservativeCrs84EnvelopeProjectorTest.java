@@ -204,8 +204,8 @@ public class ConservativeCrs84EnvelopeProjectorTest {
 				line.sourceGeometryLiteral(), point.sourceGeometryLiteral()));
 		assertFalse(GeoSparqlPropertyRelation.EH_DISJOINT.evaluate(
 				line.sourceGeometryLiteral(), point.sourceGeometryLiteral()));
-		assertFalse(line.isEnvelopeCoveringRectangle());
-		assertFalse(point.isEnvelopeCoveringRectangle());
+		assertFalse(IndexGeometryFixtures.fillsCrs84Envelope(line));
+		assertFalse(IndexGeometryFixtures.fillsCrs84Envelope(point));
 	}
 
 	@Test
@@ -254,7 +254,7 @@ public class ConservativeCrs84EnvelopeProjectorTest {
 				SourceGeometryLiteral.fromWkt("POINT(20 20)"));
 
 		assertEquals(new Envelope(0.0, 10.0, 0.0, 10.0), rectangle.indexEnvelope());
-		assertTrue(rectangle.isEnvelopeCoveringRectangle());
+		assertTrue(IndexGeometryFixtures.fillsCrs84Envelope(rectangle));
 		assertTrue(rectangle.indexEnvelope().intersects(inside.indexEnvelope()));
 		assertFalse(rectangle.indexEnvelope().intersects(outside.indexEnvelope()));
 	}

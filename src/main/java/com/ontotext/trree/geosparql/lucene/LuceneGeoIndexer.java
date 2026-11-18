@@ -562,7 +562,8 @@ public class LuceneGeoIndexer implements GeoSparqlIndexer {
 		// A source the cleanup phase evaluates is left to that phase, so no source is evaluated twice.
 		Query uncertain = lookup.orElsewhere(lookup.possiblyDisjoint(new IndexSearcher(reader)),
 				() -> new BooleanQuery.Builder()
-						.add(indexEnvelopeDisjointUncertainQuery(boundSourceIndexGeometry), BooleanClause.Occur.FILTER)
+						.add(indexEnvelopeDisjointUncertainQuery(lookup, boundSourceIndexGeometry),
+								BooleanClause.Occur.FILTER)
 						.add(disjointTransformCleanupCandidatesQuery(boundSourceIndexGeometry, candidateIsSubject),
 								BooleanClause.Occur.MUST_NOT)
 						.build());
@@ -592,9 +593,10 @@ public class LuceneGeoIndexer implements GeoSparqlIndexer {
 	 * the closed bound still makes sfDisjoint, ehDisjoint, and rcc8dc false. A candidate whose cleanup target is
 	 * not CRS84 is retained separately because the CRS84 containment proof does not model that displacement.
 	 */
-	private Query indexEnvelopeDisjointUncertainQuery(IndexGeometry boundSourceIndexGeometry) {
+	private Query indexEnvelopeDisjointUncertainQuery(EvaluationCrsLookup lookup,
+			IndexGeometry boundSourceIndexGeometry) {
 		Query envelopeIntersections = envelopeIntersectionsQuery(boundSourceIndexGeometry);
-		if (!boundSourceIndexGeometry.isEnvelopeCoveringRectangle()) {
+		if (!lookup.boundIsCrs84AndFillsItsEnvelope()) {
 			return envelopeIntersections;
 		}
 		Query notShownInside = new BooleanQuery.Builder()

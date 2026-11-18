@@ -134,21 +134,6 @@ public final class IndexGeometry {
 	}
 
 	/**
-	 * Returns whether the source is a valid, non-empty CRS84 polygon that covers every point in its index envelope.
-	 *
-	 * <p>This deliberately excludes transformed sources, holes, rotated polygons, collections, and the polygons that
-	 * {@link #fillsItsEnvelope} rejects. For an eligible native CRS84 bound, containment of another source's index envelope proves that the two sources cannot be
-	 * disjoint, on the conservative-envelope engineering assumption documented by
-	 * {@link ConservativeCrs84EnvelopeProjector} when that other envelope is SIS-transformed.
-	 */
-	public boolean isEnvelopeCoveringRectangle() {
-		GeometryWrapper sourceWrapper = sourceGeometryLiteral.asGeometryWrapper();
-		Geometry sourceGeometry = sourceWrapper.getXYGeometry();
-		return INDEX_CRS.equals(sourceWrapper.getSrsURI())
-				&& fillsItsEnvelope(sourceGeometry, sourceGeometry::isValid);
-	}
-
-	/**
 	 * Whether the geometry is a non-empty, valid polygon that covers every point of its envelope, whose area is
 	 * {@link #hasNormalArea normal}. Only such a polygon proves that a geometry inside its envelope meets it: JTS
 	 * may find that a self-overlapping ring fills its envelope while Jena finds a point inside that envelope

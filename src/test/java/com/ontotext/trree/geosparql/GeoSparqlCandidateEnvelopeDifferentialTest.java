@@ -743,7 +743,7 @@ public class GeoSparqlCandidateEnvelopeDifferentialTest {
 		Fixture fixture = createFixture("definite-non-match-proofs", sources);
 		IndexGeometry bound = sources.get(100L).get(0);
 
-		assertTrue(bound.isEnvelopeCoveringRectangle());
+		assertTrue(IndexGeometryFixtures.fillsCrs84Envelope(bound));
 		assertFalse(GeoSparqlPropertyRelation.SF_DISJOINT.evaluate(
 				bound.sourceGeometryLiteral(), sources.get(1L).get(0).sourceGeometryLiteral()));
 		assertFalse(GeoSparqlPropertyRelation.SF_DISJOINT.evaluate(

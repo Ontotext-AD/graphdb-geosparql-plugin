@@ -2,6 +2,7 @@ package com.ontotext.trree.geosparql.lucene;
 
 import com.ontotext.trree.geosparql.GeoSparqlPropertyRelation;
 import com.ontotext.trree.geosparql.TestIndexGeometries;
+import com.ontotext.trree.geosparql.jena.IndexGeometryFixtures;
 import com.ontotext.trree.geosparql.jena.IndexGeometry;
 import org.apache.lucene.document.Document;
 import org.apache.lucene.document.DoublePoint;
@@ -142,15 +143,15 @@ public class LuceneEnvelopeContainmentTest {
 				+ "," + 11 * unit + " " + 5 * unit + "," + 9 * unit + " " + 13 * unit + "))");
 		IndexGeometry empty = geometry("POLYGON EMPTY");
 
-		assertTrue(rectangle.isEnvelopeCoveringRectangle());
-		assertFalse(boundWithHole.isEnvelopeCoveringRectangle());
-		assertFalse(rotated.isEnvelopeCoveringRectangle());
-		assertFalse(collection.isEnvelopeCoveringRectangle());
-		assertFalse(projectedRectangle.isEnvelopeCoveringRectangle());
-		assertFalse(invalidPolygon.isEnvelopeCoveringRectangle());
-		assertFalse(selfOverlapping.isEnvelopeCoveringRectangle());
-		assertFalse(underflowing.isEnvelopeCoveringRectangle());
-		assertFalse(empty.isEnvelopeCoveringRectangle());
+		assertTrue(IndexGeometryFixtures.fillsCrs84Envelope(rectangle));
+		assertFalse(IndexGeometryFixtures.fillsCrs84Envelope(boundWithHole));
+		assertFalse(IndexGeometryFixtures.fillsCrs84Envelope(rotated));
+		assertFalse(IndexGeometryFixtures.fillsCrs84Envelope(collection));
+		assertFalse(IndexGeometryFixtures.fillsCrs84Envelope(projectedRectangle));
+		assertFalse(IndexGeometryFixtures.fillsCrs84Envelope(invalidPolygon));
+		assertFalse(IndexGeometryFixtures.fillsCrs84Envelope(selfOverlapping));
+		assertFalse(IndexGeometryFixtures.fillsCrs84Envelope(underflowing));
+		assertFalse(IndexGeometryFixtures.fillsCrs84Envelope(empty));
 		assertTrue(GeoSparqlPropertyRelation.SF_DISJOINT.evaluate(
 				pointInHole.sourceGeometryLiteral(), boundWithHole.sourceGeometryLiteral()));
 	}

@@ -11,6 +11,7 @@ import org.apache.lucene.search.Query;
 
 import java.io.IOException;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
@@ -25,7 +26,8 @@ import java.util.Optional;
  * point with the source.
  *
  * <p>The bound is placed in every source CRS of the reader that it shares, or in which every source is the left
- * operand. A CRS in which Jena cannot place the bound relates none of its sources. Sources of every other CRS are
+ * operand. It always has a placement in its own CRS, which adds a clause only where the reader holds sources of that
+ * CRS. A CRS in which Jena cannot place the bound relates none of its sources. Sources of every other CRS are
  * left to lookup by CRS84 index envelopes, which {@link #orElsewhere} restricts to them.
  *
  * <p>A lookup has one clause for each CRS it places the bound in, and Lucene limits the clauses of one query. In a
@@ -33,6 +35,8 @@ import java.util.Optional;
  */
 final class EvaluationCrsLookup {
 	private final Map<String, BoundEvaluationEnvelope> placements = new LinkedHashMap<>();
+	private String boundCrsUri;
+	private boolean boundCrsHasSources;
 	private boolean leavesSourcesElsewhere;
 	private boolean hasSourceCovers;
 
@@ -45,8 +49,11 @@ final class EvaluationCrsLookup {
 		lookup.hasSourceCovers = LuceneGeoDocumentSchema.hasSourceCovers(reader);
 		// The bound is always placed among the sources of its own CRS, so a CRS84 lookup never selects those.
 		String boundCrsUri = bound.sourceGeometryLiteral().effectiveCrsUri();
+		List<String> sourceCrsUris = LuceneGeoDocumentSchema.sourceCrsUris(reader);
+		lookup.boundCrsUri = boundCrsUri;
+		lookup.boundCrsHasSources = sourceCrsUris.contains(boundCrsUri);
 		lookup.placements.put(boundCrsUri, bound.evaluationEnvelope(boundCrsUri, candidateIsSubject).orElseThrow());
-		for (String sourceCrsUri : LuceneGeoDocumentSchema.sourceCrsUris(reader)) {
+		for (String sourceCrsUri : sourceCrsUris) {
 			if (lookup.placements.containsKey(sourceCrsUri)) {
 				continue;
 			}
@@ -93,6 +100,14 @@ final class EvaluationCrsLookup {
 	Query withEqualEnvelope() {
 		return inEachCrs((sourceCrsUri, bound) ->
 				LuceneGeoDocumentSchema.sourceEnvelopeEqualsQuery(bound.envelope()));
+	}
+
+	/**
+	 * Whether the bound is a CRS84 polygon that fills its envelope, which lookup by CRS84 index envelopes uses to
+	 * show a source inside the bound. The placement in the bound's own CRS makes and keeps this check.
+	 */
+	boolean boundIsCrs84AndFillsItsEnvelope() {
+		return IndexGeometry.INDEX_CRS.equals(boundCrsUri) && placements.get(boundCrsUri).fillsEnvelope();
 	}
 
 	/** Sources that share no point with the bound: each is disjoint from it. */
@@ -152,7 +167,9 @@ final class EvaluationCrsLookup {
 		BooleanQuery.Builder sources = new BooleanQuery.Builder().setMinimumNumberShouldMatch(1);
 		boolean related = false;
 		for (Map.Entry<String, BoundEvaluationEnvelope> placement : placements.entrySet()) {
-			if (!placement.getValue().isRelated()) {
+			// A CRS without sources selects none, and its checks of the bound would be wasted.
+			if (!placement.getValue().isRelated()
+					|| placement.getKey().equals(boundCrsUri) && !boundCrsHasSources) {
 				continue;
 			}
 			related = true;

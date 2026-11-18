@@ -266,7 +266,7 @@ public class LuceneCandidateLookupTest {
 				worldCrs84Envelope(), CandidateBoundsKind.WORLD_FALLBACK, "unrepresentable-rectangle");
 		IndexGeometry separated = geometry("POINT(20 20)");
 
-		assertFalse(fallback.isEnvelopeCoveringRectangle());
+		assertFalse(IndexGeometryFixtures.fillsCrs84Envelope(fallback));
 		assertEquals(CandidateBoundsKind.WORLD_FALLBACK, fallback.candidateBoundsKind());
 		assertEquals(worldCrs84Envelope(), fallback.indexEnvelope());
 
