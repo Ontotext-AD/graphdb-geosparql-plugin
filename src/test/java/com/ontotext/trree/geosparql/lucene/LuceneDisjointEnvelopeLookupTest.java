@@ -16,7 +16,13 @@ import org.apache.lucene.index.MultiReader;
 import org.apache.lucene.search.IndexSearcher;
 import org.apache.lucene.search.MatchAllDocsQuery;
 import org.apache.lucene.search.Query;
+import org.apache.jena.geosparql.implementation.DimensionInfo;
+import org.locationtech.jts.geom.Coordinate;
 import org.locationtech.jts.geom.Envelope;
+import org.locationtech.jts.geom.Geometry;
+import org.locationtech.jts.geom.GeometryFactory;
+import org.locationtech.jts.geom.LinearRing;
+import org.locationtech.jts.geom.Polygon;
 import org.junit.Rule;
 import org.junit.Test;
 import org.slf4j.LoggerFactory;
@@ -68,6 +74,30 @@ public class LuceneDisjointEnvelopeLookupTest {
 		assertEquals(Set.of(3L, 4L, 6L, 7L), definite(indexer.getEnvelopeDisjointCandidates(bound, true)));
 		assertEquals(Set.of(), uncertain(indexer.getEnvelopeDisjointUncertainCandidates(bound, false)));
 		assertEquals(Set.of(5L), uncertain(indexer.getNonSpatialCandidates()));
+	}
+
+	/**
+	 * Proving that a polygon fills its envelope compares the whole polygon with it, and only the uncertain disjoint
+	 * lookup uses the answer. Intersection, equality and definite disjoint lookups leave it unproved; the uncertain
+	 * lookup proves it and excludes the source inside the filled envelope.
+	 */
+	@Test
+	public void onlyTheUncertainDisjointLookupProvesThatTheBoundFillsItsEnvelope() throws Exception {
+		LuceneGeoIndexer indexer = createIndexer("rectangle-proof", GeoSparqlConfig.PrefixTree.QUAD, 11);
+		index(indexer, List.of(geometry("POINT(0.5 0.5)"), geometry("POINT(5 5)")));
+		EnvelopeCountingPolygon square = denseUnitSquare(100);
+		IndexGeometry bound = IndexGeometry.fromSourceGeometryLiteral(SourceGeometryLiteral.fromStoredGeometry(
+				square.toText(), SourceGeometryLiteral.wktDatatype(), IndexGeometry.INDEX_CRS, square,
+				DimensionInfo.XY_POLYGON));
+		int envelopesBeforeLookup = square.envelopes;
+
+		assertEquals(Set.of(1L), uncertain(indexer.getEnvelopeIntersections(bound, true)));
+		assertEquals(Set.of(), uncertain(indexer.getEnvelopeEqualityCandidates(bound, true)));
+		assertEquals(Set.of(2L), definite(indexer.getEnvelopeDisjointCandidates(bound, true)));
+		assertEquals(envelopesBeforeLookup, square.envelopes);
+
+		assertEquals(Set.of(), uncertain(indexer.getEnvelopeDisjointUncertainCandidates(bound, true)));
+		assertTrue(square.envelopes > envelopesBeforeLookup);
 	}
 
 	/**
@@ -454,5 +484,38 @@ public class LuceneDisjointEnvelopeLookupTest {
 	private static IndexGeometry transformed(Envelope indexEnvelope) {
 		return IndexGeometryFixtures.withIndexEnvelope(SourceGeometryLiteral.fromWkt(
 				"<http://www.opengis.net/def/crs/EPSG/0/3857> POINT(0 0)"), indexEnvelope);
+	}
+
+	/** A polygon that counts how often it builds its envelope as a geometry, which proving that it fills it does. */
+	private static final class EnvelopeCountingPolygon extends Polygon {
+		private int envelopes;
+
+		private EnvelopeCountingPolygon(LinearRing shell) {
+			super(shell, null, shell.getFactory());
+		}
+
+		@Override
+		public Geometry getEnvelope() {
+			envelopes++;
+			return super.getEnvelope();
+		}
+	}
+
+	/** The square from 0 0 to 1 1, with the given number of points along each side. */
+	private static EnvelopeCountingPolygon denseUnitSquare(int pointsPerSide) {
+		List<Coordinate> ring = new ArrayList<>();
+		for (int side = 0; side < 4; side++) {
+			for (int i = 0; i < pointsPerSide; i++) {
+				double t = (double) i / pointsPerSide;
+				ring.add(switch (side) {
+					case 0 -> new Coordinate(t, 0);
+					case 1 -> new Coordinate(1, t);
+					case 2 -> new Coordinate(1 - t, 1);
+					default -> new Coordinate(0, 1 - t);
+				});
+			}
+		}
+		ring.add(new Coordinate(0, 0));
+		return new EnvelopeCountingPolygon(new GeometryFactory().createLinearRing(ring.toArray(Coordinate[]::new)));
 	}
 }

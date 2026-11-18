@@ -32,16 +32,15 @@ public final class BoundEvaluationEnvelope {
 	private final SourceGeometryLiteral source;
 	private final String crsUri;
 	private final Envelope envelope;
-	private final boolean fillsEnvelope;
 	/** Points of the placed bound when it is a non-empty polygon, otherwise -1. */
 	private final int polygonPoints;
+	private Boolean fillsEnvelope;
 	private Boolean valid;
 
 	private BoundEvaluationEnvelope() {
 		this.source = null;
 		this.crsUri = null;
 		this.envelope = null;
-		this.fillsEnvelope = false;
 		this.polygonPoints = -1;
 	}
 
@@ -55,7 +54,6 @@ public final class BoundEvaluationEnvelope {
 		this.crsUri = crsUri;
 		Geometry geometry = bound.getXYGeometry();
 		this.envelope = new Envelope(geometry.getEnvelopeInternal());
-		this.fillsEnvelope = fillsEnvelope(geometry);
 		this.polygonPoints = geometry instanceof Polygon && !geometry.isEmpty() ? geometry.getNumPoints() : -1;
 	}
 
@@ -71,8 +69,18 @@ public final class BoundEvaluationEnvelope {
 	/**
 	 * Whether the bound, as Jena evaluates it, is a polygon that covers every point of its envelope. A source whose
 	 * envelope lies inside that envelope then meets the bound and cannot be disjoint from it.
+	 *
+	 * <p>The proof compares the whole polygon with its envelope, and only disjoint pruning uses it, so it is made on
+	 * first use. A bound that cannot be placed again proves nothing.
 	 */
 	public boolean fillsEnvelope() {
+		if (fillsEnvelope == null) {
+			try {
+				fillsEnvelope = polygonPoints >= 0 && fillsEnvelope(bound().getXYGeometry());
+			} catch (FactoryException | TransformException e) {
+				fillsEnvelope = false;
+			}
+		}
 		return fillsEnvelope;
 	}
 
