@@ -21,6 +21,16 @@ import java.util.List;
 import static org.junit.Assert.*;
 
 public class JenaGeometryAdapterTest {
+	/** Four unit squares tiling the square from 39 39 to 41 41, every ring starting at the shared centre. */
+	private static final String TILES_FROM_CENTRE = "GEOMETRYCOLLECTION(POLYGON((40 40,41 40,41 41,40 41,40 40)),"
+				+ "POLYGON((40 40,39 40,39 41,40 41,40 40)),"
+				+ "POLYGON((40 40,39 40,39 39,40 39,40 40)),"
+				+ "POLYGON((40 40,41 40,41 39,40 39,40 40)))";
+	/** The same squares with every ring starting at an outer corner of the larger square. */
+	private static final String TILES_FROM_CORNERS = "GEOMETRYCOLLECTION(POLYGON((41 41,40 41,40 40,41 40,41 41)),"
+				+ "POLYGON((39 41,40 41,40 40,39 40,39 41)),"
+				+ "POLYGON((39 39,40 39,40 40,39 40,39 39)),"
+				+ "POLYGON((41 39,40 39,40 40,41 40,41 39)))";
 	private static final ValueFactory VALUE_FACTORY = SimpleValueFactory.getInstance();
 	private static final String CRS84 = "http://www.opengis.net/def/crs/OGC/1.3/CRS84";
 	private static final String EPSG_4326 = "http://www.opengis.net/def/crs/EPSG/0/4326";
@@ -278,22 +288,40 @@ public class JenaGeometryAdapterTest {
 	}
 
 	@Test
-	public void collectionOfAreaDimensionWithoutPolygonIsNominalArea() {
-		assertTrue(isNominalArea("GEOMETRYCOLLECTION(POINT(1 2),POLYGON EMPTY)"));
-		assertTrue(isNominalArea("GEOMETRYCOLLECTION(LINESTRING(1 2,3 4),POLYGON EMPTY)"));
-		assertTrue(isNominalArea("GEOMETRYCOLLECTION(POINT(1 2),GEOMETRYCOLLECTION(MULTIPOLYGON EMPTY))"));
+	public void genericCollectionOfAreaDimensionIsAreaCollection() {
+		assertTrue(isAreaCollection("GEOMETRYCOLLECTION(POINT(1 2),POLYGON EMPTY)"));
+		assertTrue(isAreaCollection("GEOMETRYCOLLECTION(LINESTRING(1 2,3 4),POLYGON EMPTY)"));
+		assertTrue(isAreaCollection("GEOMETRYCOLLECTION(POINT(1 2),GEOMETRYCOLLECTION(MULTIPOLYGON EMPTY))"));
+		assertTrue(isAreaCollection("GEOMETRYCOLLECTION(POINT(1 2),POLYGON((0 0,0 1,1 1,1 0,0 0)))"));
+		assertTrue(isAreaCollection(TILES_FROM_CENTRE));
 
-		assertFalse(isNominalArea("POLYGON((0 0,0 1,1 1,1 0,0 0))"));
-		assertFalse(isNominalArea("MULTIPOLYGON(((0 0,0 1,1 1,1 0,0 0)))"));
-		assertFalse(isNominalArea("GEOMETRYCOLLECTION(POINT(1 2),POLYGON((0 0,0 1,1 1,1 0,0 0)))"));
-		assertFalse(isNominalArea(
-				"GEOMETRYCOLLECTION(POINT(1 2),GEOMETRYCOLLECTION(POLYGON((0 0,0 1,1 1,1 0,0 0))))"));
-		assertFalse(isNominalArea("GEOMETRYCOLLECTION(POINT(1 2),LINESTRING(1 2,3 4))"));
-		assertFalse(isNominalArea("POINT(1 2)"));
+		assertFalse(isAreaCollection("POLYGON((0 0,0 1,1 1,1 0,0 0))"));
+		assertFalse(isAreaCollection("MULTIPOLYGON(((0 0,0 1,1 1,1 0,0 0)))"));
+		assertFalse(isAreaCollection("GEOMETRYCOLLECTION(POINT(1 2),LINESTRING(1 2,3 4))"));
+		assertFalse(isAreaCollection("POINT(1 2)"));
 	}
 
-	private static boolean isNominalArea(String wkt) {
-		return IndexGeometry.fromSourceGeometryLiteral(SourceGeometryLiteral.fromWkt(wkt)).isNominalArea();
+	/**
+	 * Dependency limitation: JTS 1.20.0 {@code RelateNG} places an area's boundary by locating one vertex of each
+	 * ring. Four squares tiling a larger square, with every ring starting at the shared centre, therefore show no
+	 * boundary outside a separated polygon, and RCC8 disconnected does not hold, while the same squares with rings
+	 * starting at outer corners are disconnected from it. Once JTS locates a vertex on the boundary of the union, both
+	 * orderings are disconnected and this test fails; area collections that hold a polygon can then take the
+	 * envelope proof of the disjoint partition again.
+	 */
+	@Test
+	public void collectionDisconnectionDependsOnWhereItsRingsStart() throws Exception {
+		SourceGeometryLiteral separated = SourceGeometryLiteral.fromWkt("POLYGON((20 20,20 30,30 30,30 20,20 20))");
+		String rcc8dc = GeoConstants.GEOF_RCC8_DC.stringValue();
+
+		assertFalse(JenaFunctionEvaluator.evaluateTopological(rcc8dc,
+				SourceGeometryLiteral.fromWkt(TILES_FROM_CENTRE), separated));
+		assertTrue(JenaFunctionEvaluator.evaluateTopological(rcc8dc,
+				SourceGeometryLiteral.fromWkt(TILES_FROM_CORNERS), separated));
+	}
+
+	private static boolean isAreaCollection(String wkt) {
+		return IndexGeometry.fromSourceGeometryLiteral(SourceGeometryLiteral.fromWkt(wkt)).isAreaCollection();
 	}
 
 	@Test

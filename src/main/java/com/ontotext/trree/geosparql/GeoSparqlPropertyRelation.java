@@ -81,7 +81,7 @@ public enum GeoSparqlPropertyRelation {
 	 *
 	 * <p>Simple Features and Egenhofer disjoint have no dimensional precondition. RCC8 relations apply only to
 	 * area/area pairs, so envelope separation is a definite RCC8 disconnected match only for two area sources. The
-	 * partition takes no nominal area on either side, so a source of area dimension there holds a polygon.
+	 * partition takes no area collection on either side, so exact evaluation relates the pairs it would.
 	 */
 	boolean envelopeDisjointIsDefiniteMatch(int candidateTopologicalDimension,
 			int boundTopologicalDimension) {
@@ -107,11 +107,12 @@ public enum GeoSparqlPropertyRelation {
 	/**
 	 * Returns whether separated envelopes can prove this relation for a bound source.
 	 *
-	 * <p>They prove RCC8 disconnected only between areas, which a nominal area merely claims to be. Every candidate
-	 * of a nominal area bound source therefore needs exact evaluation.
+	 * <p>They prove RCC8 disconnected only for areas whose relation exact evaluation decides as the envelopes do,
+	 * which an area collection is not. Every candidate of an area collection bound source therefore needs exact
+	 * evaluation.
 	 */
 	boolean envelopeDisjointProvesMatchFor(IndexGeometry boundSource) {
-		return this != RCC8_DC || !boundSource.isNominalArea();
+		return this != RCC8_DC || !boundSource.isAreaCollection();
 	}
 
 	public boolean evaluate(SourceGeometryLiteral argument1, SourceGeometryLiteral argument2) {

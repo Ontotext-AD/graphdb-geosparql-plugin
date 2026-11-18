@@ -29,9 +29,16 @@ public class GeoSparqlRegisteredFunctionDifferentialTest extends AbstractGeoSpar
 	private static final String UTM_33N = "http://www.opengis.net/def/crs/EPSG/0/32633";
 	private static final String EPSG_4979 = "http://www.opengis.net/def/crs/EPSG/0/4979";
 	private static final String WEB_MERCATOR = "<http://www.opengis.net/def/crs/EPSG/0/3857> ";
-	/** Collections of area dimension, separated from {@code distantArea}; the first four hold no polygon. */
+	/**
+	 * Collections of area dimension, separated from {@code distantArea}. The first four hold no polygon, and the
+	 * tiles are squares whose rings all start inside their union.
+	 */
 	private static final String[] AREA_DIMENSION_COLLECTIONS = { "pointAndEmptyArea", "projectedPointAndEmptyArea",
-			"lineAndEmptyArea", "ringAndEmptyArea", "projectedPointAndArea" };
+			"lineAndEmptyArea", "ringAndEmptyArea", "projectedPointAndArea", "tiles", "projectedTiles" };
+	private static final String TILES_FROM_CENTRE = "GEOMETRYCOLLECTION(POLYGON((40 40,41 40,41 41,40 41,40 40)),"
+				+ "POLYGON((40 40,39 40,39 41,40 41,40 40)),"
+				+ "POLYGON((40 40,39 40,39 39,40 39,40 40)),"
+				+ "POLYGON((40 40,41 40,41 39,40 39,40 40)))";
 	private static final String UTM_32_POINT = "<" + UTM_32N + "> POINT(500000 5200000)";
 	private static final String UNEVALUABLE_UTM_32_POINT = "<" + UTM_32N + "> POINT(-100000000 0)";
 	private static final String ENVELOPE_INTERSECTION_BOUND_POINT =
@@ -69,6 +76,11 @@ public class GeoSparqlRegisteredFunctionDifferentialTest extends AbstractGeoSpar
 						WEB_MERCATOR + "GEOMETRYCOLLECTION(POINT(0 0),POLYGON((0 0,0 1000,1000 1000,1000 0,0 0)))")
 				+ feature("projectedArea", "projectedAreaGeom",
 						WEB_MERCATOR + "POLYGON((0 0,0 1000,1000 1000,1000 0,0 0))")
+				+ feature("tiles", "tilesGeom", TILES_FROM_CENTRE)
+				+ feature("projectedTiles", "projectedTilesGeom", WEB_MERCATOR
+						+ "GEOMETRYCOLLECTION(POLYGON((0 0,1000 0,1000 1000,0 1000,0 0)),"
+						+ "POLYGON((0 0,-1000 0,-1000 1000,0 1000,0 0)),POLYGON((0 0,-1000 0,-1000 -1000,0 -1000,0 0)),"
+						+ "POLYGON((0 0,1000 0,1000 -1000,0 -1000,0 0)))")
 				+ feature("envelopeUnevaluableCandidate", "envelopeUnevaluableCandidateGeom",
 						UNEVALUABLE_UTM_32_POINT)
 				+ feature("envelopeMatchingCandidate", "envelopeMatchingCandidateGeom",
@@ -108,8 +120,10 @@ public class GeoSparqlRegisteredFunctionDifferentialTest extends AbstractGeoSpar
 	}
 
 	/**
-	 * A collection of area dimension without a polygon is disjoint from a separated area, yet it is RCC8 disconnected
-	 * from it only when its points and lines have a boundary: an open line has one, a point or closed ring does not.
+	 * A collection of area dimension is disjoint from a separated area, and exact evaluation decides whether it is
+	 * RCC8 disconnected from it. Without a polygon, that depends on whether its points and lines have a boundary: an
+	 * open line has one, a point or closed ring does not. For tiles it depends on where their rings start, as
+	 * {@code JenaGeometryAdapterTest} records.
 	 */
 	@Test
 	public void disjointRelationsAgreeForCollectionsOfAreaDimension() throws Exception {
@@ -118,6 +132,7 @@ public class GeoSparqlRegisteredFunctionDifferentialTest extends AbstractGeoSpar
 			assertDifferential("sfDisjoint", "distantArea", boundSubject, AREA_DIMENSION_COLLECTIONS);
 			assertDifferential("rcc8dc", "pointAndEmptyArea", boundSubject, "leftArea", "projectedArea");
 			assertDifferential("rcc8dc", "lineAndEmptyArea", boundSubject, "leftArea", "projectedArea");
+			assertDifferential("rcc8dc", "tiles", boundSubject, "leftArea", "projectedArea");
 		}
 	}
 

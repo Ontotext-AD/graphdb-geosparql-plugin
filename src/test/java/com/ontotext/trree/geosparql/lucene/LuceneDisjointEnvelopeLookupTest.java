@@ -71,22 +71,23 @@ public class LuceneDisjointEnvelopeLookupTest {
 	}
 
 	/**
-	 * Separated envelopes make neither nominal area a definite match, in the bound's CRS or in another, while the
-	 * collection that holds a polygon stays one.
+	 * Separated envelopes make no area collection a definite match, in the bound's CRS or in another, while a
+	 * multipolygon stays one.
 	 */
 	@Test
-	public void separatedNominalAreasAreEvaluatedExactly() throws Exception {
-		LuceneGeoIndexer indexer = createIndexer("nominal-areas", GeoSparqlConfig.PrefixTree.QUAD, 11);
+	public void separatedAreaCollectionsAreEvaluatedExactly() throws Exception {
+		LuceneGeoIndexer indexer = createIndexer("area-collections", GeoSparqlConfig.PrefixTree.QUAD, 11);
 		index(indexer, List.of(
 				geometry("GEOMETRYCOLLECTION(POINT(20 20),POLYGON EMPTY)"),
 				geometry("GEOMETRYCOLLECTION(POINT(20 20),POLYGON((20 20,21 20,21 21,20 20)))"),
 				geometry("<http://www.opengis.net/def/crs/EPSG/0/3857> "
-						+ "GEOMETRYCOLLECTION(POINT(2000000 2000000),POLYGON EMPTY)")));
+						+ "GEOMETRYCOLLECTION(POINT(2000000 2000000),POLYGON EMPTY)"),
+				geometry("MULTIPOLYGON(((20 20,21 20,21 21,20 20)))")));
 		IndexGeometry bound = geometry("POLYGON((0 0,1 0,1 1,0 1,0 0))");
 
 		for (boolean candidateIsSubject : new boolean[]{true, false}) {
-			assertEquals(Set.of(2L), definite(indexer.getEnvelopeDisjointCandidates(bound, candidateIsSubject)));
-			assertEquals(Set.of(1L, 3L),
+			assertEquals(Set.of(4L), definite(indexer.getEnvelopeDisjointCandidates(bound, candidateIsSubject)));
+			assertEquals(Set.of(1L, 2L, 3L),
 					uncertain(indexer.getEnvelopeDisjointUncertainCandidates(bound, candidateIsSubject)));
 		}
 	}

@@ -471,16 +471,16 @@ public class LuceneGeoIndexer implements GeoSparqlIndexer {
 									BooleanClause.Occur.MUST_NOT)
 							.build()),
 					new IndexSearcher(reader));
-			if (!LuceneGeoDocumentSchema.hasNominalAreas(reader)) {
+			if (!LuceneGeoDocumentSchema.hasAreaCollections(reader)) {
 				return uncertain;
 			}
-			// The envelope-disjoint partition leaves nominal areas with separated envelopes to this evaluation.
+			// The envelope-disjoint partition leaves area collections with separated envelopes to this evaluation.
 			return new BooleanQuery.Builder()
 					.add(uncertain, BooleanClause.Occur.SHOULD)
 					.add(new BooleanQuery.Builder()
 							.add(envelopeSeparatedQuery(lookup, boundSourceIndexGeometry, candidateIsSubject),
 									BooleanClause.Occur.FILTER)
-							.add(LuceneGeoDocumentSchema.nominalAreaQuery(), BooleanClause.Occur.FILTER)
+							.add(LuceneGeoDocumentSchema.areaCollectionQuery(), BooleanClause.Occur.FILTER)
 							.build(), BooleanClause.Occur.SHOULD)
 					.setMinimumNumberShouldMatch(1)
 					.build();
@@ -520,17 +520,17 @@ public class LuceneGeoIndexer implements GeoSparqlIndexer {
 		return getEnvelopeDisjointCandidates(reader -> {
 			EvaluationCrsLookup lookup = EvaluationCrsLookup.of(reader, boundSourceIndexGeometry, candidateIsSubject);
 			Query separated = envelopeSeparatedQuery(lookup, boundSourceIndexGeometry, candidateIsSubject);
-			if (!LuceneGeoDocumentSchema.hasNominalAreas(reader)) {
+			if (!LuceneGeoDocumentSchema.hasAreaCollections(reader)) {
 				return separated;
 			}
 			/*
-			 * Separated envelopes prove RCC8 disconnected only between areas, which a nominal area merely claims to
-			 * be. Nominal areas are left to exact evaluation for every disjoint relation: they are rare, and exact
-			 * evaluation decides the other relations as their envelopes would.
+			 * Separated envelopes do not prove RCC8 disconnected for an area collection; see
+			 * IndexGeometry#isAreaCollection. Area collections are left to exact evaluation for every disjoint
+			 * relation: they are rare, and exact evaluation decides the other relations as their envelopes would.
 			 */
 			return new BooleanQuery.Builder()
 					.add(separated, BooleanClause.Occur.FILTER)
-					.add(LuceneGeoDocumentSchema.nominalAreaQuery(), BooleanClause.Occur.MUST_NOT)
+					.add(LuceneGeoDocumentSchema.areaCollectionQuery(), BooleanClause.Occur.MUST_NOT)
 					.build();
 		});
 	}

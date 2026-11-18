@@ -174,7 +174,8 @@ public final class JenaFunctionEvaluator {
 		JenaCalculationPrecision.configure();
 		GeometryWrapper left = leftSource.asGeometryWrapper();
 		GeometryWrapper right = rightSource.asGeometryWrapper();
-		boolean hasGenericCollection = isGenericCollection(left) || isGenericCollection(right);
+		boolean hasGenericCollection = isGenericCollection(left.getXYGeometry())
+				|| isGenericCollection(right.getXYGeometry());
 		if (!permittedTopology(functionUri, left.getDimensionInfo(), right.getDimensionInfo())) {
 			return false;
 		}
@@ -256,7 +257,7 @@ public final class JenaFunctionEvaluator {
 			String intersectionPattern) throws Exception {
 		GeometryWrapper left = leftSource.asGeometryWrapper();
 		GeometryWrapper right = rightSource.asGeometryWrapper();
-		if (isGenericCollection(left) || isGenericCollection(right)) {
+		if (isGenericCollection(left.getXYGeometry()) || isGenericCollection(right.getXYGeometry())) {
 			GeometryWrapper transformedRight = left.checkTransformSRS(right);
 			return RelateNG.relate(left.getXYGeometry(), transformedRight.getXYGeometry(), intersectionPattern);
 		}
@@ -345,8 +346,12 @@ public final class JenaFunctionEvaluator {
 		return null;
 	}
 
-	private static boolean isGenericCollection(GeometryWrapper wrapper) {
-		return wrapper.getXYGeometry().getClass().equals(GeometryCollection.class);
+	/**
+	 * Whether a geometry is a generic collection, not a multi-geometry. Relations with a generic collection are
+	 * evaluated with JTS {@code RelateNG}, which relates a collection by the union of its members.
+	 */
+	static boolean isGenericCollection(Geometry geometry) {
+		return geometry.getClass().equals(GeometryCollection.class);
 	}
 
 	private static boolean permittedTopology(String functionUri, DimensionInfo left, DimensionInfo right) {
