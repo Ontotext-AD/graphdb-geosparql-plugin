@@ -525,9 +525,17 @@ final class LuceneGeoDocumentSchema {
 		return indexEnvelopeInBox(lower, upper);
 	}
 
-	/** Matches CRS84 index envelopes extending beyond at least one side of the closed bound. */
+	/**
+	 * Matches CRS84 index envelopes extending beyond at least one side of the closed bound, and the
+	 * {@link IndexGeometry#worldFallbackEnvelope world fallback envelope}, which never shows a source to lie inside a
+	 * bound.
+	 */
 	static Query envelopeNotWithinQuery(Envelope boundEnvelope) {
+		Envelope world = IndexGeometry.worldFallbackEnvelope();
+		double[] worldOrdinates = {world.getMinX(), world.getMaxX(), world.getMinY(), world.getMaxY()};
 		return new BooleanQuery.Builder()
+				.add(DoublePoint.newRangeQuery(FIELD_INDEX_ENVELOPE, worldOrdinates, worldOrdinates),
+						BooleanClause.Occur.SHOULD)
 				.add(indexEnvelopeOrdinateAtMost(MIN_X, Math.nextDown(boundEnvelope.getMinX())),
 						BooleanClause.Occur.SHOULD)
 				.add(indexEnvelopeOrdinateAtLeast(MAX_X, Math.nextUp(boundEnvelope.getMaxX())),

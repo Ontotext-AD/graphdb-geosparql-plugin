@@ -494,7 +494,8 @@ public class LuceneGeoIndexer implements GeoSparqlIndexer {
 	 * <p>A transformed source is treated as lying inside its SIS-derived index envelope under the
 	 * conservative-envelope engineering assumption documented by ConservativeCrs84EnvelopeProjector. On that
 	 * premise, when a CRS84 bound fills its own envelope, a candidate envelope wholly inside that rectangle proves
-	 * the source pair cannot be disjoint. The inclusive ranges also remove boundary-contained sources: touching
+	 * the source pair cannot be disjoint. The world fallback envelope stands in for a source that has no such
+	 * envelope and proves nothing. The inclusive ranges also remove boundary-contained sources: touching
 	 * the closed bound still makes sfDisjoint, ehDisjoint, and rcc8dc false. A candidate whose cleanup target is
 	 * not CRS84 is retained separately because the CRS84 containment proof does not model that displacement.
 	 */

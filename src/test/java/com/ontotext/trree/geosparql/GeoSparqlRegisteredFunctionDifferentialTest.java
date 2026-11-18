@@ -108,6 +108,8 @@ public class GeoSparqlRegisteredFunctionDifferentialTest extends AbstractGeoSpar
 						"POLYGON((50 50,51 50,51 51,50 51,50 50,51 50,51 51,50 51,50 50))")
 				+ feature("crs84OverlappingCentre", "crs84OverlappingCentreGeom", "POINT(50.5 50.5)")
 				+ feature("projectedOverlappingCentre", "projectedOverlappingCentreGeom", mercatorOverlappingCentre)
+				+ feature("world", "worldGeom", "POLYGON((-180 -90,180 -90,180 90,-180 90,-180 -90))")
+				+ feature("beyondAntimeridian", "beyondAntimeridianGeom", "<" + MERCATOR + "> POINT(21000000 0)")
 				+ feature("infiniteRectangle", "infiniteRectangleGeom", "<" + UTM_34N
 						+ "> POLYGON((400000 6600000,1e309 6600000,1e309 6700000,400000 6700000,400000 6600000))")
 				+ feature("utmInside", "utmInsideGeom", "<" + UTM_34N + "> POINT(450000 6650000)")
@@ -268,6 +270,18 @@ public class GeoSparqlRegisteredFunctionDifferentialTest extends AbstractGeoSpar
 				assertDifferential(relation, "crs84OverlappingSquare", boundSubject, "crs84OverlappingCentre",
 						"projectedOverlappingCentre");
 			}
+		}
+	}
+
+	/**
+	 * Jena transforms a Web Mercator point east of the antimeridian to a longitude past 180°, outside the world
+	 * envelope that stands in for its CRS84 index envelope, so the point is disjoint from a world-filling bound.
+	 */
+	@Test
+	public void disjointRelationsAgreeForASourceWithTheWorldFallbackEnvelope() throws Exception {
+		for (String relation : List.of("sfDisjoint", "ehDisjoint", "rcc8dc")) {
+			assertDifferential(relation, "world", true, "beyondAntimeridian", "nearBrisbane");
+			assertDifferential(relation, "world", false, "beyondAntimeridian", "nearBrisbane");
 		}
 	}
 

@@ -209,6 +209,14 @@ public final class IndexGeometry {
 				Double.NEGATIVE_INFINITY, Double.POSITIVE_INFINITY);
 	}
 
+	/**
+	 * The CRS84 index envelope of a source whose candidate bounds are {@link CandidateBoundsKind#WORLD_FALLBACK}. It
+	 * meets every CRS84 envelope and says nothing of where the source lies: Jena may place the source outside it.
+	 */
+	public static Envelope worldFallbackEnvelope() {
+		return ConservativeCrs84EnvelopeProjector.worldCrs84Envelope();
+	}
+
 	/** Whether the envelope is the {@link #unboundedEnvelope}. */
 	public static boolean isUnbounded(Envelope envelope) {
 		return unboundedEnvelope().equals(envelope);
