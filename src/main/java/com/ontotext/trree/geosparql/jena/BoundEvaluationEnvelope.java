@@ -5,8 +5,6 @@ import org.apache.jena.geosparql.implementation.registry.SRSRegistry;
 import org.locationtech.jts.geom.Envelope;
 import org.locationtech.jts.geom.Geometry;
 import org.locationtech.jts.geom.Polygon;
-import org.locationtech.jts.operation.relateng.RelateNG;
-import org.locationtech.jts.operation.relateng.RelatePredicate;
 import org.opengis.referencing.operation.TransformException;
 import org.opengis.util.FactoryException;
 
@@ -72,16 +70,14 @@ public final class BoundEvaluationEnvelope {
 	 *
 	 * <p>The proof compares the whole polygon with its envelope, and only disjoint pruning uses it, so it is made on
 	 * first use. A bound that cannot be placed again proves nothing, and nor does one whose envelope is unbounded:
-	 * the proof would hold for its raw envelope, not for the unbounded one lookup compares. An invalid bound proves
-	 * nothing either: JTS may find that a self-overlapping ring fills its envelope while Jena finds a point inside
-	 * that envelope disjoint from it. Nor does a bound whose envelope lacks a
-	 * {@link IndexGeometry#hasNormalArea normal area}.
+	 * the proof would hold for its raw envelope, not for the unbounded one lookup compares. Nor does a bound that
+	 * {@link IndexGeometry#fillsItsEnvelope} rejects, such as an invalid one.
 	 */
 	public boolean fillsEnvelope() {
 		if (fillsEnvelope == null) {
 			try {
 				fillsEnvelope = polygonPoints >= 0 && !IndexGeometry.isUnbounded(envelope)
-						&& IndexGeometry.hasNormalArea(envelope) && isValid() && fillsEnvelope(bound().getXYGeometry());
+						&& IndexGeometry.fillsItsEnvelope(bound().getXYGeometry(), this::isValid);
 			} catch (FactoryException | TransformException e) {
 				fillsEnvelope = false;
 			}
@@ -141,17 +137,5 @@ public final class BoundEvaluationEnvelope {
 
 	private static String coordinate(double x, double y, boolean axisXY) {
 		return axisXY ? x + " " + y : y + " " + x;
-	}
-
-	private static boolean fillsEnvelope(Geometry geometry) {
-		if (geometry.isEmpty() || !(geometry instanceof Polygon)) {
-			return false;
-		}
-		try {
-			return RelateNG.relate(geometry, geometry.getEnvelope(), RelatePredicate.equalsTopo());
-		} catch (RuntimeException e) {
-			// Rectangle containment is an optional proof. Invalid topology must disable it, not fail the lookup.
-			return false;
-		}
 	}
 }

@@ -12,6 +12,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.Optional;
+import java.util.function.BooleanSupplier;
 
 /**
  * Associates a source geometry literal with its derived Lucene index envelope.
@@ -135,29 +136,35 @@ public final class IndexGeometry {
 	/**
 	 * Returns whether the source is a valid, non-empty CRS84 polygon that covers every point in its index envelope.
 	 *
-	 * <p>This deliberately excludes transformed sources, holes, rotated polygons, and collections. An invalid polygon
-	 * is excluded because JTS may find that a self-overlapping ring fills its envelope while Jena finds a point inside
-	 * that envelope disjoint from it, and so is a polygon whose envelope lacks a {@link #hasNormalArea normal area}.
-	 * For an eligible
-	 * native CRS84 bound, containment of another source's index envelope proves that the two sources cannot be
+	 * <p>This deliberately excludes transformed sources, holes, rotated polygons, collections, and the polygons that
+	 * {@link #fillsItsEnvelope} rejects. For an eligible native CRS84 bound, containment of another source's index envelope proves that the two sources cannot be
 	 * disjoint, on the conservative-envelope engineering assumption documented by
 	 * {@link ConservativeCrs84EnvelopeProjector} when that other envelope is SIS-transformed.
 	 */
 	public boolean isEnvelopeCoveringRectangle() {
 		GeometryWrapper sourceWrapper = sourceGeometryLiteral.asGeometryWrapper();
 		Geometry sourceGeometry = sourceWrapper.getXYGeometry();
-		if (!INDEX_CRS.equals(sourceWrapper.getSrsURI())
-				|| sourceGeometry.isEmpty()
-				|| !(sourceGeometry instanceof Polygon)
-				|| !hasNormalArea(sourceGeometry.getEnvelopeInternal())) {
+		return INDEX_CRS.equals(sourceWrapper.getSrsURI())
+				&& fillsItsEnvelope(sourceGeometry, sourceGeometry::isValid);
+	}
+
+	/**
+	 * Whether the geometry is a non-empty, valid polygon that covers every point of its envelope, whose area is
+	 * {@link #hasNormalArea normal}. Only such a polygon proves that a geometry inside its envelope meets it: JTS
+	 * may find that a self-overlapping ring fills its envelope while Jena finds a point inside that envelope
+	 * disjoint from it.
+	 *
+	 * @param valid whether the geometry is valid, asked only of a polygon that passes the cheaper checks
+	 */
+	public static boolean fillsItsEnvelope(Geometry geometry, BooleanSupplier valid) {
+		if (geometry.isEmpty() || !(geometry instanceof Polygon) || !hasNormalArea(geometry.getEnvelopeInternal())) {
 			return false;
 		}
 		try {
-			return sourceGeometry.isValid() && RelateNG.relate(
-					sourceGeometry, sourceGeometry.getEnvelope(), RelatePredicate.equalsTopo());
+			return valid.getAsBoolean()
+					&& RelateNG.relate(geometry, geometry.getEnvelope(), RelatePredicate.equalsTopo());
 		} catch (RuntimeException e) {
-			// Rectangle containment is an optional proof. Invalid topology must disable pruning,
-			// not prevent the query from falling back to exact evaluation.
+			// The proof is optional. Topology JTS cannot decide leaves the pair to exact evaluation.
 			return false;
 		}
 	}
