@@ -81,19 +81,20 @@ public class SourceCoverLookupTest {
     }
 
     /**
-     * A source that is apart from a bound by its boxes is returned as disjoint without exact evaluation. Exact
-     * evaluation agrees for a generic collection as well, which is related by its own evaluation path.
+     * Boxes keep a large area collection that is apart from a bound out of the candidates of non-disjoint relations.
+     * Disjoint relations leave an area collection to exact evaluation, which finds it disjoint.
      */
     @Test
-    public void largeCollectionApartFromABoundIsDisjointUnderExactEvaluationToo() throws Exception {
+    public void largeAreaCollectionApartFromABoundIsDisjointUnderExactEvaluation() throws Exception {
         IndexGeometry collection = geometry("GEOMETRYCOLLECTION(" + RING + "," + climbingLine(400) + ")");
         LuceneGeoIndexer indexer = createIndexer("collection");
         index(indexer, List.of(collection));
         // Outside the ring, beside the line and inside the envelope of both.
         IndexGeometry bound = geometry("POINT(15.85 60.15)");
 
-        assertEquals(Set.of(1L), definite(indexer.getEnvelopeDisjointCandidates(bound, true)));
         assertEquals(Set.of(), ids(indexer.getEnvelopeIntersections(bound, true)));
+        assertEquals(Set.of(), definite(indexer.getEnvelopeDisjointCandidates(bound, true)));
+        assertEquals(Set.of(1L), ids(indexer.getEnvelopeDisjointUncertainCandidates(bound, true)));
         for (GeoSparqlPropertyRelation disjoint : List.of(GeoSparqlPropertyRelation.SF_DISJOINT,
                 GeoSparqlPropertyRelation.EH_DISJOINT)) {
             assertTrue(disjoint.toString(), holds(disjoint, collection.sourceGeometryLiteral(),
