@@ -623,14 +623,15 @@ public class LuceneGeoIndexer implements GeoSparqlIndexer {
 		if (!candidateIsSubject && IndexGeometry.INDEX_CRS.equals(boundSourceCrs)) {
 			return new MatchNoDocsQuery("CRS84 cleanup does not prevent disjoint envelope classification.");
 		}
-		BooleanQuery.Builder query = new BooleanQuery.Builder()
+		/*
+		 * Every source of another CRS is evaluated exactly. When the candidate is the subject, that includes a CRS84
+		 * source: Jena transforms the bound into CRS84, and only placing the bound shows whether that succeeds. A
+		 * source of a CRS the bound is placed in is classified there and kept out of this query by the lookup.
+		 */
+		return new BooleanQuery.Builder()
 				.add(LuceneGeoDocumentSchema.hasEnvelopeQuery(true), BooleanClause.Occur.FILTER)
-				.add(LuceneGeoDocumentSchema.sourceCrsQuery(boundSourceCrs), BooleanClause.Occur.MUST_NOT);
-		if (candidateIsSubject) {
-			query.add(LuceneGeoDocumentSchema.sourceCrsQuery(IndexGeometry.INDEX_CRS),
-					BooleanClause.Occur.MUST_NOT);
-		}
-		return query.build();
+				.add(LuceneGeoDocumentSchema.sourceCrsQuery(boundSourceCrs), BooleanClause.Occur.MUST_NOT)
+				.build();
 	}
 
 	private CloseableIterator<CandidateEntity> getCandidateEntitiesForQuery(Query query) {

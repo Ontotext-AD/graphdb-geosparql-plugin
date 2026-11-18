@@ -106,31 +106,39 @@ public class EvaluationCrsLookupTest {
                     assertTrue("disjoint source " + id + " omitted", disjoint.contains((long) id));
                 }
             }
+            for (long id : definite(indexer.getEnvelopeDisjointCandidates(bound, true))) {
+                assertTrue("source " + id + " is no disjoint match", holds(GeoSparqlPropertyRelation.SF_DISJOINT,
+                        sources.get((int) id - 1).sourceGeometryLiteral(), bound.sourceGeometryLiteral()));
+            }
         } finally {
             BooleanQuery.setMaxClauseCount(clauseLimit);
         }
     }
 
     /**
-     * Sources in twenty CRSs besides CRS84. Sources 1 to 4 lie inside the bound and beside it in EPSG:4326 and
-     * EPSG:3857; the others lie inside it, one in each of eighteen UTM CRSs. The ids of the sources inside the
-     * bound are added to the given set.
+     * Past the clause limit the bound may not be placed in CRS84. A CRS84 source is then evaluated exactly, not proved
+     * disjoint by its index envelope: Jena transforms the bound into CRS84, and cannot transform this bound, whose
+     * height is infinite, so no relation holds.
      */
-    private static List<IndexGeometry> sourcesInManyCrss(Set<Long> inside) {
-        List<IndexGeometry> sources = new ArrayList<>();
-        for (String crs : List.of(EPSG_4326, MERCATOR)) {
-            sources.add(geometry(literal(crs, "POINT(15.5 60.5)")));
-            inside.add((long) sources.size());
-            sources.add(geometry(literal(crs, "POINT(16.01 60.5)")));
+    @Test
+    public void crs84SourceBeyondTheClauseLimitIsEvaluatedExactly() throws Exception {
+        List<IndexGeometry> sources = new ArrayList<>(List.of(geometry("POINT(153.031 -27.47)")));
+        for (int zone = 50; zone <= 53; zone++) {
+            sources.add(geometry("<http://www.opengis.net/def/crs/EPSG/0/327" + zone + "> POINT(500000 6960000)"));
         }
-        for (int zone = 29; zone <= 37; zone++) {
-            for (int hemisphere : new int[]{32600, 32700}) {
-                String utm = "http://www.opengis.net/def/crs/EPSG/0/" + (hemisphere + zone);
-                sources.add(geometry(literal(utm, "POINT(15.5 60.5)")));
-                inside.add((long) sources.size());
-            }
+        LuceneGeoIndexer indexer = createIndexer("crs84-beyond-clause-limit");
+        index(indexer, sources);
+        IndexGeometry bound = geometry("<" + EPSG_4326 + "> POINT Z(-27.47 153.03 1e309)");
+        int clauseLimit = BooleanQuery.getMaxClauseCount();
+        BooleanQuery.setMaxClauseCount(4);
+        try {
+            assertFalse(definite(indexer.getEnvelopeDisjointCandidates(bound, true)).contains(1L));
+            assertTrue(ids(indexer.getDisjointTransformCleanupCandidates(bound, true)).contains(1L));
+        } finally {
+            BooleanQuery.setMaxClauseCount(clauseLimit);
         }
-        return sources;
+        assertFalse(holds(GeoSparqlPropertyRelation.SF_DISJOINT, sources.get(0).sourceGeometryLiteral(),
+                bound.sourceGeometryLiteral()));
     }
 
     /**
