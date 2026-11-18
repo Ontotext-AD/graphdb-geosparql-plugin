@@ -28,6 +28,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Map;
 import java.util.function.Function;
 import java.util.function.Supplier;
 
@@ -598,6 +599,9 @@ public class LuceneGeoIndexer implements GeoSparqlIndexer {
 					// ignore
 				}
 			}
+			if (e instanceof PluginException pluginException) {
+				throw pluginException;
+			}
 			throw new PluginException("Unable to execute Lucene query.", e);
 		}
 
@@ -648,6 +652,9 @@ public class LuceneGeoIndexer implements GeoSparqlIndexer {
 					e.addSuppressed(cleanupFailure);
 				}
 			}
+			if (e instanceof PluginException pluginException) {
+				throw pluginException;
+			}
 			throw new PluginException("Unable to execute Lucene query.", e);
 		}
 	}
@@ -674,12 +681,50 @@ public class LuceneGeoIndexer implements GeoSparqlIndexer {
 					e.addSuppressed(cleanupFailure);
 				}
 			}
+			if (e instanceof PluginException pluginException) {
+				throw pluginException;
+			}
 			throw new PluginException("Unable to execute envelope-disjoint candidate query.", e);
 		}
 	}
 
+	/**
+	 * Opens the index for a query. A query passes the compatibility gate before it opens the index, and a rollback
+	 * can restore an incompatible commit in between, so the commit the query reads is checked as well.
+	 */
 	IndexReader openReader() throws IOException {
-		return DirectoryReader.open(directory);
+		DirectoryReader reader = DirectoryReader.open(directory);
+		String incompatibility;
+		try {
+			incompatibility = incompatibleCommitMessage(reader);
+		} catch (IOException | RuntimeException e) {
+			reader.close();
+			throw e;
+		}
+		if (incompatibility != null) {
+			reader.close();
+			throw new PluginException(incompatibility);
+		}
+		return reader;
+	}
+
+	/**
+	 * Returns the error that reading the reader's commit raises, or null when this plugin can read it. An empty
+	 * index is readable whatever its metadata, and the CRS environment matters only for the current layout.
+	 */
+	private String incompatibleCommitMessage(DirectoryReader reader) throws IOException {
+		if (reader.numDocs() == 0) {
+			return null;
+		}
+		Map<String, String> commitData = reader.getIndexCommit().getUserData();
+		if (!LuceneGeoDocumentSchema.hasCurrentSchemaCommitData(commitData)) {
+			return SCHEMA_MISMATCH_MESSAGE;
+		}
+		if (!currentCrsEnvironmentFingerprint.equals(
+				commitData.get(LuceneGeoDocumentSchema.COMMIT_CRS_ENVIRONMENT_FINGERPRINT_KEY))) {
+			return CRS_ENVIRONMENT_MISMATCH_MESSAGE;
+		}
+		return null;
 	}
 
 	private PluginException luceneMutationFailure(long subject, Function<Long, String> subjectMapper, Exception e) {
@@ -716,10 +761,7 @@ public class LuceneGeoIndexer implements GeoSparqlIndexer {
 				return false;
 			}
 			try (DirectoryReader reader = DirectoryReader.open(directory)) {
-				if (reader.numDocs() == 0) {
-					return false;
-				}
-				return !LuceneGeoDocumentSchema.hasCurrentSchemaCommitData(reader.getIndexCommit().getUserData());
+				return SCHEMA_MISMATCH_MESSAGE.equals(incompatibleCommitMessage(reader));
 			}
 		} catch (IndexNotFoundException e) {
 			return false;
@@ -734,12 +776,7 @@ public class LuceneGeoIndexer implements GeoSparqlIndexer {
 				return false;
 			}
 			try (DirectoryReader reader = DirectoryReader.open(directory)) {
-				if (reader.numDocs() == 0
-						|| !LuceneGeoDocumentSchema.hasCurrentSchemaCommitData(reader.getIndexCommit().getUserData())) {
-					return false;
-				}
-				return !currentCrsEnvironmentFingerprint.equals(reader.getIndexCommit().getUserData()
-						.get(LuceneGeoDocumentSchema.COMMIT_CRS_ENVIRONMENT_FINGERPRINT_KEY));
+				return CRS_ENVIRONMENT_MISMATCH_MESSAGE.equals(incompatibleCommitMessage(reader));
 			}
 		} catch (IndexNotFoundException e) {
 			return false;

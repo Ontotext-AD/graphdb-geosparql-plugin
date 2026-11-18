@@ -76,14 +76,17 @@ public class LuceneGeoSchemaTest {
 	}
 
 	private LuceneGeoIndexer createIndexer(File dataDir, String crsEnvironmentFingerprint) throws Exception {
+		LuceneGeoIndexer indexer = new LuceneGeoIndexer(plugin(dataDir), () -> crsEnvironmentFingerprint);
+		indexer.initialize();
+		return indexer;
+	}
+
+	private static GeoSparqlPlugin plugin(File dataDir) {
 		GeoSparqlPlugin parent = new GeoSparqlPlugin();
 		parent.setConfig(new GeoSparqlConfig());
 		parent.setLogger(LOG);
 		parent.setDataDir(dataDir);
-
-		LuceneGeoIndexer indexer = new LuceneGeoIndexer(parent, () -> crsEnvironmentFingerprint);
-		indexer.initialize();
-		return indexer;
+		return parent;
 	}
 
 	@Test
@@ -471,6 +474,48 @@ public class LuceneGeoSchemaTest {
 		PluginException exception = assertThrows(PluginException.class,
 				() -> restarted.getSourceGeometryLiteralsFor(0));
 		assertForceReindexMessage(exception);
+	}
+
+	/**
+	 * A query passes the compatibility gate before it opens the index. When a rollback restores an incompatible commit
+	 * in between, the query reports the rebuild error instead of reading that commit.
+	 */
+	@Test
+	public void queryOpeningACommitRestoredByRollbackReportsTheRebuildError() throws Exception {
+		Path dataDir = tmpFolder.getRoot().toPath().resolve("rollback-before-reader-opens");
+		Files.createDirectories(dataDir);
+		writeCurrentSchemaIndexWithoutCommitMarker(dataDir);
+		RollbackBeforeReaderOpensIndexer indexer = new RollbackBeforeReaderOpensIndexer(plugin(dataDir.toFile()));
+		indexer.initialize();
+		indexer.begin();
+		indexer.freshIndex();
+		indexer.indexGeometryList(1L, subject -> "Subject " + subject, List.of(sampleGeometry));
+		indexer.commit();
+		indexer.rollBackBeforeNextReaderOpens = true;
+
+		assertForceReindexMessage(assertThrows(PluginException.class, () -> indexer.getSourceGeometryLiteralsFor(0)));
+	}
+
+	/** Rolls its transaction back once, between a query passing the compatibility gate and opening the index. */
+	private static final class RollbackBeforeReaderOpensIndexer extends LuceneGeoIndexer {
+		private boolean rollBackBeforeNextReaderOpens;
+
+		private RollbackBeforeReaderOpensIndexer(GeoSparqlPlugin parent) {
+			super(parent, () -> "test-crs-environment");
+		}
+
+		@Override
+		IndexReader openReader() throws IOException {
+			if (rollBackBeforeNextReaderOpens) {
+				rollBackBeforeNextReaderOpens = false;
+				try {
+					rollback();
+				} catch (Exception e) {
+					throw new IOException(e);
+				}
+			}
+			return super.openReader();
+		}
 	}
 
     @Test
