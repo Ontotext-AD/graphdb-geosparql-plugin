@@ -33,8 +33,9 @@ import java.util.Objects;
 public final class SourceGeometryLiteral {
 	/**
 	 * Most coordinates that the right operands kept by one source hold together, each geometry component counting
-	 * {@link #COMPONENT_COORDINATES} more. A large source evaluated in many CRSs keeps the operands that fit and is
-	 * transformed again, as Jena does, for each evaluation in the others.
+	 * {@link #COMPONENT_COORDINATES} more. An operand in a latitude-first CRS counts twice, since Jena holds it in
+	 * both axis orders. A large source evaluated in many CRSs keeps the operands that fit and is transformed again,
+	 * as Jena does, for each evaluation in the others.
 	 */
 	static final int MAX_KEPT_RIGHT_OPERAND_COORDINATES = 250_000;
 	/**
@@ -209,6 +210,9 @@ public final class SourceGeometryLiteral {
 				? left : new GeometryWrapper(leftCrsUri, source.getGeometryDatatypeURI());
 		GeometryWrapper operand = leftOperand.checkTransformSRS(source);
 		long coordinates = keptCoordinates(operand.getXYGeometry());
+		if (operand.getParsingGeometry() != operand.getXYGeometry()) {
+			coordinates += keptCoordinates(operand.getParsingGeometry());
+		}
 		if (coordinates <= MAX_KEPT_RIGHT_OPERAND_COORDINATES - keptRightOperandCoordinates) {
 			keptRightOperandCoordinates += coordinates;
 			rightOperands = new RightOperand(leftCrsUri, operand, rightOperands);

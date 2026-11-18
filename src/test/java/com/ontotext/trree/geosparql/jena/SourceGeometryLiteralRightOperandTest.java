@@ -88,6 +88,31 @@ public class SourceGeometryLiteralRightOperandTest {
 	}
 
 	/**
+	 * Jena keeps a latitude-first operand in both axis orders, and both count against the limit. A line of three
+	 * fifths of the limit is kept in a CRS with east-north axes but not in a latitude-first one.
+	 */
+	@Test
+	public void latitudeFirstRightOperandCountsBothAxisOrdersAgainstTheLimit() throws Exception {
+		StringBuilder line = new StringBuilder("LINESTRING(15 60.5");
+		for (int i = 1; i < 3 * SourceGeometryLiteral.MAX_KEPT_RIGHT_OPERAND_COORDINATES / 5; i++) {
+			line.append(',').append(15 + i * 0.000005).append(" 60.5");
+		}
+		String wkt = line.append(')').toString();
+		String mercator = "http://www.opengis.net/def/crs/EPSG/0/3857";
+		String wgs84 = "http://www.opengis.net/def/crs/EPSG/0/4326";
+		SourceGeometryLiteral eastNorthSource = SourceGeometryLiteral.fromWkt(wkt);
+		SourceGeometryLiteral latitudeFirstSource = SourceGeometryLiteral.fromWkt(wkt);
+
+		GeometryWrapper inMercator = eastNorthSource.asRightOperandIn(mercator);
+		GeometryWrapper inWgs84 = latitudeFirstSource.asRightOperandIn(wgs84);
+
+		assertSame(inMercator.getParsingGeometry(), inMercator.getXYGeometry());
+		assertSame(inMercator, eastNorthSource.asRightOperandIn(mercator));
+		assertNotSame(inWgs84.getParsingGeometry(), inWgs84.getXYGeometry());
+		assertNotSame(inWgs84, latitudeFirstSource.asRightOperandIn(wgs84));
+	}
+
+	/**
 	 * Each component of a geometry counts against the limit besides its coordinates, so a source of many small parts
 	 * keeps no right operand once they take more than the limit, though its coordinates alone would fit.
 	 */
