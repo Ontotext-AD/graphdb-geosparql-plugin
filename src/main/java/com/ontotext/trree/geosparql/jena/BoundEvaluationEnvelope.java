@@ -76,8 +76,13 @@ public final class BoundEvaluationEnvelope {
 	public boolean fillsEnvelope() {
 		if (fillsEnvelope == null) {
 			try {
-				fillsEnvelope = polygonPoints >= 0 && !IndexGeometry.isUnbounded(envelope)
-						&& IndexGeometry.fillsItsEnvelope(bound().getXYGeometry(), this::isValid);
+				if (polygonPoints < 0 || IndexGeometry.isUnbounded(envelope)) {
+					fillsEnvelope = false;
+				} else {
+					// One placed copy serves both checks: a copy too large to keep would be placed again.
+					Geometry geometry = bound().getXYGeometry();
+					fillsEnvelope = IndexGeometry.fillsItsEnvelope(geometry, () -> isValid(geometry));
+				}
 			} catch (FactoryException | TransformException e) {
 				fillsEnvelope = false;
 			}
@@ -97,8 +102,20 @@ public final class BoundEvaluationEnvelope {
 	public boolean isValid() {
 		if (valid == null) {
 			try {
-				valid = bound().getXYGeometry().isValid();
-			} catch (FactoryException | TransformException | RuntimeException e) {
+				return isValid(bound().getXYGeometry());
+			} catch (FactoryException | TransformException e) {
+				valid = false;
+			}
+		}
+		return valid;
+	}
+
+	/** Whether the bound is valid, given the geometry Jena evaluates for it. */
+	private boolean isValid(Geometry geometry) {
+		if (valid == null) {
+			try {
+				valid = geometry.isValid();
+			} catch (RuntimeException e) {
 				valid = false;
 			}
 		}
