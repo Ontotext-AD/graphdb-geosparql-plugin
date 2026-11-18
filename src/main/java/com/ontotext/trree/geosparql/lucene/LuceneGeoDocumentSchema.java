@@ -75,8 +75,8 @@ final class LuceneGeoDocumentSchema {
 	/** Stored WKB for the complete native-CRS source geometry used to construct Jena exact-evaluation input. */
 	static final String FIELD_SOURCE_GEOMETRY = "geoData";
 	/**
-	 * Stored marker on exactly the documents whose WKB cannot keep every ordinate of the source; exact evaluation
-	 * parses their stored lexical form instead. See {@link SourceGeometryWkbCodec#preservesOrdinates}.
+	 * Stored marker on exactly the documents whose WKB does not read back as the geometry Jena parses; exact
+	 * evaluation parses their stored lexical form instead. See {@link SourceGeometryWkbCodec#reproduces}.
 	 */
 	static final String FIELD_SOURCE_FROM_LEXICAL_FORM = "geoSourceFromLexicalForm";
 	/** Stored per-document schema number used for defensive validation after the commit-level check. */
@@ -180,7 +180,7 @@ final class LuceneGeoDocumentSchema {
 		// them for exact predicate evaluation. Their sentinel document deliberately has no Lucene spatial fields.
 
 		doc.add(new StoredField(FIELD_SOURCE_GEOMETRY, sourceGeometryWkb));
-		if (!SourceGeometryWkbCodec.preservesOrdinates(source)) {
+		if (!SourceGeometryWkbCodec.reproduces(source, sourceGeometryWkb)) {
 			doc.add(new StoredField(FIELD_SOURCE_FROM_LEXICAL_FORM, 1));
 		}
 		doc.add(new StoredField(FIELD_SCHEMA_VERSION, SCHEMA_VERSION));

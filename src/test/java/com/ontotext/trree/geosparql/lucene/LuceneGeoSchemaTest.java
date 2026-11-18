@@ -174,7 +174,7 @@ public class LuceneGeoSchemaTest {
 		SourceGeometryLiteral mixed = SourceGeometryLiteral.fromWkt(
 				epsg4326 + "GEOMETRYCOLLECTION Z(POINT(-27.47 153.03),POINT Z(-27.47 153.03 55))");
 		SourceGeometryLiteral uniform = SourceGeometryLiteral.fromWkt(
-				epsg4326 + "GEOMETRYCOLLECTION Z(POINT Z(-27.47 153.03 54),POINT Z(-27.47 153.03 55))");
+				"GEOMETRYCOLLECTION Z(POINT Z(153.03 -27.47 54),POINT Z(153.03 -27.47 55))");
 		Document mixedDocument = currentSchemaDocument(1L, IndexGeometry.fromSourceGeometryLiteral(mixed));
 		Document uniformDocument = currentSchemaDocument(2L, IndexGeometry.fromSourceGeometryLiteral(uniform));
 
