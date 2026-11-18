@@ -575,14 +575,9 @@ public class LuceneGeoIndexer implements GeoSparqlIndexer {
 	@Override
 	public CloseableIterator<SourceGeometryLiteral> getSourceGeometryLiteralsFor(long subject) {
 		assertReadableCurrentSchema();
-		final Query query;
-		if (subject > 0) {
-			query = LuceneGeoDocumentSchema.entityIdQuery(subject);
-		} else {
-			query = LuceneGeoDocumentSchema.allDocumentsQuery();
-		}
-
-		return getSourceGeometryLiteralsForQuery(query);
+		return getSourceGeometryLiteralsForQuery(subject == 0
+				? LuceneGeoDocumentSchema.allDocumentsQuery()
+				: LuceneGeoDocumentSchema.entityIdQuery(subject));
 	}
 
 	private CloseableIterator<SourceGeometryLiteral> getSourceGeometryLiteralsForQuery(Query query) {

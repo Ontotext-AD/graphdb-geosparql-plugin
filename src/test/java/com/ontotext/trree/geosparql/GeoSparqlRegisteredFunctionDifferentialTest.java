@@ -271,6 +271,20 @@ public class GeoSparqlRegisteredFunctionDifferentialTest extends AbstractGeoSpar
 		}
 	}
 
+	/** An IRI that the repository does not hold has no geometry, so no relation holds with it. */
+	@Test
+	public void boundIriAbsentFromTheRepositoryMatchesNothing() throws Exception {
+		for (String relation : List.of("sfIntersects", "sfDisjoint", "ehCovers")) {
+			assertEquals(relation + " object-bound", Set.of(), queryCandidates(
+					"SELECT ?candidate WHERE { ?candidate geo:" + relation + " ex:absentFeature . }"));
+			assertEquals(relation + " subject-bound", Set.of(), queryCandidates(
+					"SELECT ?candidate WHERE { ex:absentFeature geo:" + relation + " ?candidate . }"));
+			assertEquals(relation + " both bound", Set.of(), queryCandidates("SELECT ?candidate WHERE {\n"
+					+ candidateValues(new String[] { "tiles", "nearBrisbane" })
+					+ "  ?candidate geo:" + relation + " ex:absentFeature .\n}"));
+		}
+	}
+
 	@Test
 	public void multipleDefaultGeometrySourcesUseExistentialEntitySemantics() throws Exception {
 		assertDifferential("sfIntersects", "leftArea", false, "multiSource");

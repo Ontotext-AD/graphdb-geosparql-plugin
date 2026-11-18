@@ -98,8 +98,9 @@ public interface GeoSparqlIndexer {
 	CloseableIterator<CandidateEntity> getAllEntities();
 
 	/**
-	 * Streams all stored source geometry literal snapshots for one entity. A non-positive id selects every stored
-	 * document for internal schema and lifecycle reads.
+	 * Streams all stored source geometry literal snapshots for one entity. Id 0 selects every stored document for
+	 * internal schema and lifecycle reads. A negative id, which GraphDB gives a value the repository does not hold,
+	 * selects none.
 	 *
 	 * @param subject subject id of the entity
 	 * @return a closeable iterator over source geometry literal snapshots
