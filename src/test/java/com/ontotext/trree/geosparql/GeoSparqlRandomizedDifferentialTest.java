@@ -12,6 +12,8 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Random;
 import java.util.Set;
+import java.util.TreeMap;
+import java.util.TreeSet;
 import java.util.stream.Collectors;
 
 import static org.junit.Assert.assertTrue;
@@ -24,6 +26,9 @@ import static org.junit.Assert.assertTrue;
  * points and polygons with an infinite coordinate. All lie within a few kilometres of each other near Brisbane, so many pairs meet, touch or
  * nearly do. Half of the geometries are indexed when the plugin is enabled and the rest by later updates. One seed
  * compares with a Lucene clause limit low enough that the bound cannot be placed in every CRS.
+ *
+ * <p>Besides random bounds, every seed compares a polygon covering the world, a polygon whose ring winds twice around
+ * a square, a polygon about a millimetre across, and a feature that the repository does not hold.
  */
 public class GeoSparqlRandomizedDifferentialTest extends AbstractGeoSparqlPluginTest {
 	private static final String NAMESPACE = "http://example.com/randomized-differential/";
@@ -39,6 +44,13 @@ public class GeoSparqlRandomizedDifferentialTest extends AbstractGeoSparqlPlugin
 	private static final double LATITUDE = -27.47;
 	private static final double SPREAD = 0.02;
 	private static final double MERCATOR_RADIUS = 6378137;
+	private static final Map<String, String> FIXED_BOUNDS = Map.of(
+			"world", "POLYGON((-180 -90,180 -90,180 90,-180 90,-180 -90))",
+			"doubleWound", "POLYGON((153.01 -27.48,153.03 -27.48,153.03 -27.46,153.01 -27.46,153.01 -27.48,"
+					+ "153.03 -27.48,153.03 -27.46,153.01 -27.46,153.01 -27.48))",
+			"tiny", "POLYGON((153.02 -27.47,153.02000001 -27.47,153.02000001 -27.46999999,153.02 -27.46999999,"
+					+ "153.02 -27.47))");
+	private static final String ABSENT = "absent";
 
 	private record Crs(String uri, boolean latitudeFirst, boolean height, boolean projected) {
 	}
@@ -86,6 +98,16 @@ public class GeoSparqlRandomizedDifferentialTest extends AbstractGeoSparqlPlugin
 			}
 		}
 		assertTrue("too few geometries accepted: " + rejected, features.size() >= FEATURES * 3 / 4);
+		for (Map.Entry<String, String> bound : new TreeMap<>(FIXED_BOUNDS).entrySet()) {
+			executeSparqlUpdateQuery(PREFIXES + "INSERT DATA {\n"
+					+ "  ex:" + bound.getKey() + " a geo:Feature ; geo:hasDefaultGeometry ex:" + bound.getKey() + "Geom .\n"
+					+ "  ex:" + bound.getKey() + "Geom a geo:Geometry ; geo:asWKT \"" + bound.getValue()
+					+ "\"^^geo:wktLiteral .\n}");
+			features.put(bound.getKey(), bound.getValue());
+		}
+		List<String> bounds = new ArrayList<>(features.keySet().stream().limit(BOUNDS).toList());
+		bounds.addAll(new TreeSet<>(FIXED_BOUNDS.keySet()));
+		bounds.add(ABSENT);
 		Set<Value> candidates = features.keySet().stream().map(name -> (Value) VF.createIRI(NAMESPACE, name))
 				.collect(Collectors.toCollection(LinkedHashSet::new));
 		String values = features.keySet().stream().map(name -> "ex:" + name).collect(Collectors.joining(" "));
@@ -96,7 +118,7 @@ public class GeoSparqlRandomizedDifferentialTest extends AbstractGeoSparqlPlugin
 		}
 		List<String> mismatches = new ArrayList<>();
 		try {
-			for (String bound : features.keySet().stream().limit(BOUNDS).toList()) {
+			for (String bound : bounds) {
 				for (String relation : RELATIONS) {
 					for (boolean boundSubject : new boolean[] { false, true }) {
 						Set<Value> property = query("SELECT DISTINCT ?candidate WHERE {\n" + (boundSubject
