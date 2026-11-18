@@ -308,7 +308,7 @@ public class GeoSparqlUpdateListenerTest {
 		assertEquals(0, indexedCount.get());
 	}
 
-	/** A feature that uses several changed geometries is indexed once, from all of them. */
+	/** A feature that uses several changed geometries is loaded and indexed once, from all of them. */
 	@Test
 	public void featureWithSeveralChangedGeometriesIsIndexedOnce() throws Exception {
 		GeoSparqlPlugin plugin = enabledPlugin(tmpFolder.newFolder("feature-indexed-once").toPath());
@@ -356,6 +356,7 @@ public class GeoSparqlUpdateListenerTest {
 		listener.transactionCompleted(connection);
 
 		assertEquals(List.of(feature, firstGeometry, secondGeometry), indexed.stream().sorted().toList());
+		assertEquals(1, statements.requests.stream().filter(List.of(feature, 3L, 0L)::equals).count());
 	}
 
 	private GeoSparqlPlugin enabledPlugin(Path dataDir) {

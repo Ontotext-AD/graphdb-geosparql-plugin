@@ -10,6 +10,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Function;
+import java.util.function.LongConsumer;
 
 /**
  * Loads GeoSPARQL geometry resources and Feature default geometries for incremental transaction updates.
@@ -59,12 +60,12 @@ final class RepositoryGeometrySource {
 		return geometries;
 	}
 
-	void forEachFeatureUsingGeometry(long geometryResourceId, FeatureConsumer consumer) {
+	void forEachFeatureUsingGeometry(long geometryResourceId, LongConsumer consumer) {
 		StatementIterator iterator = pluginConnection.getStatements().get(0, plugin.hasDefaultGeometry,
 				geometryResourceId);
 		try {
 			while (iterator.next()) {
-				consumer.accept(iterator.subject, geometriesForFeature(iterator.subject));
+				consumer.accept(iterator.subject);
 			}
 		} finally {
 			iterator.close();
@@ -85,9 +86,4 @@ final class RepositoryGeometrySource {
 			iterator.close();
 		}
 	}
-
-}
-
-interface FeatureConsumer {
-	void accept(long featureId, List<IndexGeometry> geometries);
 }
