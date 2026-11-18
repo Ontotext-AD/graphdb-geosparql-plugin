@@ -56,6 +56,8 @@ final class LuceneGeoDocumentSchema {
 	static final String FIELD_SOURCE_COVER = "geoSourceCover";
 	/** Indexed marker present on exactly the documents that carry cover boxes. */
 	static final String FIELD_HAS_SOURCE_COVER = "geoHasSourceCover";
+	/** Indexed marker present on exactly the spatial documents of {@link IndexGeometry#isNominalArea nominal areas}. */
+	static final String FIELD_NOMINAL_AREA = "geoNominalArea";
 	/**
 	 * XY envelope of the source in its own CRS, as one point of four dimensions: minimum X, maximum X, minimum Y
 	 * and maximum Y. It serves lookup in the CRS where Jena evaluates a pair. Absent on empty sentinels.
@@ -93,6 +95,7 @@ final class LuceneGeoDocumentSchema {
 	static final String HAS_ENVELOPE_VALUE = "1";
 	static final String NO_ENVELOPE_VALUE = "0";
 	static final String HAS_SOURCE_COVER_VALUE = "1";
+	static final String NOMINAL_AREA_VALUE = "1";
 	/** Ends of the CRS84 longitude range, which name the same meridian. */
 	private static final double MINIMUM_LONGITUDE = -180.0;
 	private static final double MAXIMUM_LONGITUDE = 180.0;
@@ -107,11 +110,11 @@ final class LuceneGeoDocumentSchema {
 	static final String COMMIT_SCHEMA_LAYOUT_KEY = "geosparql.luceneSchemaLayout";
 	/**
 	 * Commit metadata value requiring source WKB, the envelope marker, indexed source CRS, each spatial source's
-	 * envelope in its own CRS, the CRS84 index envelope of each source in another CRS, and cover boxes for large
-	 * sources.
+	 * envelope in its own CRS, the CRS84 index envelope of each source in another CRS, cover boxes for large
+	 * sources, and the nominal area marker.
 	 */
 	static final String COMMIT_SCHEMA_LAYOUT_VALUE =
-			"prefix-envelope-ordinate-preserving-source-wkb-envelope-marker-topology-dv-indexed-source-crs-source-envelope-index-envelope-source-cover";
+			"prefix-envelope-ordinate-preserving-source-wkb-envelope-marker-topology-dv-indexed-source-crs-source-envelope-index-envelope-source-cover-nominal-area";
 	/** Commit metadata key identifying the CRS transformation inputs used for candidate envelopes. */
 	static final String COMMIT_CRS_ENVIRONMENT_FINGERPRINT_KEY = "geosparql.crsEnvironmentFingerprint";
 	static final String SCHEMA_MISMATCH_MESSAGE =
@@ -157,6 +160,9 @@ final class LuceneGeoDocumentSchema {
 			doc.add(new DoublePoint(FIELD_SOURCE_ENVELOPE, sourceEnvelope.getMinX(), sourceEnvelope.getMaxX(),
 					sourceEnvelope.getMinY(), sourceEnvelope.getMaxY()));
 			addSourceCover(doc, geometry);
+			if (geometry.isNominalArea()) {
+				doc.add(new StringField(FIELD_NOMINAL_AREA, NOMINAL_AREA_VALUE, Field.Store.NO));
+			}
 			if (!IndexGeometry.INDEX_CRS.equals(source.effectiveCrsUri())) {
 				doc.add(new DoublePoint(FIELD_INDEX_ENVELOPE, envelope.getMinX(), envelope.getMaxX(),
 						envelope.getMinY(), envelope.getMaxY()));
@@ -279,6 +285,15 @@ final class LuceneGeoDocumentSchema {
 	static Query hasEnvelopeQuery(boolean hasEnvelope) {
 		return new TermQuery(new Term(FIELD_HAS_ENVELOPE,
 				hasEnvelope ? HAS_ENVELOPE_VALUE : NO_ENVELOPE_VALUE));
+	}
+
+	/** Whether any document of the reader is a nominal area. */
+	static boolean hasNominalAreas(IndexReader reader) throws IOException {
+		return reader.docFreq(new Term(FIELD_NOMINAL_AREA, NOMINAL_AREA_VALUE)) > 0;
+	}
+
+	static Query nominalAreaQuery() {
+		return new TermQuery(new Term(FIELD_NOMINAL_AREA, NOMINAL_AREA_VALUE));
 	}
 
 	/** Whether any document of the reader carries cover boxes. */

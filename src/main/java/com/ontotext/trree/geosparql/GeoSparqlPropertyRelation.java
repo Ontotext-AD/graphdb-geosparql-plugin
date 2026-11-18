@@ -1,5 +1,6 @@
 package com.ontotext.trree.geosparql;
 
+import com.ontotext.trree.geosparql.jena.IndexGeometry;
 import com.ontotext.trree.geosparql.jena.SourceGeometryLiteral;
 import com.ontotext.trree.geosparql.jena.JenaGeoSparqlException;
 import com.ontotext.trree.geosparql.jena.JenaFunctionEvaluator;
@@ -79,7 +80,8 @@ public enum GeoSparqlPropertyRelation {
 	 * Returns whether two separated, non-empty index envelopes prove this relation for the supplied source dimensions.
 	 *
 	 * <p>Simple Features and Egenhofer disjoint have no dimensional precondition. RCC8 relations apply only to
-	 * area/area pairs, so envelope separation is a definite RCC8 disconnected match only for two area sources.
+	 * area/area pairs, so envelope separation is a definite RCC8 disconnected match only for two area sources. The
+	 * partition takes no nominal area on either side, so a source of area dimension there holds a polygon.
 	 */
 	boolean envelopeDisjointIsDefiniteMatch(int candidateTopologicalDimension,
 			int boundTopologicalDimension) {
@@ -100,6 +102,16 @@ public enum GeoSparqlPropertyRelation {
 	boolean boundSourceCanParticipateInDisjointPartition(int boundTopologicalDimension) {
 		return candidateLookupPolicy == CandidateLookupPolicy.DISJOINT_PARTITIONED
 				&& (this != RCC8_DC || boundTopologicalDimension == Dimension.A);
+	}
+
+	/**
+	 * Returns whether separated envelopes can prove this relation for a bound source.
+	 *
+	 * <p>They prove RCC8 disconnected only between areas, which a nominal area merely claims to be. Every candidate
+	 * of a nominal area bound source therefore needs exact evaluation.
+	 */
+	boolean envelopeDisjointProvesMatchFor(IndexGeometry boundSource) {
+		return this != RCC8_DC || !boundSource.isNominalArea();
 	}
 
 	public boolean evaluate(SourceGeometryLiteral argument1, SourceGeometryLiteral argument2) {

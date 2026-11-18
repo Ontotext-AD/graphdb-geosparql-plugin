@@ -464,13 +464,26 @@ public class LuceneGeoIndexer implements GeoSparqlIndexer {
 		return getCandidateEntities(reader -> {
 			EvaluationCrsLookup lookup = EvaluationCrsLookup.of(reader, boundSourceIndexGeometry, candidateIsSubject);
 			// A source the cleanup phase evaluates is left to that phase, so no source is evaluated twice.
-			return lookup.withoutSourcesInsideTheBound(
+			Query uncertain = lookup.withoutSourcesInsideTheBound(
 					lookup.orElsewhere(lookup.possiblyDisjoint(), () -> new BooleanQuery.Builder()
 							.add(indexEnvelopeDisjointUncertainQuery(boundSourceIndexGeometry), BooleanClause.Occur.FILTER)
 							.add(disjointTransformCleanupCandidatesQuery(boundSourceIndexGeometry, candidateIsSubject),
 									BooleanClause.Occur.MUST_NOT)
 							.build()),
 					new IndexSearcher(reader));
+			if (!LuceneGeoDocumentSchema.hasNominalAreas(reader)) {
+				return uncertain;
+			}
+			// The envelope-disjoint partition leaves nominal areas with separated envelopes to this evaluation.
+			return new BooleanQuery.Builder()
+					.add(uncertain, BooleanClause.Occur.SHOULD)
+					.add(new BooleanQuery.Builder()
+							.add(envelopeSeparatedQuery(lookup, boundSourceIndexGeometry, candidateIsSubject),
+									BooleanClause.Occur.FILTER)
+							.add(LuceneGeoDocumentSchema.nominalAreaQuery(), BooleanClause.Occur.FILTER)
+							.build(), BooleanClause.Occur.SHOULD)
+					.setMinimumNumberShouldMatch(1)
+					.build();
 		});
 	}
 
@@ -506,18 +519,36 @@ public class LuceneGeoIndexer implements GeoSparqlIndexer {
 		}
 		return getEnvelopeDisjointCandidates(reader -> {
 			EvaluationCrsLookup lookup = EvaluationCrsLookup.of(reader, boundSourceIndexGeometry, candidateIsSubject);
+			Query separated = envelopeSeparatedQuery(lookup, boundSourceIndexGeometry, candidateIsSubject);
+			if (!LuceneGeoDocumentSchema.hasNominalAreas(reader)) {
+				return separated;
+			}
 			/*
-			 * For a source of another CRS than the bound's, strict separation of CRS84 index envelopes proves
-			 * disjointness on the conservative-envelope engineering assumption for SIS-transformed envelopes.
-			 * Candidates requiring mixed-CRS cleanup remain outside this proof and are exact-evaluated in their
-			 * traversal phase.
+			 * Separated envelopes prove RCC8 disconnected only between areas, which a nominal area merely claims to
+			 * be. Nominal areas are left to exact evaluation for every disjoint relation: they are rare, and exact
+			 * evaluation decides the other relations as their envelopes would.
 			 */
-			return lookup.orElsewhere(lookup.apart(), () -> new BooleanQuery.Builder()
-					.add(envelopeDisjointQuery(boundSourceIndexGeometry), BooleanClause.Occur.FILTER)
-					.add(disjointTransformCleanupCandidatesQuery(boundSourceIndexGeometry, candidateIsSubject),
-							BooleanClause.Occur.MUST_NOT)
-					.build());
+			return new BooleanQuery.Builder()
+					.add(separated, BooleanClause.Occur.FILTER)
+					.add(LuceneGeoDocumentSchema.nominalAreaQuery(), BooleanClause.Occur.MUST_NOT)
+					.build();
 		});
+	}
+
+	/**
+	 * Selects the sources whose envelopes prove them disjoint from the bound.
+	 *
+	 * <p>For a source of another CRS than the bound's, strict separation of CRS84 index envelopes proves
+	 * disjointness on the conservative-envelope engineering assumption for SIS-transformed envelopes. Candidates
+	 * requiring mixed-CRS cleanup remain outside this proof and are exact-evaluated in their traversal phase.
+	 */
+	private Query envelopeSeparatedQuery(EvaluationCrsLookup lookup, IndexGeometry boundSourceIndexGeometry,
+			boolean candidateIsSubject) throws IOException {
+		return lookup.orElsewhere(lookup.apart(), () -> new BooleanQuery.Builder()
+				.add(envelopeDisjointQuery(boundSourceIndexGeometry), BooleanClause.Occur.FILTER)
+				.add(disjointTransformCleanupCandidatesQuery(boundSourceIndexGeometry, candidateIsSubject),
+						BooleanClause.Occur.MUST_NOT)
+				.build());
 	}
 
 	private Query envelopeDisjointQuery(IndexGeometry boundSourceIndexGeometry) {

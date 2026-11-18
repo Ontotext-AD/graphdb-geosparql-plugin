@@ -70,6 +70,27 @@ public class LuceneDisjointEnvelopeLookupTest {
 		assertEquals(Set.of(5L), uncertain(indexer.getNonSpatialCandidates()));
 	}
 
+	/**
+	 * Separated envelopes make neither nominal area a definite match, in the bound's CRS or in another, while the
+	 * collection that holds a polygon stays one.
+	 */
+	@Test
+	public void separatedNominalAreasAreEvaluatedExactly() throws Exception {
+		LuceneGeoIndexer indexer = createIndexer("nominal-areas", GeoSparqlConfig.PrefixTree.QUAD, 11);
+		index(indexer, List.of(
+				geometry("GEOMETRYCOLLECTION(POINT(20 20),POLYGON EMPTY)"),
+				geometry("GEOMETRYCOLLECTION(POINT(20 20),POLYGON((20 20,21 20,21 21,20 20)))"),
+				geometry("<http://www.opengis.net/def/crs/EPSG/0/3857> "
+						+ "GEOMETRYCOLLECTION(POINT(2000000 2000000),POLYGON EMPTY)")));
+		IndexGeometry bound = geometry("POLYGON((0 0,1 0,1 1,0 1,0 0))");
+
+		for (boolean candidateIsSubject : new boolean[]{true, false}) {
+			assertEquals(Set.of(2L), definite(indexer.getEnvelopeDisjointCandidates(bound, candidateIsSubject)));
+			assertEquals(Set.of(1L, 3L),
+					uncertain(indexer.getEnvelopeDisjointUncertainCandidates(bound, candidateIsSubject)));
+		}
+	}
+
 	/** Sources 6 and later lie inside the bound with sources 1 and 3; there are enough of them to certify it. */
 	@Test
 	public void nonRectangularBoundPrunesContainedSourcesAndRetainsDisjointCandidates() throws Exception {

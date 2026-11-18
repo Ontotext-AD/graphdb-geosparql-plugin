@@ -278,6 +278,25 @@ public class JenaGeometryAdapterTest {
 	}
 
 	@Test
+	public void collectionOfAreaDimensionWithoutPolygonIsNominalArea() {
+		assertTrue(isNominalArea("GEOMETRYCOLLECTION(POINT(1 2),POLYGON EMPTY)"));
+		assertTrue(isNominalArea("GEOMETRYCOLLECTION(LINESTRING(1 2,3 4),POLYGON EMPTY)"));
+		assertTrue(isNominalArea("GEOMETRYCOLLECTION(POINT(1 2),GEOMETRYCOLLECTION(MULTIPOLYGON EMPTY))"));
+
+		assertFalse(isNominalArea("POLYGON((0 0,0 1,1 1,1 0,0 0))"));
+		assertFalse(isNominalArea("MULTIPOLYGON(((0 0,0 1,1 1,1 0,0 0)))"));
+		assertFalse(isNominalArea("GEOMETRYCOLLECTION(POINT(1 2),POLYGON((0 0,0 1,1 1,1 0,0 0)))"));
+		assertFalse(isNominalArea(
+				"GEOMETRYCOLLECTION(POINT(1 2),GEOMETRYCOLLECTION(POLYGON((0 0,0 1,1 1,1 0,0 0))))"));
+		assertFalse(isNominalArea("GEOMETRYCOLLECTION(POINT(1 2),LINESTRING(1 2,3 4))"));
+		assertFalse(isNominalArea("POINT(1 2)"));
+	}
+
+	private static boolean isNominalArea(String wkt) {
+		return IndexGeometry.fromSourceGeometryLiteral(SourceGeometryLiteral.fromWkt(wkt)).isNominalArea();
+	}
+
+	@Test
 	public void projectedSingleMemberCollectionUsesLocalIndexEnvelope() {
 		IndexGeometry envelope = IndexGeometry.fromSourceGeometryLiteral(SourceGeometryLiteral.fromWkt(
 				"<" + EPSG_32634 + "> GEOMETRYCOLLECTION(POINT(799997.80 4589779.63))"));

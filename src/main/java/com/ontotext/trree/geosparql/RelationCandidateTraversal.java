@@ -118,11 +118,13 @@ final class RelationCandidateTraversal implements CloseableIterator<RelationCand
 		/*
 		 * An empty bound source has no envelope to partition. Exact evaluation is also semantically necessary
 		 * because different empty geometry types do not all produce the same disjoint result. Falling back once
-		 * for the complete bound source set also keeps mixed empty/non-empty entities correct.
+		 * for the complete bound source set also keeps mixed empty/non-empty entities correct. A bound source whose
+		 * envelope proves no match, as a nominal area's does for RCC8 disconnected, falls back the same way.
 		 */
-		boolean hasEmptyBoundSource = boundIndexGeometries.stream()
-				.anyMatch(indexGeometry -> !indexGeometry.isSpatialCandidate());
-		if (hasEmptyBoundSource) {
+		boolean hasUnpartitionedBoundSource = boundIndexGeometries.stream()
+				.anyMatch(indexGeometry -> !indexGeometry.isSpatialCandidate()
+						|| !relation.envelopeDisjointProvesMatchFor(indexGeometry));
+		if (hasUnpartitionedBoundSource) {
 			return TraversalPhase.FULL_SCAN;
 		}
 		boolean hasEligibleBoundSource = boundIndexGeometries.stream()

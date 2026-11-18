@@ -2,8 +2,10 @@ package com.ontotext.trree.geosparql.jena;
 
 import org.apache.jena.geosparql.implementation.GeometryWrapper;
 import org.apache.jena.geosparql.implementation.vocabulary.SRS_URI;
+import org.locationtech.jts.geom.Dimension;
 import org.locationtech.jts.geom.Geometry;
 import org.locationtech.jts.geom.Envelope;
+import org.locationtech.jts.geom.GeometryCollection;
 import org.locationtech.jts.geom.Polygon;
 import org.locationtech.jts.operation.relateng.RelateNG;
 import org.locationtech.jts.operation.relateng.RelatePredicate;
@@ -142,6 +144,31 @@ public final class IndexGeometry {
 
 	public boolean isSpatialCandidate() {
 		return !indexEnvelope.isNull();
+	}
+
+	/**
+	 * Whether the source reports the topological dimension of an area without holding a non-empty polygon, as a
+	 * collection of points or lines with an empty polygon does. Jena accepts such a source where a relation applies
+	 * to areas only, but whether the relation holds then depends on its points and lines, so separated envelopes do
+	 * not prove it.
+	 */
+	public boolean isNominalArea() {
+		return sourceTopologicalDimension == Dimension.A
+				&& !holdsPolygon(sourceGeometryLiteral.asGeometryWrapper().getXYGeometry());
+	}
+
+	private static boolean holdsPolygon(Geometry geometry) {
+		if (geometry instanceof Polygon) {
+			return !geometry.isEmpty();
+		}
+		if (geometry instanceof GeometryCollection collection) {
+			for (int i = 0; i < collection.getNumGeometries(); i++) {
+				if (holdsPolygon(collection.getGeometryN(i))) {
+					return true;
+				}
+			}
+		}
+		return false;
 	}
 
 	/**
