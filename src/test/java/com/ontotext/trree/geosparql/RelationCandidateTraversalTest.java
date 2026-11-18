@@ -82,10 +82,10 @@ public class RelationCandidateTraversalTest {
 		assertTrue(sentinel.boundSourceGeometryLiteral().isEmpty());
 
 		assertFalse(traversal.hasNext());
-		assertEquals(List.of("open:definite", "close:definite",
+		assertEquals(List.of("open:lookup", "open:definite", "close:definite",
 				"open:" + bound.sourceGeometryLiteral().lexicalForm(),
 				"close:" + bound.sourceGeometryLiteral().lexicalForm(),
-				"open:sentinel", "close:sentinel"), indexer.events);
+				"open:sentinel", "close:sentinel", "close:lookup"), indexer.events);
 	}
 
 	@Test
@@ -275,7 +275,7 @@ public class RelationCandidateTraversalTest {
 		traversal.close();
 
 		assertTrue(indexer.lastDefiniteIterator.closed);
-		assertEquals(List.of("open:definite", "close:definite"), indexer.events);
+		assertEquals(List.of("open:lookup", "open:definite", "close:definite", "close:lookup"), indexer.events);
 		assertFalse(traversal.hasNext());
 	}
 
@@ -448,6 +448,38 @@ public class RelationCandidateTraversalTest {
 					boundSourceIndexGeometry.sourceGeometryLiteral(), List.of()),
 					() -> events.add("close:definite"));
 			return lastDefiniteIterator;
+		}
+
+		@Override
+		public DisjointCandidateLookup openDisjointCandidateLookup(boolean candidateIsSubject) {
+			events.add("open:lookup");
+			DisjointCandidateLookup lookup = GeoSparqlIndexer.super.openDisjointCandidateLookup(candidateIsSubject);
+			return new DisjointCandidateLookup() {
+				@Override
+				public CloseableIterator<EnvelopeDisjointCandidate> definiteMatches(IndexGeometry bound) {
+					return lookup.definiteMatches(bound);
+				}
+
+				@Override
+				public CloseableIterator<CandidateEntity> uncertainCandidates(IndexGeometry bound) {
+					return lookup.uncertainCandidates(bound);
+				}
+
+				@Override
+				public CloseableIterator<CandidateEntity> transformCleanupCandidates(IndexGeometry bound) {
+					return lookup.transformCleanupCandidates(bound);
+				}
+
+				@Override
+				public CloseableIterator<CandidateEntity> nonSpatialCandidates() {
+					return lookup.nonSpatialCandidates();
+				}
+
+				@Override
+				public void close() {
+					events.add("close:lookup");
+				}
+			};
 		}
 
 		@Override

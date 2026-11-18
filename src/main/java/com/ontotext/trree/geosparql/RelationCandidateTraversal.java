@@ -4,6 +4,7 @@ import com.ontotext.trree.geosparql.jena.IndexGeometry;
 import com.ontotext.trree.geosparql.jena.SourceGeometryLiteral;
 import org.slf4j.Logger;
 
+import java.io.Closeable;
 import java.io.IOException;
 import java.util.Collection;
 import java.util.List;
@@ -21,7 +22,8 @@ import java.util.Optional;
  * and finally evaluates non-spatial empty sentinels.
  *
  * <p>The traversal owns its active Lucene iterator. It closes every phase before opening the next and closes the
- * active iterator when traversal ends early.
+ * active iterator when traversal ends early. Every phase of a partitioned disjoint traversal reads one
+ * {@link DisjointCandidateLookup}, which the traversal closes when it ends.
  */
 final class RelationCandidateTraversal implements CloseableIterator<RelationCandidateTraversal.Candidate> {
 	enum MatchCertainty {
@@ -50,6 +52,7 @@ final class RelationCandidateTraversal implements CloseableIterator<RelationCand
 	private IndexGeometry currentBoundIndexGeometry;
 	private CloseableIterator<EnvelopeDisjointCandidate> currentDefiniteCandidates;
 	private CloseableIterator<CandidateEntity> currentExactCandidates;
+	private DisjointCandidateLookup disjointLookup;
 	private Candidate next;
 	private boolean closed;
 
@@ -98,9 +101,8 @@ final class RelationCandidateTraversal implements CloseableIterator<RelationCand
 	@Override
 	public void close() {
 		closed = true;
-		closeActiveIterator();
+		finishTraversal();
 		next = null;
-		phase = TraversalPhase.DONE;
 	}
 
 	private TraversalPhase initialPhase() {
@@ -238,8 +240,7 @@ final class RelationCandidateTraversal implements CloseableIterator<RelationCand
 			if (!boundSourceCanParticipateInDisjointPartition(currentBoundIndexGeometry)) {
 				continue;
 			}
-			currentExactCandidates = indexer.getDisjointTransformCleanupCandidates(
-					currentBoundIndexGeometry, !boundSubject);
+			currentExactCandidates = disjointLookup().transformCleanupCandidates(currentBoundIndexGeometry);
 			return true;
 		}
 		return false;
@@ -247,7 +248,7 @@ final class RelationCandidateTraversal implements CloseableIterator<RelationCand
 
 	private Candidate loadNextEmptySentinel() {
 		if (currentExactCandidates == null) {
-			currentExactCandidates = indexer.getNonSpatialCandidates();
+			currentExactCandidates = disjointLookup().nonSpatialCandidates();
 		}
 		if (currentExactCandidates.hasNext()) {
 			/*
@@ -266,8 +267,7 @@ final class RelationCandidateTraversal implements CloseableIterator<RelationCand
 			if (!boundSourceCanParticipateInDisjointPartition(currentBoundIndexGeometry)) {
 				continue;
 			}
-			currentDefiniteCandidates = indexer.getEnvelopeDisjointCandidates(
-					currentBoundIndexGeometry, !boundSubject);
+			currentDefiniteCandidates = disjointLookup().definiteMatches(currentBoundIndexGeometry);
 			return true;
 		}
 		return false;
@@ -284,8 +284,7 @@ final class RelationCandidateTraversal implements CloseableIterator<RelationCand
 				continue;
 			}
 			if (phase == TraversalPhase.UNCERTAIN_CANDIDATES) {
-				currentExactCandidates = indexer.getEnvelopeDisjointUncertainCandidates(
-						currentBoundIndexGeometry, !boundSubject);
+				currentExactCandidates = disjointLookup().uncertainCandidates(currentBoundIndexGeometry);
 			} else if (relation.getCandidateLookupPolicy() == CandidateLookupPolicy.ENVELOPE_EQUALS) {
 				currentExactCandidates = indexer.getEnvelopeEqualityCandidates(
 						currentBoundIndexGeometry, !boundSubject);
@@ -308,8 +307,17 @@ final class RelationCandidateTraversal implements CloseableIterator<RelationCand
 		boundIndex = 0;
 	}
 
+	private DisjointCandidateLookup disjointLookup() {
+		if (disjointLookup == null) {
+			disjointLookup = indexer.openDisjointCandidateLookup(!boundSubject);
+		}
+		return disjointLookup;
+	}
+
 	private void finishTraversal() {
 		closeActiveIterator();
+		closeIterator(disjointLookup);
+		disjointLookup = null;
 		phase = TraversalPhase.DONE;
 	}
 
@@ -321,7 +329,7 @@ final class RelationCandidateTraversal implements CloseableIterator<RelationCand
 		currentBoundIndexGeometry = null;
 	}
 
-	private void closeIterator(CloseableIterator<?> iterator) {
+	private void closeIterator(Closeable iterator) {
 		if (iterator == null) {
 			return;
 		}

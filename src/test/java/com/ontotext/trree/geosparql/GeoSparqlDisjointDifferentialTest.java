@@ -10,6 +10,7 @@ import com.ontotext.trree.sdk.Entities;
 import org.eclipse.rdf4j.model.IRI;
 import org.eclipse.rdf4j.model.Value;
 import org.eclipse.rdf4j.model.impl.SimpleValueFactory;
+import org.apache.lucene.search.BooleanQuery;
 import org.junit.Rule;
 import org.junit.Test;
 import org.slf4j.LoggerFactory;
@@ -27,6 +28,7 @@ import java.util.Set;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertTrue;
 
 public class GeoSparqlDisjointDifferentialTest {
 	private static final long BOUND = 100L;
@@ -145,6 +147,64 @@ public class GeoSparqlDisjointDifferentialTest {
 
 	private static String scaled(double x, double y, int exponent) {
 		return Math.scalb(x, exponent) + " " + Math.scalb(y, exponent);
+	}
+
+	/**
+	 * A disjoint query reads the index in phases, and the bound is placed in no more source CRSs than Lucene's clause
+	 * limit allows. The sources of a CRS beyond that limit are left to the cleanup phase. A commit that removes the
+	 * sources of an earlier CRS before that phase places the bound in the CRS of such a source instead, so the
+	 * cleanup phase must still read the index as the earlier phases did. The removed sources lie in a segment of
+	 * their own, which the commit drops together with their CRS.
+	 */
+	@Test
+	public void commitBetweenDisjointPhasesKeepsEveryMatch() throws Exception {
+		int maxClauseCount = BooleanQuery.getMaxClauseCount();
+		BooleanQuery.setMaxClauseCount(4);
+		try {
+			Map<Long, List<IndexGeometry>> sources = new HashMap<>();
+			sources.put(BOUND, geometries("POLYGON((14 44,16 44,14 46,14 44))"));
+			long uncertain = 1L;
+			long cleanup = 2L;
+			long removed = 4L;
+			sources.put(uncertain, geometries("POINT(15.8 45.8)"));
+			sources.put(cleanup, geometries("<" + utm(33) + "> POINT(500000 6000000)"));
+			sources.put(3L, geometries("<" + utm(32) + "> POINT(500000 5000000)"));
+			Fixture fixture = createFixture("commit-between-disjoint-phases", sources);
+			index(fixture, removed, geometries("<" + utm(31) + "> POINT(500000 5000000)"));
+			fixture.entities.add(removed, SimpleValueFactory.getInstance()
+					.createIRI("http://example.com/entity/" + removed));
+
+			Set<Long> matches = new LinkedHashSet<>();
+			GeoSparqlRelationIterator iterator = new GeoSparqlRelationIterator(fixture.plugin,
+					GeoSparqlPropertyRelation.SF_DISJOINT, 0, PREDICATE, BOUND, fixture.entities);
+			try {
+				while (iterator.next()) {
+					matches.add(iterator.subject);
+					if (iterator.subject == uncertain) {
+						index(fixture, removed, List.of());
+					}
+				}
+			} finally {
+				iterator.close();
+			}
+
+			assertTrue(matches.toString(), matches.contains(uncertain));
+			assertTrue(matches.toString(), matches.contains(cleanup));
+		} finally {
+			BooleanQuery.setMaxClauseCount(maxClauseCount);
+		}
+	}
+
+	private static String utm(int zone) {
+		return "http://www.opengis.net/def/crs/EPSG/0/326" + zone;
+	}
+
+	private static void index(Fixture fixture, long entityId, List<IndexGeometry> geometries) throws Exception {
+		GeoSparqlIndexer indexer = fixture.plugin.indexer;
+		indexer.begin();
+		indexer.indexGeometryList(entityId, id -> "entity-" + id, geometries);
+		indexer.commit();
+		indexer.complete();
 	}
 
 	@Test

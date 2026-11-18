@@ -94,6 +94,41 @@ public interface GeoSparqlIndexer {
 	/** Returns entities represented by non-spatial empty-sentinel source documents for exact evaluation. */
 	CloseableIterator<CandidateEntity> getNonSpatialCandidates();
 
+	/**
+	 * Opens the candidate lookups of one partitioned disjoint traversal. These lookups give what the separate
+	 * disjoint lookups of this indexer give; an adapter that can read every lookup of the traversal from one
+	 * snapshot of the index does so.
+	 *
+	 * @param candidateIsSubject whether each candidate is the subject and the bound source the object
+	 */
+	default DisjointCandidateLookup openDisjointCandidateLookup(boolean candidateIsSubject) {
+		return new DisjointCandidateLookup() {
+			@Override
+			public CloseableIterator<EnvelopeDisjointCandidate> definiteMatches(IndexGeometry bound) {
+				return getEnvelopeDisjointCandidates(bound, candidateIsSubject);
+			}
+
+			@Override
+			public CloseableIterator<CandidateEntity> uncertainCandidates(IndexGeometry bound) {
+				return getEnvelopeDisjointUncertainCandidates(bound, candidateIsSubject);
+			}
+
+			@Override
+			public CloseableIterator<CandidateEntity> transformCleanupCandidates(IndexGeometry bound) {
+				return getDisjointTransformCleanupCandidates(bound, candidateIsSubject);
+			}
+
+			@Override
+			public CloseableIterator<CandidateEntity> nonSpatialCandidates() {
+				return getNonSpatialCandidates();
+			}
+
+			@Override
+			public void close() {
+			}
+		};
+	}
+
 	/** Returns every indexed entity, including entities represented only by non-spatial empty sentinels. */
 	CloseableIterator<CandidateEntity> getAllEntities();
 

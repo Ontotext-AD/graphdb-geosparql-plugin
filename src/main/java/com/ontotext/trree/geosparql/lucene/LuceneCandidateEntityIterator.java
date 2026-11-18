@@ -26,7 +26,7 @@ import java.util.NoSuchElementException;
  * {@link #MAXIMUM_PAGE_SIZE}: a lookup with few candidates reads one small page, and a broad lookup repeats its query
  * a number of times that grows far more slowly than its candidate count. The source geometry resolver is shared
  * across the current group, so documents derived from the same source geometry literal reuse one validated source
- * snapshot. This iterator owns the searcher's reader and releases it on {@link #close()}.
+ * snapshot. This iterator holds a reference to the searcher's reader and releases it on {@link #close()}.
  */
 class LuceneCandidateEntityIterator implements CloseableIterator<CandidateEntity> {
 	private static final int FIRST_PAGE_SIZE = 1000;
@@ -87,7 +87,7 @@ class LuceneCandidateEntityIterator implements CloseableIterator<CandidateEntity
 		next = null;
 		bufferedDocument = null;
 		sourceResolver.clear();
-		searcher.getIndexReader().close();
+		searcher.getIndexReader().decRef();
 	}
 
 	private CandidateEntity loadNextCandidateEntity() {

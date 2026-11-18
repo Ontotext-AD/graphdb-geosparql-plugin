@@ -2,6 +2,7 @@ package com.ontotext.trree.geosparql.lucene;
 
 import com.ontotext.trree.geosparql.CandidateEntity;
 import com.ontotext.trree.geosparql.CloseableIterator;
+import com.ontotext.trree.geosparql.DisjointCandidateLookup;
 import com.ontotext.trree.geosparql.EnvelopeDisjointCandidate;
 import com.ontotext.trree.geosparql.GeoSparqlConfig;
 import com.ontotext.trree.geosparql.GeoSparqlIndexer;
@@ -27,6 +28,7 @@ import org.locationtech.spatial4j.context.SpatialContext;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Function;
@@ -441,51 +443,144 @@ public class LuceneGeoIndexer implements GeoSparqlIndexer {
 	@Override
 	public CloseableIterator<CandidateEntity> getDisjointTransformCleanupCandidates(
 			IndexGeometry boundSourceIndexGeometry, boolean candidateIsSubject) {
-		assertReadableCurrentSchema();
-		if (boundSourceIndexGeometry == null || !boundSourceIndexGeometry.isSpatialCandidate()) {
-			return getCandidateEntitiesForQuery(
-					new MatchNoDocsQuery("Empty source has no disjoint transform-cleanup candidates."));
+		try (LuceneDisjointCandidateLookup lookup = openDisjointCandidateLookup(candidateIsSubject)) {
+			return lookup.transformCleanupCandidates(boundSourceIndexGeometry);
 		}
-		return getCandidateEntities(reader -> {
-			EvaluationCrsLookup lookup = EvaluationCrsLookup.of(reader, boundSourceIndexGeometry, candidateIsSubject);
-			// A source the bound is placed for is classified by exact envelopes and needs no cleanup evaluation.
-			return lookup.elsewhere(
-					disjointTransformCleanupCandidatesQuery(boundSourceIndexGeometry, candidateIsSubject));
-		});
 	}
 
 	@Override
 	public CloseableIterator<CandidateEntity> getEnvelopeDisjointUncertainCandidates(
 			IndexGeometry boundSourceIndexGeometry, boolean candidateIsSubject) {
-		assertReadableCurrentSchema();
-		if (boundSourceIndexGeometry == null || !boundSourceIndexGeometry.isSpatialCandidate()) {
-			return getCandidateEntitiesForQuery(
-					new MatchNoDocsQuery("Empty source has no uncertain disjoint candidates."));
+		try (LuceneDisjointCandidateLookup lookup = openDisjointCandidateLookup(candidateIsSubject)) {
+			return lookup.uncertainCandidates(boundSourceIndexGeometry);
 		}
-		return getCandidateEntities(reader -> {
-			EvaluationCrsLookup lookup = EvaluationCrsLookup.of(reader, boundSourceIndexGeometry, candidateIsSubject);
-			// A source the cleanup phase evaluates is left to that phase, so no source is evaluated twice.
-			Query uncertain = lookup.withoutSourcesInsideTheBound(
-					lookup.orElsewhere(lookup.possiblyDisjoint(), () -> new BooleanQuery.Builder()
-							.add(indexEnvelopeDisjointUncertainQuery(boundSourceIndexGeometry), BooleanClause.Occur.FILTER)
-							.add(disjointTransformCleanupCandidatesQuery(boundSourceIndexGeometry, candidateIsSubject),
-									BooleanClause.Occur.MUST_NOT)
-							.build()),
-					new IndexSearcher(reader));
-			if (!LuceneGeoDocumentSchema.hasAreaCollections(reader)) {
-				return uncertain;
+	}
+
+	@Override
+	public CloseableIterator<EnvelopeDisjointCandidate> getEnvelopeDisjointCandidates(
+			IndexGeometry boundSourceIndexGeometry, boolean candidateIsSubject) {
+		try (LuceneDisjointCandidateLookup lookup = openDisjointCandidateLookup(candidateIsSubject)) {
+			return lookup.definiteMatches(boundSourceIndexGeometry);
+		}
+	}
+
+	@Override
+	public LuceneDisjointCandidateLookup openDisjointCandidateLookup(boolean candidateIsSubject) {
+		assertReadableCurrentSchema();
+		try {
+			return new LuceneDisjointCandidateLookup(openReader(), candidateIsSubject);
+		} catch (IOException e) {
+			throw new PluginException("Unable to open the GeoSPARQL index.", e);
+		}
+	}
+
+	/**
+	 * The lookups of one partitioned disjoint traversal. They read one reader, so the source CRSs that decide where
+	 * the bound is placed stay the same in every phase, and the lookup of each bound source is prepared once. The
+	 * lookup and each iterator it returns hold a reference to the reader, which closes with the last of them.
+	 */
+	final class LuceneDisjointCandidateLookup implements DisjointCandidateLookup {
+		private final IndexReader reader;
+		private final boolean candidateIsSubject;
+		private final Map<IndexGeometry, EvaluationCrsLookup> lookups = new IdentityHashMap<>();
+		private boolean closed;
+
+		private LuceneDisjointCandidateLookup(IndexReader reader, boolean candidateIsSubject) {
+			this.reader = reader;
+			this.candidateIsSubject = candidateIsSubject;
+		}
+
+		@Override
+		public CloseableIterator<EnvelopeDisjointCandidate> definiteMatches(IndexGeometry bound) {
+			Query query = query(bound, "Empty source has no envelope-disjoint partition.",
+					lookup -> definiteMatchesQuery(reader, lookup, bound, candidateIsSubject));
+			reader.incRef();
+			return new LuceneEnvelopeDisjointCandidateIterator(new IndexSearcher(reader), query);
+		}
+
+		@Override
+		public CloseableIterator<CandidateEntity> uncertainCandidates(IndexGeometry bound) {
+			return candidates(query(bound, "Empty source has no uncertain disjoint candidates.",
+					lookup -> uncertainCandidatesQuery(reader, lookup, bound, candidateIsSubject)));
+		}
+
+		@Override
+		public CloseableIterator<CandidateEntity> transformCleanupCandidates(IndexGeometry bound) {
+			// A source the bound is placed for is classified by exact envelopes and needs no cleanup evaluation.
+			return candidates(query(bound, "Empty source has no disjoint transform-cleanup candidates.",
+					lookup -> lookup.elsewhere(disjointTransformCleanupCandidatesQuery(bound, candidateIsSubject))));
+		}
+
+		@Override
+		public CloseableIterator<CandidateEntity> nonSpatialCandidates() {
+			return candidates(LuceneGeoDocumentSchema.hasEnvelopeQuery(false));
+		}
+
+		private Query query(IndexGeometry bound, String noSpatialBound, LookupQuery lookupQuery) {
+			if (bound == null || !bound.isSpatialCandidate()) {
+				return new MatchNoDocsQuery(noSpatialBound);
 			}
-			// The envelope-disjoint partition leaves area collections with separated envelopes to this evaluation.
-			return new BooleanQuery.Builder()
-					.add(uncertain, BooleanClause.Occur.SHOULD)
-					.add(new BooleanQuery.Builder()
-							.add(envelopeSeparatedQuery(lookup, boundSourceIndexGeometry, candidateIsSubject),
-									BooleanClause.Occur.FILTER)
-							.add(LuceneGeoDocumentSchema.areaCollectionQuery(), BooleanClause.Occur.FILTER)
-							.build(), BooleanClause.Occur.SHOULD)
-					.setMinimumNumberShouldMatch(1)
-					.build();
-		});
+			try {
+				EvaluationCrsLookup lookup = lookups.get(bound);
+				if (lookup == null) {
+					lookup = EvaluationCrsLookup.of(reader, bound, candidateIsSubject);
+					lookups.put(bound, lookup);
+				}
+				return lookupQuery.query(lookup);
+			} catch (PluginException e) {
+				throw e;
+			} catch (IOException | RuntimeException e) {
+				throw new PluginException("Unable to execute Lucene query.", e);
+			}
+		}
+
+		private CloseableIterator<CandidateEntity> candidates(Query query) {
+			reader.incRef();
+			return new LuceneCandidateEntityIterator(new IndexSearcher(reader), query);
+		}
+
+		@Override
+		public void close() {
+			if (closed) {
+				return;
+			}
+			closed = true;
+			try {
+				reader.decRef();
+			} catch (IOException e) {
+				throw new PluginException("Unable to close the GeoSPARQL index reader.", e);
+			}
+		}
+	}
+
+	@FunctionalInterface
+	private interface LookupQuery {
+		Query query(EvaluationCrsLookup lookup) throws IOException;
+	}
+
+	private Query uncertainCandidatesQuery(IndexReader reader, EvaluationCrsLookup lookup,
+			IndexGeometry boundSourceIndexGeometry, boolean candidateIsSubject) throws IOException {
+		// A source the cleanup phase evaluates is left to that phase, so no source is evaluated twice.
+		Query uncertain = lookup.withoutSourcesInsideTheBound(
+				lookup.orElsewhere(lookup.possiblyDisjoint(), () -> new BooleanQuery.Builder()
+						.add(indexEnvelopeDisjointUncertainQuery(boundSourceIndexGeometry), BooleanClause.Occur.FILTER)
+						.add(disjointTransformCleanupCandidatesQuery(boundSourceIndexGeometry, candidateIsSubject),
+								BooleanClause.Occur.MUST_NOT)
+						.build()),
+				new IndexSearcher(reader));
+		if (!LuceneGeoDocumentSchema.hasAreaCollections(reader)) {
+			return uncertain;
+		}
+		// The envelope-disjoint partition leaves area collections with separated envelopes to this evaluation.
+		return new BooleanQuery.Builder()
+				.add(uncertain, BooleanClause.Occur.SHOULD)
+				.add(new BooleanQuery.Builder()
+						.add(envelopeSeparatedQuery(lookup, boundSourceIndexGeometry, candidateIsSubject),
+								BooleanClause.Occur.FILTER)
+						.add(LuceneGeoDocumentSchema.areaCollectionQuery(), BooleanClause.Occur.FILTER)
+						.build(), BooleanClause.Occur.SHOULD)
+				.setMinimumNumberShouldMatch(1)
+				.build();
 	}
 
 	/**
@@ -516,30 +611,21 @@ public class LuceneGeoIndexer implements GeoSparqlIndexer {
 				.build();
 	}
 
-	@Override
-	public CloseableIterator<EnvelopeDisjointCandidate> getEnvelopeDisjointCandidates(
-			IndexGeometry boundSourceIndexGeometry, boolean candidateIsSubject) {
-		assertReadableCurrentSchema();
-		if (boundSourceIndexGeometry == null || !boundSourceIndexGeometry.isSpatialCandidate()) {
-			return getEnvelopeDisjointCandidates(reader ->
-					new MatchNoDocsQuery("Empty source has no envelope-disjoint partition."));
+	private Query definiteMatchesQuery(IndexReader reader, EvaluationCrsLookup lookup,
+			IndexGeometry boundSourceIndexGeometry, boolean candidateIsSubject) throws IOException {
+		Query separated = envelopeSeparatedQuery(lookup, boundSourceIndexGeometry, candidateIsSubject);
+		if (!LuceneGeoDocumentSchema.hasAreaCollections(reader)) {
+			return separated;
 		}
-		return getEnvelopeDisjointCandidates(reader -> {
-			EvaluationCrsLookup lookup = EvaluationCrsLookup.of(reader, boundSourceIndexGeometry, candidateIsSubject);
-			Query separated = envelopeSeparatedQuery(lookup, boundSourceIndexGeometry, candidateIsSubject);
-			if (!LuceneGeoDocumentSchema.hasAreaCollections(reader)) {
-				return separated;
-			}
-			/*
-			 * Separated envelopes do not prove RCC8 disconnected for an area collection; see
-			 * IndexGeometry#isAreaCollection. Area collections are left to exact evaluation for every disjoint
-			 * relation: they are rare, and exact evaluation decides the other relations as their envelopes would.
-			 */
-			return new BooleanQuery.Builder()
-					.add(separated, BooleanClause.Occur.FILTER)
-					.add(LuceneGeoDocumentSchema.areaCollectionQuery(), BooleanClause.Occur.MUST_NOT)
-					.build();
-		});
+		/*
+		 * Separated envelopes do not prove RCC8 disconnected for an area collection; see
+		 * IndexGeometry#isAreaCollection. Area collections are left to exact evaluation for every disjoint
+		 * relation: they are rare, and exact evaluation decides the other relations as their envelopes would.
+		 */
+		return new BooleanQuery.Builder()
+				.add(separated, BooleanClause.Occur.FILTER)
+				.add(LuceneGeoDocumentSchema.areaCollectionQuery(), BooleanClause.Occur.MUST_NOT)
+				.build();
 	}
 
 	/**
@@ -665,29 +751,6 @@ public class LuceneGeoIndexer implements GeoSparqlIndexer {
 	@FunctionalInterface
 	private interface ReaderCandidateQuery {
 		Query forReader(IndexReader reader) throws IOException;
-	}
-
-	private CloseableIterator<EnvelopeDisjointCandidate> getEnvelopeDisjointCandidates(
-			ReaderCandidateQuery candidateQuery) {
-		IndexReader indexReader = null;
-		try {
-			indexReader = openReader();
-			Query query = candidateQuery.forReader(indexReader);
-			IndexSearcher indexSearcher = new IndexSearcher(indexReader);
-			return new LuceneEnvelopeDisjointCandidateIterator(indexSearcher, query);
-		} catch (Exception e) {
-			if (indexReader != null) {
-				try {
-					indexReader.close();
-				} catch (IOException cleanupFailure) {
-					e.addSuppressed(cleanupFailure);
-				}
-			}
-			if (e instanceof PluginException pluginException) {
-				throw pluginException;
-			}
-			throw new PluginException("Unable to execute envelope-disjoint candidate query.", e);
-		}
 	}
 
 	/**
