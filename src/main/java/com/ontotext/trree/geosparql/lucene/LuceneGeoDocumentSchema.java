@@ -373,6 +373,26 @@ final class LuceneGeoDocumentSchema {
 						upperBound(envelope.getMinY()), upperBound(envelope.getMaxY())});
 	}
 
+	/**
+	 * Matches sources whose own envelopes reach beyond at least one side of the closed envelope, both taken in one
+	 * CRS: every source that {@link #sourceEnvelopeWithinQuery} does not match.
+	 */
+	static Query sourceEnvelopeBeyondQuery(Envelope envelope) {
+		BooleanQuery.Builder beyond = new BooleanQuery.Builder().setMinimumNumberShouldMatch(1);
+		for (int ordinate = 0; ordinate < 4; ordinate++) {
+			double[] lower = unbounded(Double.NEGATIVE_INFINITY);
+			double[] upper = unbounded(Double.POSITIVE_INFINITY);
+			switch (ordinate) {
+				case MIN_X -> upper[MIN_X] = Math.nextDown(lowerBound(envelope.getMinX()));
+				case MAX_X -> lower[MAX_X] = Math.nextUp(upperBound(envelope.getMaxX()));
+				case MIN_Y -> upper[MIN_Y] = Math.nextDown(lowerBound(envelope.getMinY()));
+				default -> lower[MAX_Y] = Math.nextUp(upperBound(envelope.getMaxY()));
+			}
+			beyond.add(DoublePoint.newRangeQuery(FIELD_SOURCE_ENVELOPE, lower, upper), BooleanClause.Occur.SHOULD);
+		}
+		return beyond.build();
+	}
+
 	/** Matches sources whose own envelopes lie inside the closed envelope, both taken in one CRS. */
 	static Query sourceEnvelopeWithinQuery(Envelope envelope) {
 		return DoublePoint.newRangeQuery(FIELD_SOURCE_ENVELOPE,

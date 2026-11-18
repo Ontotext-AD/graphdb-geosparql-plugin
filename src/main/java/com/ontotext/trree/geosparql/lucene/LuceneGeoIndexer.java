@@ -561,13 +561,12 @@ public class LuceneGeoIndexer implements GeoSparqlIndexer {
 	private Query uncertainCandidatesQuery(IndexReader reader, EvaluationCrsLookup lookup,
 			IndexGeometry boundSourceIndexGeometry, boolean candidateIsSubject) throws IOException {
 		// A source the cleanup phase evaluates is left to that phase, so no source is evaluated twice.
-		Query uncertain = lookup.withoutSourcesInsideTheBound(
-				lookup.orElsewhere(lookup.possiblyDisjoint(), () -> new BooleanQuery.Builder()
+		Query uncertain = lookup.orElsewhere(lookup.possiblyDisjoint(new IndexSearcher(reader)),
+				() -> new BooleanQuery.Builder()
 						.add(indexEnvelopeDisjointUncertainQuery(boundSourceIndexGeometry), BooleanClause.Occur.FILTER)
 						.add(disjointTransformCleanupCandidatesQuery(boundSourceIndexGeometry, candidateIsSubject),
 								BooleanClause.Occur.MUST_NOT)
-						.build()),
-				new IndexSearcher(reader));
+						.build());
 		if (!LuceneGeoDocumentSchema.hasAreaCollections(reader)) {
 			return uncertain;
 		}

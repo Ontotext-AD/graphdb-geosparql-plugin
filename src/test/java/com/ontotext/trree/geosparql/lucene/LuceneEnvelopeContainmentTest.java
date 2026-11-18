@@ -20,6 +20,7 @@ import org.locationtech.jts.geom.Envelope;
 import org.locationtech.spatial4j.context.SpatialContext;
 import org.junit.Test;
 
+import java.io.IOException;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
@@ -68,6 +69,10 @@ public class LuceneEnvelopeContainmentTest {
 		}
 	}
 
+	/**
+	 * Within keeps closed boundaries and treats signed zeros as equal, and beyond matches every other envelope with
+	 * one: together they partition the envelopes, unbounded ones included.
+	 */
 	@Test
 	public void containedEnvelopeQueriesIncludeClosedBoundariesAndEqualSignedZeros() throws Exception {
 		List<Envelope> envelopes = List.of(
@@ -78,7 +83,8 @@ public class LuceneEnvelopeContainmentTest {
 				new Envelope(0, Math.nextUp(1.0), 0, 1),
 				new Envelope(0, 1, Math.nextDown(0.0), 1),
 				new Envelope(0, 1, 0, Math.nextUp(1.0)),
-				new Envelope(-1, 2, -1, 2));
+				new Envelope(-1, 2, -1, 2),
+				IndexGeometry.unboundedEnvelope());
 		try (Directory directory = new ByteBuffersDirectory();
 				IndexWriter writer = new IndexWriter(directory, new IndexWriterConfig())) {
 			for (Envelope envelope : envelopes) {
@@ -99,12 +105,16 @@ public class LuceneEnvelopeContainmentTest {
 							expected.add(i);
 						}
 					}
-					Set<Integer> actual = new HashSet<>();
-					for (ScoreDoc hit : searcher.search(LuceneGeoDocumentSchema.sourceEnvelopeWithinQuery(bound),
-							reader.maxDoc()).scoreDocs) {
-						actual.add(hit.doc);
+					Set<Integer> beyond = new HashSet<>();
+					for (int i = 0; i < envelopes.size(); i++) {
+						if (!expected.contains(i)) {
+							beyond.add(i);
+						}
 					}
-					assertEquals(bound.toString(), expected, actual);
+					assertEquals(bound.toString(), expected,
+							matches(searcher, LuceneGeoDocumentSchema.sourceEnvelopeWithinQuery(bound)));
+					assertEquals(bound.toString(), beyond,
+							matches(searcher, LuceneGeoDocumentSchema.sourceEnvelopeBeyondQuery(bound)));
 				}
 			}
 		}
@@ -143,6 +153,14 @@ public class LuceneEnvelopeContainmentTest {
 		assertFalse(empty.isEnvelopeCoveringRectangle());
 		assertTrue(GeoSparqlPropertyRelation.SF_DISJOINT.evaluate(
 				pointInHole.sourceGeometryLiteral(), boundWithHole.sourceGeometryLiteral()));
+	}
+
+	private static Set<Integer> matches(IndexSearcher searcher, Query query) throws IOException {
+		Set<Integer> documents = new HashSet<>();
+		for (ScoreDoc hit : searcher.search(query, searcher.getIndexReader().maxDoc()).scoreDocs) {
+			documents.add(hit.doc);
+		}
+		return documents;
 	}
 
 	private static void writeCandidate(IndexWriter writer, long entityId, IndexGeometry geometry)

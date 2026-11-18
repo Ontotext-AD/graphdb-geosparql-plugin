@@ -104,32 +104,22 @@ final class EvaluationCrsLookup {
 
 	/**
 	 * Sources that may share a point with the bound and that the bound is not known to cover. Where the bound
-	 * fills its envelope, a source whose envelope lies inside it meets the bound and is not disjoint from it.
+	 * fills its envelope, a source whose envelope lies inside it meets the bound and is not disjoint from it, so
+	 * only sources reaching beyond the envelope remain. Where it does not, {@link InteriorRectanglePruning} keeps the
+	 * sources that reach a part of the envelope which Jena does not certify within the bound.
 	 */
-	Query possiblyDisjoint() {
+	Query possiblyDisjoint(IndexSearcher searcher) {
 		return inEachCrs((sourceCrsUri, bound) -> {
 			Query meeting = mayMeet(bound);
-			return !bound.fillsEnvelope() ? meeting : new BooleanQuery.Builder()
-					.add(meeting, BooleanClause.Occur.FILTER)
-					.add(LuceneGeoDocumentSchema.sourceEnvelopeWithinQuery(bound.envelope()),
-							BooleanClause.Occur.MUST_NOT).build();
-		});
-	}
-
-	/**
-	 * Removes candidates that lie inside rectangles which Jena certifies within the bound, in each CRS where the
-	 * bound is a polygon that does not fill its envelope.
-	 */
-	Query withoutSourcesInsideTheBound(Query possiblyDisjoint, IndexSearcher searcher) {
-		Query remaining = possiblyDisjoint;
-		for (Map.Entry<String, BoundEvaluationEnvelope> placement : placements.entrySet()) {
-			if (placement.getValue().isRelated() && !placement.getValue().fillsEnvelope()) {
-				remaining = InteriorRectanglePruning.prune(placement.getValue(), remaining,
-						LuceneGeoDocumentSchema.sourceCrsQuery(placement.getKey()),
-						LuceneGeoDocumentSchema::sourceEnvelopeWithinQuery, searcher);
+			if (!bound.fillsEnvelope()) {
+				return InteriorRectanglePruning.prune(bound, meeting,
+						LuceneGeoDocumentSchema.sourceCrsQuery(sourceCrsUri), searcher);
 			}
-		}
-		return remaining;
+			return new BooleanQuery.Builder()
+					.add(meeting, BooleanClause.Occur.FILTER)
+					.add(LuceneGeoDocumentSchema.sourceEnvelopeBeyondQuery(bound.envelope()),
+							BooleanClause.Occur.FILTER).build();
+		});
 	}
 
 	/**

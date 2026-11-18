@@ -404,8 +404,7 @@ public class LuceneDisjointEnvelopeLookupTest {
 	private static Query prune(IndexGeometry bound, Query candidates, IndexSearcher searcher) {
 		String crsUri = bound.sourceGeometryLiteral().effectiveCrsUri();
 		return InteriorRectanglePruning.prune(bound.evaluationEnvelope(crsUri, true).orElseThrow(), candidates,
-				LuceneGeoDocumentSchema.sourceCrsQuery(crsUri), LuceneGeoDocumentSchema::sourceEnvelopeWithinQuery,
-				searcher);
+				LuceneGeoDocumentSchema.sourceCrsQuery(crsUri), searcher);
 	}
 
 	private LuceneGeoIndexer createIndexer(String name, GeoSparqlConfig.PrefixTree tree, int precision)
