@@ -1,5 +1,10 @@
 package com.ontotext.trree.geosparql.lucene;
 
+import com.ontotext.trree.geosparql.TestIndexGeometries;
+import org.apache.lucene.document.Document;
+import org.apache.lucene.spatial.SpatialStrategy;
+import org.apache.lucene.spatial.prefix.RecursivePrefixTreeStrategy;
+import org.apache.lucene.spatial.prefix.tree.QuadPrefixTree;
 import org.junit.Test;
 import org.locationtech.jts.geom.Coordinate;
 import org.locationtech.jts.geom.CoordinateFilter;
@@ -8,6 +13,7 @@ import org.locationtech.jts.geom.Geometry;
 import org.locationtech.jts.geom.GeometryFactory;
 import org.locationtech.jts.io.ParseException;
 import org.locationtech.jts.io.WKTReader;
+import org.locationtech.spatial4j.context.SpatialContext;
 
 import java.util.List;
 import java.util.Locale;
@@ -15,6 +21,8 @@ import java.util.Random;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
 public class SourceCoverBoxesTest {
@@ -124,15 +132,27 @@ public class SourceCoverBoxesTest {
 		return geometry;
 	}
 
-	/** The checks Jena uses to tell inside from outside can disagree on an invalid geometry. */
+	/**
+	 * The checks Jena uses to tell inside from outside can disagree on an invalid geometry, so indexing gives it no
+	 * boxes and marks it invalid instead.
+	 */
 	@Test
-	public void invalidGeometryHasNoBoxes() throws Exception {
+	public void invalidGeometryIsIndexedWithoutBoxes() throws Exception {
 		// The hole of this ring lies outside its shell.
 		String invalid = "POLYGON(" + ring(8, 8, 4, 2, 500).substring("POLYGON(".length(),
 				ring(8, 8, 4, 2, 500).indexOf("),(") + 1) + ",(30 30,31 30,31 31,30 31,30 30))";
+		SpatialStrategy strategy = new RecursivePrefixTreeStrategy(
+				new QuadPrefixTree(SpatialContext.GEO, 11), LuceneGeoDocumentSchema.FIELD_SPATIAL_PREFIX);
 
 		assertFalse(read(invalid).isValid());
-		assertEquals(List.of(), SourceCoverBoxes.of(read(invalid)));
+		Document invalidDocument = LuceneGeoDocumentSchema.toDocument(1L, TestIndexGeometries.fromWkt(invalid),
+				strategy, SpatialContext.GEO);
+		Document validDocument = LuceneGeoDocumentSchema.toDocument(2L, TestIndexGeometries.fromWkt(RING),
+				strategy, SpatialContext.GEO);
+		assertNull(invalidDocument.getField(LuceneGeoDocumentSchema.FIELD_HAS_SOURCE_COVER));
+		assertNotNull(invalidDocument.getField(LuceneGeoDocumentSchema.FIELD_INVALID_SOURCE));
+		assertNotNull(validDocument.getField(LuceneGeoDocumentSchema.FIELD_HAS_SOURCE_COVER));
+		assertNull(validDocument.getField(LuceneGeoDocumentSchema.FIELD_INVALID_SOURCE));
 	}
 
 	private static boolean inSomeBox(List<Envelope> boxes, Coordinate point) {

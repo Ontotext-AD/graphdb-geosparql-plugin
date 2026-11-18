@@ -25,11 +25,12 @@ import java.util.List;
  * geometry inside it, which would need computed intersection points. Every kept box contains a point of the
  * geometry.
  *
- * <p>The number of boxes follows the size of the geometry, because a box is worth storing for the cost of loading
- * and evaluating the geometry it spares. A geometry too small for enough boxes to follow its outline gets none and
- * is described by its envelope, as is a geometry that is invalid, since the ways Jena decides inside and outside
- * can disagree on one. A geometry whose envelope lacks a {@link IndexGeometry#hasNormalArea normal area} gets no
- * boxes either, and a cell is quartered only into cells of normal area.
+ * <p>Boxes are built only for a valid geometry, since the ways Jena decides inside and outside can disagree on an
+ * invalid one; indexing checks validity before it asks for them. The number of boxes follows the size of the
+ * geometry, because a box is worth storing for the cost of loading and evaluating the geometry it spares. A geometry
+ * too small for enough boxes to follow its outline gets none and is described by its envelope. A geometry whose
+ * envelope lacks a {@link IndexGeometry#hasNormalArea normal area} gets no boxes either, and a cell is quartered
+ * only into cells of normal area.
  */
 final class SourceCoverBoxes {
 	private static final int MIN_POINTS = 128;
@@ -45,11 +46,13 @@ final class SourceCoverBoxes {
 	private SourceCoverBoxes() {
 	}
 
-	/** Returns boxes whose union contains the geometry, or none when its envelope describes it well enough. */
+	/**
+	 * Returns boxes whose union contains a valid geometry, or none when its envelope describes it well enough.
+	 */
 	static List<Envelope> of(Geometry geometry) {
 		int points = geometry.getNumPoints();
 		Envelope envelope = geometry.getEnvelopeInternal();
-		if (points < MIN_POINTS || !IndexGeometry.hasNormalArea(envelope) || !geometry.isValid()) {
+		if (points < MIN_POINTS || !IndexGeometry.hasNormalArea(envelope)) {
 			return List.of();
 		}
 		int budget = Math.min(MAX_BOXES, points / POINTS_PER_BOX);

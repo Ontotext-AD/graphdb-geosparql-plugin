@@ -173,8 +173,10 @@ final class LuceneGeoDocumentSchema {
 			Envelope sourceEnvelope = geometry.sourceEnvelope();
 			doc.add(new DoublePoint(FIELD_SOURCE_ENVELOPE, sourceEnvelope.getMinX(), sourceEnvelope.getMaxX(),
 					sourceEnvelope.getMinY(), sourceEnvelope.getMaxY()));
-			addSourceCover(doc, geometry);
-			if (!isValid(source)) {
+			// Cover boxes are built only for a valid geometry; an invalid one is marked instead.
+			if (isValid(source)) {
+				addSourceCover(doc, geometry);
+			} else {
 				doc.add(new StringField(FIELD_INVALID_SOURCE, INVALID_SOURCE_VALUE, Field.Store.NO));
 			}
 			if (geometry.isAreaCollection()) {
@@ -208,8 +210,8 @@ final class LuceneGeoDocumentSchema {
 	}
 
 	/**
-	 * Adds the boxes that together contain a source and the marker identifying documents that carry them. A source
-	 * gets neither, and is described by its envelope alone, when it has no boxes or they cannot be built: a marker
+	 * Adds the boxes that together contain a valid source and the marker identifying documents that carry them. A
+	 * source gets neither, and is described by its envelope alone, when it has no boxes or they cannot be built: a marker
 	 * without boxes would name a source that no bound can meet.
 	 */
 	private static void addSourceCover(Document doc, IndexGeometry geometry) {
