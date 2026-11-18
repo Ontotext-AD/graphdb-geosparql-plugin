@@ -90,6 +90,7 @@ public class GeoSparqlRegisteredFunctionDifferentialTest extends AbstractGeoSpar
 				+ feature("eastOfBrisbane", "eastOfBrisbaneGeom", "POINT(153.481 -27.47)")
 				+ feature("aroundBrisbane", "aroundBrisbaneGeom",
 						"POLYGON((153 -27.5,153.1 -27.5,153.1 -27.4,153 -27.4,153 -27.5))")
+				+ feature("besideBrisbane", "besideBrisbaneGeom", "LINESTRING(153 -27.5,153.06 -27.5,153.06 -27.44)")
 				+ feature("mixedHeights", "mixedHeightsGeom", "<" + EPSG_4326
 						+ "> GEOMETRYCOLLECTION Z(POINT(-27.47 153.03),POINT Z(-27.47 153.03 55))")
 				+ feature("uniformHeights", "uniformHeightsGeom", "<" + EPSG_4326
@@ -179,14 +180,17 @@ public class GeoSparqlRegisteredFunctionDifferentialTest extends AbstractGeoSpar
 	}
 
 	/**
-	 * A collection of an XY point and an XYZ point is related as written, with its separated envelope and through
-	 * exact evaluation, like a collection whose points share a dimension.
+	 * A collection of an XY point and an XYZ point is related as written, like a collection whose points share a
+	 * dimension: by its separated envelope, and through exact evaluation when envelopes meet, both for a line that
+	 * passes beside its points and for a polygon around them.
 	 */
 	@Test
 	public void relationsAgreeForACollectionOfMembersInDifferentDimensions() throws Exception {
 		for (boolean boundSubject : new boolean[] { true, false }) {
 			assertDifferential("sfDisjoint", "eastOfBrisbane", boundSubject, "mixedHeights", "uniformHeights");
 			assertDifferential("ehDisjoint", "eastOfBrisbane", boundSubject, "mixedHeights", "uniformHeights");
+			assertDifferential("sfDisjoint", "besideBrisbane", boundSubject, "mixedHeights", "uniformHeights");
+			assertDifferential("ehDisjoint", "besideBrisbane", boundSubject, "mixedHeights", "uniformHeights");
 			assertDifferential("sfIntersects", "aroundBrisbane", boundSubject, "mixedHeights", "uniformHeights");
 		}
 	}
