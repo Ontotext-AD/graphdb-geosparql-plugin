@@ -69,7 +69,8 @@ final class EvaluationCrsLookup {
 				lookup.placements.put(sourceCrsUri, placement.get());
 			} else {
 				lookup.leavesSourcesElsewhere = true;
-				lookup.leavesCrssPastTheClauseLimit |= !hasClauseLeft;
+				// Only a subject takes a placement outside the bound's CRS, so only subjects lose one to the limit.
+				lookup.leavesCrssPastTheClauseLimit |= !hasClauseLeft && candidateIsSubject;
 			}
 		}
 		return lookup;

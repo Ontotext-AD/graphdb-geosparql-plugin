@@ -193,6 +193,25 @@ public class EvaluationCrsLookupTest {
     }
 
     /**
+     * A bound that is the subject is placed only in its own CRS, so none of its objects loses a placement to the
+     * clause limit. With two clauses, which leave none for another CRS, the objects of EPSG:32633 are still selected
+     * by CRS84 index envelopes: the one inside the bound is a candidate and the one far from it is not.
+     */
+    @Test
+    public void objectsOfABoundSubjectAreSelectedByIndexEnvelopesAtAnyClauseLimit() throws Exception {
+        LuceneGeoIndexer indexer = createIndexer("bound-subject-at-the-clause-limit");
+        index(indexer, List.of(geometry(literal(UTM_33N, "POINT(15.5 60.5)")),
+                geometry(literal(UTM_33N, "POINT(15.5 10)"))));
+        int clauseLimit = BooleanQuery.getMaxClauseCount();
+        BooleanQuery.setMaxClauseCount(2);
+        try {
+            assertEquals(Set.of(1L), ids(indexer.getEnvelopeIntersections(geometry(BOUND), false)));
+        } finally {
+            BooleanQuery.setMaxClauseCount(clauseLimit);
+        }
+    }
+
+    /**
      * A CRS84 polygon a thousandth of a degree tall from longitude -45 to 45 at latitude 70. Jena joins its
      * transformed vertices in EPSG:3413 with straight lines that run far from its CRS84 envelope and prefix cells.
      */
