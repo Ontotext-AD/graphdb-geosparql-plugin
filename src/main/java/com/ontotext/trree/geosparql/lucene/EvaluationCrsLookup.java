@@ -152,7 +152,7 @@ final class EvaluationCrsLookup {
 			}
 			return new BooleanQuery.Builder()
 					.add(meeting, BooleanClause.Occur.FILTER)
-					.add(LuceneGeoDocumentSchema.sourceEnvelopeBeyondQuery(bound.envelope()),
+					.add(LuceneGeoDocumentSchema.sourceEnvelopeCrossingQuery(bound.envelope()),
 							BooleanClause.Occur.FILTER).build();
 		});
 	}

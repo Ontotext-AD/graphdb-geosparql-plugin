@@ -196,10 +196,13 @@ final class InteriorRectanglePruning {
 		return joined;
 	}
 
-	/** Sources whose envelopes reach beyond the bound's envelope or meet a cell of the remainder. */
+	/**
+	 * Sources whose envelopes cross a side of the bound's envelope or meet a cell of the remainder. Among the sources
+	 * that meet the bound's envelope, the first are those that reach beyond it.
+	 */
 	private static Query reachingTheRemainder(Envelope boundEnvelope, List<Envelope> remainder) {
 		BooleanQuery.Builder reaching = new BooleanQuery.Builder().setMinimumNumberShouldMatch(1)
-				.add(LuceneGeoDocumentSchema.sourceEnvelopeBeyondQuery(boundEnvelope), BooleanClause.Occur.SHOULD);
+				.add(LuceneGeoDocumentSchema.sourceEnvelopeCrossingQuery(boundEnvelope), BooleanClause.Occur.SHOULD);
 		for (Envelope cell : remainder) {
 			reaching.add(LuceneGeoDocumentSchema.sourceEnvelopeIntersectsQuery(cell), BooleanClause.Occur.SHOULD);
 		}

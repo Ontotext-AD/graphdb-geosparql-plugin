@@ -71,8 +71,9 @@ public class LuceneEnvelopeContainmentTest {
 	}
 
 	/**
-	 * Within keeps closed boundaries and treats signed zeros as equal, and beyond matches every other envelope with
-	 * one: together they partition the envelopes, unbounded ones included.
+	 * Within keeps closed boundaries and treats signed zeros as equal, and crossing matches every other envelope that
+	 * meets the bound, touching it at a corner included: within, crossing and apart partition the envelopes, unbounded
+	 * ones included.
 	 */
 	@Test
 	public void containedEnvelopeQueriesIncludeClosedBoundariesAndEqualSignedZeros() throws Exception {
@@ -85,6 +86,7 @@ public class LuceneEnvelopeContainmentTest {
 				new Envelope(0, 1, Math.nextDown(0.0), 1),
 				new Envelope(0, 1, 0, Math.nextUp(1.0)),
 				new Envelope(-1, 2, -1, 2),
+				new Envelope(1, 2, 1, 2), new Envelope(2, 3, 0, 1), new Envelope(-3, Math.nextDown(0.0), 0, 1),
 				IndexGeometry.unboundedEnvelope());
 		try (Directory directory = new ByteBuffersDirectory();
 				IndexWriter writer = new IndexWriter(directory, new IndexWriterConfig())) {
@@ -106,16 +108,16 @@ public class LuceneEnvelopeContainmentTest {
 							expected.add(i);
 						}
 					}
-					Set<Integer> beyond = new HashSet<>();
+					Set<Integer> crossing = new HashSet<>();
 					for (int i = 0; i < envelopes.size(); i++) {
-						if (!expected.contains(i)) {
-							beyond.add(i);
+						if (!expected.contains(i) && bound.intersects(envelopes.get(i))) {
+							crossing.add(i);
 						}
 					}
 					assertEquals(bound.toString(), expected,
 							matches(searcher, LuceneGeoDocumentSchema.sourceEnvelopeWithinQuery(bound)));
-					assertEquals(bound.toString(), beyond,
-							matches(searcher, LuceneGeoDocumentSchema.sourceEnvelopeBeyondQuery(bound)));
+					assertEquals(bound.toString(), crossing,
+							matches(searcher, LuceneGeoDocumentSchema.sourceEnvelopeCrossingQuery(bound)));
 				}
 			}
 		}

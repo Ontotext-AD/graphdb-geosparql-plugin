@@ -432,27 +432,34 @@ final class LuceneGeoDocumentSchema {
 	}
 
 	/**
-	 * Matches sources whose own envelopes reach beyond at least one side of the closed envelope, both taken in one
-	 * CRS: every source that {@link #sourceEnvelopeWithinQuery} does not match. The four sides are joined in pairs,
-	 * so no query holds more than two clauses.
+	 * Matches sources whose own envelopes meet the closed envelope and reach beyond at least one of its sides, both
+	 * taken in one CRS: the sources {@link #sourceEnvelopeIntersectsQuery} matches and
+	 * {@link #sourceEnvelopeWithinQuery} does not. Each side is one range that also requires the envelopes to meet,
+	 * so the point tree visits the sources across that side rather than every source beyond it. The four sides are
+	 * joined in pairs, so no query holds more than two clauses.
 	 */
-	static Query sourceEnvelopeBeyondQuery(Envelope envelope) {
+	static Query sourceEnvelopeCrossingQuery(Envelope envelope) {
 		return either(
-				either(sourceEnvelopeOrdinateIn(MIN_X, Double.NEGATIVE_INFINITY,
-								Math.nextDown(lowerBound(envelope.getMinX()))),
-						sourceEnvelopeOrdinateIn(MAX_X, Math.nextUp(upperBound(envelope.getMaxX())),
-								Double.POSITIVE_INFINITY)),
-				either(sourceEnvelopeOrdinateIn(MIN_Y, Double.NEGATIVE_INFINITY,
-								Math.nextDown(lowerBound(envelope.getMinY()))),
-						sourceEnvelopeOrdinateIn(MAX_Y, Math.nextUp(upperBound(envelope.getMaxY())),
-								Double.POSITIVE_INFINITY)));
+				either(crossingSide(envelope, MIN_X, Math.nextDown(lowerBound(envelope.getMinX()))),
+						crossingSide(envelope, MAX_X, Math.nextUp(upperBound(envelope.getMaxX())))),
+				either(crossingSide(envelope, MIN_Y, Math.nextDown(lowerBound(envelope.getMinY()))),
+						crossingSide(envelope, MAX_Y, Math.nextUp(upperBound(envelope.getMaxY())))));
 	}
 
-	private static Query sourceEnvelopeOrdinateIn(int ordinate, double from, double to) {
-		double[] lower = unbounded(Double.NEGATIVE_INFINITY);
-		double[] upper = unbounded(Double.POSITIVE_INFINITY);
-		lower[ordinate] = from;
-		upper[ordinate] = to;
+	/**
+	 * Sources whose envelopes meet the closed envelope, with a minimum ordinate at most the limit or a maximum
+	 * ordinate at least the limit. The limit lies past the side, so it narrows the range of meeting envelopes.
+	 */
+	private static Query crossingSide(Envelope envelope, int ordinate, double limit) {
+		double[] lower = {Double.NEGATIVE_INFINITY, lowerBound(envelope.getMinX()),
+				Double.NEGATIVE_INFINITY, lowerBound(envelope.getMinY())};
+		double[] upper = {upperBound(envelope.getMaxX()), Double.POSITIVE_INFINITY,
+				upperBound(envelope.getMaxY()), Double.POSITIVE_INFINITY};
+		if (ordinate == MIN_X || ordinate == MIN_Y) {
+			upper[ordinate] = limit;
+		} else {
+			lower[ordinate] = limit;
+		}
 		return DoublePoint.newRangeQuery(FIELD_SOURCE_ENVELOPE, lower, upper);
 	}
 
