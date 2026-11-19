@@ -40,6 +40,7 @@ public class EvaluationCrsLookupTest {
     private static final String EPSG_4326 = "http://www.opengis.net/def/crs/EPSG/0/4326";
     private static final String MERCATOR = "http://www.opengis.net/def/crs/EPSG/0/3857";
     private static final String UTM_33N = "http://www.opengis.net/def/crs/EPSG/0/32633";
+    private static final String POLAR_STEREOGRAPHIC = "http://www.opengis.net/def/crs/EPSG/0/3413";
     private static final List<String> SOURCE_CRSS = List.of(CRS84, EPSG_4326, MERCATOR, UTM_33N);
     /** CRSs in which the CRS84 bound stays a rectangle with sides along the axes. */
     private static final List<String> ALIGNED_CRSS = List.of(CRS84, EPSG_4326, MERCATOR);
@@ -143,26 +144,19 @@ public class EvaluationCrsLookupTest {
 
     /**
      * A CRS whose documents hold only empty geometries, or are deleted, keeps its term in the index but takes no
-     * placement. With three clauses the bound is placed in its own CRS and one other. That is EPSG:3413 here, whose
-     * source meets the bound only where Jena joins two of the bound's transformed vertices with a straight line, far
-     * from the bound's CRS84 envelope and its prefix cells. EPSG:32633 sorts before it.
+     * placement. With three clauses the bound is placed in its own CRS and one other. That is EPSG:3413 here, so its
+     * source on the bound's chord is a candidate and its source far from the bound is not. EPSG:32633 sorts before it.
      */
     @Test
     public void crssWithoutLiveSpatialSourcesTakeNoPlacement() throws Exception {
-        String polarStereographic = "http://www.opengis.net/def/crs/EPSG/0/3413";
-        IndexGeometry bound = geometry("POLYGON((-45 70,45 70,45 70.001,-45 70.001,-45 70))");
-        Envelope west = geometry("POINT(-45 70.0005)").evaluationEnvelope(polarStereographic, true).orElseThrow()
-                .envelope();
-        Envelope east = geometry("POINT(45 70.0005)").evaluationEnvelope(polarStereographic, true).orElseThrow()
-                .envelope();
-        IndexGeometry onChord = geometry("<" + polarStereographic + "> POINT(" + (west.getMinX() + east.getMinX()) / 2
-                + " " + (west.getMinY() + east.getMinY()) / 2 + ")");
-        assertTrue(holds(GeoSparqlPropertyRelation.SF_INTERSECTS, onChord.sourceGeometryLiteral(),
-                bound.sourceGeometryLiteral()));
+        IndexGeometry bound = thinPolarBound();
+        IndexGeometry farFromBound = geometry("<" + POLAR_STEREOGRAPHIC + "> POINT(-1000000 1000000)");
         LuceneGeoIndexer withEmpty = createIndexer("crs-of-empty-geometries");
-        index(withEmpty, List.of(onChord, geometry("<" + UTM_33N + "> POINT EMPTY")));
+        index(withEmpty, List.of(pointOnThinPolarBoundChord(), geometry("<" + UTM_33N + "> POINT EMPTY"),
+                farFromBound));
         LuceneGeoIndexer withDeleted = createIndexer("crs-of-deleted-geometries");
-        index(withDeleted, List.of(onChord, geometry("<" + UTM_33N + "> POINT(500000 6700000)")));
+        index(withDeleted, List.of(pointOnThinPolarBoundChord(), geometry("<" + UTM_33N + "> POINT(500000 6700000)"),
+                farFromBound));
         withDeleted.begin();
         withDeleted.indexGeometryList(2L, id -> "geometry-" + id, List.of());
         withDeleted.commit();
@@ -175,6 +169,48 @@ public class EvaluationCrsLookupTest {
         } finally {
             BooleanQuery.setMaxClauseCount(clauseLimit);
         }
+    }
+
+    /**
+     * With three clauses the bound is placed in its own CRS and in EPSG:32633, which sorts before EPSG:3413 and holds
+     * a live source. Every source of EPSG:3413, past the clause limit, is a candidate, so the source on the bound's
+     * chord stays one although the CRS84 lookup would miss it.
+     */
+    @Test
+    public void sourcesOfCrssPastTheClauseLimitAreLeftToExactEvaluation() throws Exception {
+        IndexGeometry bound = thinPolarBound();
+        LuceneGeoIndexer indexer = createIndexer("crs-past-the-clause-limit");
+        index(indexer, List.of(pointOnThinPolarBoundChord(), geometry("<" + UTM_33N + "> POINT(500000 6700000)"),
+                geometry("<" + POLAR_STEREOGRAPHIC + "> POINT(-1000000 1000000)")));
+        int clauseLimit = BooleanQuery.getMaxClauseCount();
+        BooleanQuery.setMaxClauseCount(3);
+        try {
+            assertEquals(Set.of(1L, 3L), ids(indexer.getEnvelopeIntersections(bound, true)));
+            assertEquals(Set.of(1L, 3L), ids(indexer.getEnvelopeEqualityCandidates(bound, true)));
+        } finally {
+            BooleanQuery.setMaxClauseCount(clauseLimit);
+        }
+    }
+
+    /**
+     * A CRS84 polygon a thousandth of a degree tall from longitude -45 to 45 at latitude 70. Jena joins its
+     * transformed vertices in EPSG:3413 with straight lines that run far from its CRS84 envelope and prefix cells.
+     */
+    private static IndexGeometry thinPolarBound() {
+        return geometry("POLYGON((-45 70,45 70,45 70.001,-45 70.001,-45 70))");
+    }
+
+    /** An EPSG:3413 point that meets {@link #thinPolarBound} only on the straight line Jena draws there. */
+    private static IndexGeometry pointOnThinPolarBoundChord() {
+        Envelope west = geometry("POINT(-45 70.0005)").evaluationEnvelope(POLAR_STEREOGRAPHIC, true).orElseThrow()
+                .envelope();
+        Envelope east = geometry("POINT(45 70.0005)").evaluationEnvelope(POLAR_STEREOGRAPHIC, true).orElseThrow()
+                .envelope();
+        IndexGeometry onChord = geometry("<" + POLAR_STEREOGRAPHIC + "> POINT("
+                + (west.getMinX() + east.getMinX()) / 2 + " " + (west.getMinY() + east.getMinY()) / 2 + ")");
+        assertTrue(holds(GeoSparqlPropertyRelation.SF_INTERSECTS, onChord.sourceGeometryLiteral(),
+                thinPolarBound().sourceGeometryLiteral()));
+        return onChord;
     }
 
     /**

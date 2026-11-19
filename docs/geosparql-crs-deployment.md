@@ -76,7 +76,8 @@ occurs in another CRS.
   lookup and to exact evaluation.
 - When the stored geometries are the subject, a lookup transforms the bound geometry into each CRS that the stored
   data uses, as many as Lucene's clause limit allows, so its cost grows with the number of CRSs in the repository
-  and with the size of the bound geometry. A bound geometry that is the subject stays in its own CRS. The phases of
+  and with the size of the bound geometry. Every stored geometry in a CRS past that limit, which Lucene's default
+  reaches only beyond a thousand CRSs, is evaluated exactly. A bound geometry that is the subject stays in its own CRS. The phases of
   a disjoint query share one lookup. The bound geometry keeps its transformed copies for the rest of the query, up
   to 250,000 coordinates in all, with each geometry part counting as four and a copy in a latitude-first CRS
   counting twice, because Jena holds it in both axis orders. A copy past that limit is made again by each exact

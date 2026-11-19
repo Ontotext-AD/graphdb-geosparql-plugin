@@ -387,7 +387,7 @@ public class LuceneGeoIndexer implements GeoSparqlIndexer {
 		}
 		return getCandidateEntities(reader -> {
 			EvaluationCrsLookup lookup = EvaluationCrsLookup.of(reader, boundSourceIndexGeometry, candidateIsSubject);
-			return lookup.orElsewhere(lookup.intersecting(),
+			return lookup.orRelatableElsewhere(lookup.intersecting(),
 					() -> indexEnvelopeIntersectionsQuery(boundSourceIndexGeometry, candidateIsSubject));
 		});
 	}
@@ -435,7 +435,7 @@ public class LuceneGeoIndexer implements GeoSparqlIndexer {
 			EvaluationCrsLookup lookup = EvaluationCrsLookup.of(reader, boundSourceIndexGeometry, candidateIsSubject);
 			// A CRS84 index envelope is not exact for a source of another CRS, so equality there needs envelopes
 			// that meet.
-			return lookup.orElsewhere(lookup.withEqualEnvelope(),
+			return lookup.orRelatableElsewhere(lookup.withEqualEnvelope(),
 					() -> indexEnvelopeIntersectionsQuery(boundSourceIndexGeometry, candidateIsSubject));
 		});
 	}

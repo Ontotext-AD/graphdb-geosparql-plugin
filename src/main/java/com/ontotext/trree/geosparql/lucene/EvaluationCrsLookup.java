@@ -31,13 +31,17 @@ import java.util.Optional;
  * CRS are left to lookup by CRS84 index envelopes, which {@link #orElsewhere} restricts to them.
  *
  * <p>A lookup has one clause for each CRS it places the bound in, and Lucene limits the clauses of one query. In a
- * reader with more source CRSs than that limit allows, the sources of the remaining CRSs keep CRS84 lookup.
+ * reader with more source CRSs than that limit allows, the remaining CRSs take no placement. Only subjects take a
+ * placement outside the bound's CRS, so the sources of those CRSs are subjects that Jena evaluates against the bound
+ * transformed there, and CRS84 index envelopes do not show where its edges run. {@link #orRelatableElsewhere} leaves
+ * them to exact evaluation, as disjoint lookup does for every subject placed nowhere.
  */
 final class EvaluationCrsLookup {
 	private final Map<String, BoundEvaluationEnvelope> placements = new LinkedHashMap<>();
 	private String boundCrsUri;
 	private boolean boundCrsHasSources;
 	private boolean leavesSourcesElsewhere;
+	private boolean leavesCrssPastTheClauseLimit;
 	private boolean hasSourceCovers;
 
 	private EvaluationCrsLookup() {
@@ -65,6 +69,7 @@ final class EvaluationCrsLookup {
 				lookup.placements.put(sourceCrsUri, placement.get());
 			} else {
 				lookup.leavesSourcesElsewhere = true;
+				lookup.leavesCrssPastTheClauseLimit |= !hasClauseLeft;
 			}
 		}
 		return lookup;
@@ -169,6 +174,18 @@ final class EvaluationCrsLookup {
 				.add(placed, BooleanClause.Occur.SHOULD)
 				.add(elsewhere(crs84Lookup.query()), BooleanClause.Occur.SHOULD)
 				.setMinimumNumberShouldMatch(1).build();
+	}
+
+	/**
+	 * Adds the sources this lookup does not place the bound for, as candidates for a relation other than a disjoint
+	 * one. Where some CRSs are past the clause limit, those sources are subjects that Jena evaluates against the
+	 * bound transformed into their CRS. Its edges there can run far outside its CRS84 index envelope and the prefix
+	 * cells of that envelope, so every such source is left to exact evaluation. Otherwise the CRS84 lookup selects
+	 * them.
+	 */
+	Query orRelatableElsewhere(Query placed, Crs84Lookup crs84Lookup) throws IOException {
+		return orElsewhere(placed, leavesCrssPastTheClauseLimit
+				? () -> LuceneGeoDocumentSchema.hasEnvelopeQuery(true) : crs84Lookup);
 	}
 
 	/** Restricts a lookup on CRS84 index envelopes to the sources this lookup does not place the bound for. */
