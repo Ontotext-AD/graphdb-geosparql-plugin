@@ -10,13 +10,22 @@ import com.ontotext.trree.geosparql.GeoSparqlPropertyRelation;
 import com.ontotext.trree.geosparql.jena.IndexGeometry;
 import com.ontotext.trree.geosparql.jena.JenaGeoSparqlException;
 import com.ontotext.trree.geosparql.jena.SourceGeometryLiteral;
+import org.apache.lucene.index.DirectoryReader;
+import org.apache.lucene.index.FilterDirectoryReader;
+import org.apache.lucene.index.FilterLeafReader;
 import org.apache.lucene.index.IndexReader;
+import org.apache.lucene.index.LeafReader;
+import org.apache.lucene.index.PostingsEnum;
+import org.apache.lucene.index.Terms;
+import org.apache.lucene.index.TermsEnum;
 import org.apache.lucene.search.BooleanQuery;
+import org.apache.lucene.util.BytesRef;
 import org.junit.Rule;
 import org.junit.Test;
 import org.locationtech.jts.geom.Envelope;
 import org.slf4j.LoggerFactory;
 
+import java.io.IOException;
 import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -242,6 +251,117 @@ public class EvaluationCrsLookupTest {
         try (IndexReader reader = indexer.openReader()) {
             assertEquals(inCrs84, LuceneGeoDocumentSchema.hasSpatialSourcesIn(reader, CRS84));
             assertEquals(outsideCrs84, LuceneGeoDocumentSchema.hasSpatialSourcesOutside(reader, CRS84));
+        }
+    }
+
+    /**
+     * A bound that is the subject has one placement, so preparing its lookup reads little of the source CRS field
+     * however the sources are spread: among a hundred CRSs it stops at the first other one with a live source, and
+     * among a thousand sources of its own CRS it finds none outside that CRS without passing over them.
+     */
+    @Test
+    public void preparingTheLookupOfABoundSubjectReadsFewCrssAndSources() throws Exception {
+        List<IndexGeometry> oneInEachCrs = new ArrayList<>();
+        for (int zone = 1; zone <= 50; zone++) {
+            oneInEachCrs.add(geometry("<http://www.opengis.net/def/crs/EPSG/0/" + (32600 + zone)
+                    + "> POINT(500000 1000000)"));
+            oneInEachCrs.add(geometry("<http://www.opengis.net/def/crs/EPSG/0/" + (32700 + zone)
+                    + "> POINT(500000 9000000)"));
+        }
+        LuceneGeoIndexer manyCrss = createIndexer("bound-subject-many-crss");
+        index(manyCrss, oneInEachCrs);
+        LuceneGeoIndexer oneCrs = createIndexer("bound-subject-one-crs");
+        index(oneCrs, Collections.nCopies(1000, geometry("POINT(10 10)")));
+
+        assertFewCrsFieldReads(manyCrss);
+        assertFewCrsFieldReads(oneCrs);
+    }
+
+    private static void assertFewCrsFieldReads(LuceneGeoIndexer indexer) throws Exception {
+        int[] reads = new int[2];
+        try (DirectoryReader reader = new CrsFieldCountingReader((DirectoryReader) indexer.openReader(), reads)) {
+            EvaluationCrsLookup.of(reader, geometry(BOUND), false);
+        }
+        assertTrue("CRS terms stepped through: " + reads[0], reads[0] <= 2);
+        assertTrue("CRS postings stepped through: " + reads[1], reads[1] <= 4);
+    }
+
+    /** A reader that counts the terms of the source CRS field, and the documents of their postings, it steps through. */
+    private static final class CrsFieldCountingReader extends FilterDirectoryReader {
+        private final int[] reads;
+
+        private CrsFieldCountingReader(DirectoryReader reader, int[] reads) throws IOException {
+            super(reader, new SubReaderWrapper() {
+                @Override
+                public LeafReader wrap(LeafReader leaf) {
+                    return new FilterLeafReader(leaf) {
+                        @Override
+                        public Terms terms(String field) throws IOException {
+                            Terms terms = super.terms(field);
+                            return terms == null || !LuceneGeoDocumentSchema.FIELD_SOURCE_CRS.equals(field)
+                                    ? terms : new CountingTerms(terms, reads);
+                        }
+
+                        @Override
+                        public CacheHelper getCoreCacheHelper() {
+                            return in.getCoreCacheHelper();
+                        }
+
+                        @Override
+                        public CacheHelper getReaderCacheHelper() {
+                            return in.getReaderCacheHelper();
+                        }
+                    };
+                }
+            });
+            this.reads = reads;
+        }
+
+        @Override
+        protected DirectoryReader doWrapDirectoryReader(DirectoryReader reader) throws IOException {
+            return new CrsFieldCountingReader(reader, reads);
+        }
+
+        @Override
+        public CacheHelper getReaderCacheHelper() {
+            return in.getReaderCacheHelper();
+        }
+    }
+
+    private static final class CountingTerms extends FilterLeafReader.FilterTerms {
+        private final int[] reads;
+
+        private CountingTerms(Terms terms, int[] reads) {
+            super(terms);
+            this.reads = reads;
+        }
+
+        @Override
+        public TermsEnum iterator() throws IOException {
+            return new FilterLeafReader.FilterTermsEnum(in.iterator()) {
+                @Override
+                public BytesRef next() throws IOException {
+                    reads[0]++;
+                    return in.next();
+                }
+
+                @Override
+                public PostingsEnum postings(PostingsEnum reuse, int flags) throws IOException {
+                    return new FilterLeafReader.FilterPostingsEnum(in.postings(null, flags)) {
+                        @Override
+                        public int nextDoc() throws IOException {
+                            reads[1]++;
+                            return in.nextDoc();
+                        }
+
+                        @Override
+                        public int advance(int target) throws IOException {
+                            reads[1]++;
+                            return in.advance(target);
+                        }
+                    };
+                }
+            };
         }
     }
 

@@ -359,7 +359,7 @@ final class LuceneGeoDocumentSchema {
 		TermsEnum iterator = terms.iterator();
 		for (BytesRef term = iterator.next(); term != null; term = iterator.next()) {
 			String crsUri = term.utf8ToString();
-			if (matchesAny(searcher, spatialSourcesQuery(crsUri, BooleanClause.Occur.FILTER))) {
+			if (matchesAny(searcher, spatialSourcesQuery(crsUri))) {
 				crsUris.add(crsUri);
 			}
 		}
@@ -368,18 +368,34 @@ final class LuceneGeoDocumentSchema {
 
 	/** Whether the reader holds a live spatial source of the CRS. */
 	static boolean hasSpatialSourcesIn(IndexReader reader, String crsUri) throws IOException {
-		return matchesAny(uncachedSearcher(reader), spatialSourcesQuery(crsUri, BooleanClause.Occur.FILTER));
+		return matchesAny(uncachedSearcher(reader), spatialSourcesQuery(crsUri));
 	}
 
-	/** Whether the reader holds a live spatial source of any CRS but the given one. */
+	/**
+	 * Whether the reader holds a live spatial source of any CRS but the given one. Each other CRS is searched on its
+	 * own, and the first live source ends the check. One search that excluded the given CRS would pass over every
+	 * source of that CRS before finding none outside it, and in a reader of one CRS that is every source.
+	 */
 	static boolean hasSpatialSourcesOutside(IndexReader reader, String crsUri) throws IOException {
-		return matchesAny(uncachedSearcher(reader), spatialSourcesQuery(crsUri, BooleanClause.Occur.MUST_NOT));
+		Terms terms = MultiTerms.getTerms(reader, FIELD_SOURCE_CRS);
+		if (terms == null) {
+			return false;
+		}
+		IndexSearcher searcher = uncachedSearcher(reader);
+		TermsEnum iterator = terms.iterator();
+		for (BytesRef term = iterator.next(); term != null; term = iterator.next()) {
+			String otherCrsUri = term.utf8ToString();
+			if (!otherCrsUri.equals(crsUri) && matchesAny(searcher, spatialSourcesQuery(otherCrsUri))) {
+				return true;
+			}
+		}
+		return false;
 	}
 
-	private static Query spatialSourcesQuery(String crsUri, BooleanClause.Occur crs) {
+	private static Query spatialSourcesQuery(String crsUri) {
 		return new BooleanQuery.Builder()
 				.add(hasEnvelopeQuery(true), BooleanClause.Occur.FILTER)
-				.add(sourceCrsQuery(crsUri), crs)
+				.add(sourceCrsQuery(crsUri), BooleanClause.Occur.FILTER)
 				.build();
 	}
 
