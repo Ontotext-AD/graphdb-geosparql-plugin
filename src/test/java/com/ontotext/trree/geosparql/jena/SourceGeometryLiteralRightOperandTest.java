@@ -11,6 +11,7 @@ import org.junit.Test;
 import java.util.List;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotSame;
 import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
@@ -65,8 +66,8 @@ public class SourceGeometryLiteralRightOperandTest {
 	}
 
 	/**
-	 * A source keeps right operands up to a number of coordinates in all. Past that, it transforms again for each
-	 * evaluation and gives the same operand.
+	 * A source keeps right operands up to a number of coordinates in all, and its own geometry serves its own CRS.
+	 * Past that limit, it transforms again for each evaluation and gives the same operand.
 	 */
 	@Test
 	public void sourceKeepsRightOperandsUpToItsCoordinateLimit() throws Exception {
@@ -78,13 +79,17 @@ public class SourceGeometryLiteralRightOperandTest {
 		String mercator = "http://www.opengis.net/def/crs/EPSG/0/3857";
 		String utm33 = "http://www.opengis.net/def/crs/EPSG/0/32633";
 
+		assertTrue(source.keepsRightOperandIn(IndexGeometry.INDEX_CRS));
+		assertFalse(source.keepsRightOperandIn(mercator));
 		GeometryWrapper inMercator = source.asRightOperandIn(mercator);
 		GeometryWrapper inUtm = source.asRightOperandIn(utm33);
 		GeometryWrapper inUtmAgain = source.asRightOperandIn(utm33);
 
 		assertSame(inMercator, source.asRightOperandIn(mercator));
+		assertTrue(source.keepsRightOperandIn(mercator));
 		assertNotSame(inUtm, inUtmAgain);
 		assertEquals(inUtm.getXYGeometry(), inUtmAgain.getXYGeometry());
+		assertFalse(source.keepsRightOperandIn(utm33));
 	}
 
 	/**

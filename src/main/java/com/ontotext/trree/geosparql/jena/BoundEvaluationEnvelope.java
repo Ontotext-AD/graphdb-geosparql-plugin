@@ -22,7 +22,8 @@ import org.opengis.util.FactoryException;
  *
  * <p>This keeps what it derives from the placed bound, not the placed bound itself. The bound source keeps its
  * placement within a limit and otherwise places it again where the geometry is needed, so a lookup in many CRSs
- * holds no more transformed copies of a large bound than its source keeps.
+ * holds no more transformed copies of a large bound than its source keeps. A placement the source does not keep is
+ * checked for {@link #isProvable provability} as it is made.
  */
 public final class BoundEvaluationEnvelope {
 	public static final BoundEvaluationEnvelope UNRELATED = new BoundEvaluationEnvelope();
@@ -53,6 +54,11 @@ public final class BoundEvaluationEnvelope {
 		Geometry geometry = bound.getXYGeometry();
 		this.envelope = IndexGeometry.comparableEnvelope(geometry.getEnvelopeInternal());
 		this.polygonPoints = geometry instanceof Polygon && !geometry.isEmpty() ? geometry.getNumPoints() : -1;
+		// Lookup asks most bounds whether they are provable, and placing a bound again for that costs more than
+		// checking the placed bound now.
+		if (!source.keepsRightOperandIn(crsUri)) {
+			isProvable(geometry);
+		}
 	}
 
 	/** Whether Jena can evaluate the bound against sources of the CRS. */

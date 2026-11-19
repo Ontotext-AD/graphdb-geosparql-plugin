@@ -195,16 +195,29 @@ public final class SourceGeometryLiteral {
 		return asRightOperand(leftCrsUri, null);
 	}
 
+	/** Whether {@link #asRightOperandIn} returns a kept operand for the CRS rather than transforming this again. */
+	boolean keepsRightOperandIn(String leftCrsUri) {
+		return leftCrsUri.equals(asGeometryWrapper().getSrsURI()) || keptRightOperand(leftCrsUri) != null;
+	}
+
+	private GeometryWrapper keptRightOperand(String leftCrsUri) {
+		for (RightOperand kept = rightOperands; kept != null; kept = kept.next()) {
+			if (kept.leftCrsUri().equals(leftCrsUri)) {
+				return kept.operand();
+			}
+		}
+		return null;
+	}
+
 	private GeometryWrapper asRightOperand(String leftCrsUri, GeometryWrapper left)
 			throws FactoryException, TransformException {
 		GeometryWrapper source = asGeometryWrapper();
 		if (leftCrsUri.equals(source.getSrsURI())) {
 			return source;
 		}
-		for (RightOperand kept = rightOperands; kept != null; kept = kept.next()) {
-			if (kept.leftCrsUri().equals(leftCrsUri)) {
-				return kept.operand();
-			}
+		GeometryWrapper kept = keptRightOperand(leftCrsUri);
+		if (kept != null) {
+			return kept;
 		}
 		GeometryWrapper leftOperand = left != null
 				? left : new GeometryWrapper(leftCrsUri, source.getGeometryDatatypeURI());
