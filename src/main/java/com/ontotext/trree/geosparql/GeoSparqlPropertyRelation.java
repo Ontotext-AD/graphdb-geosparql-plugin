@@ -17,7 +17,8 @@ import static com.ontotext.trree.geosparql.vocabulary.GeoConstants.*;
  *
  * <p>Candidate lookup compares envelopes in the CRS where Jena evaluates a pair, where that CRS is known before the
  * candidates are read, and CRS84 index envelopes otherwise. Equality requires equal envelopes where the pair is
- * looked up in its evaluation CRS and retains envelope-intersection lookup otherwise. Disjoint relations partition
+ * looked up in its evaluation CRS and both geometries are {@link IndexGeometry#isProvable provable}, and retains
+ * envelope-intersection lookup otherwise. Disjoint relations partition
  * source documents into envelope-proven matches and uncertain candidates. Mixed-CRS pairs that CRS84 envelopes
  * cannot safely classify, because their cleanup occurs in another CRS, are retained for disjoint exact evaluation.
  * Jena exact evaluation always preserves subject/object argument order.

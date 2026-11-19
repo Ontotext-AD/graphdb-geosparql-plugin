@@ -45,9 +45,10 @@ public interface GeoSparqlIndexer {
 
 	/**
 	 * Returns uncertain equality candidates. Adapters may require equal envelopes where both envelopes are exact
-	 * for the pair and both geometries are valid, and retain intersection lookup otherwise: an invalid geometry can
-	 * have a part that Jena's equality leaves out but that still widens its envelope. Every candidate needs exact
-	 * evaluation.
+	 * for the pair and both geometries are {@link IndexGeometry#isProvable provable}, and retain intersection lookup
+	 * otherwise. Jena's equality can accept a pair whose envelopes differ when either geometry is not provable: it
+	 * leaves out a part of an invalid geometry that still widens its envelope, and at coordinates near 10⁻¹⁶² it finds
+	 * a slightly bent line straight. Every candidate needs exact evaluation.
 	 *
 	 * @param candidateIsSubject whether each candidate is the subject and the bound source the object
 	 */
