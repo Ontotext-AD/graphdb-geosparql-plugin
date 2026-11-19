@@ -17,9 +17,11 @@ import org.apache.lucene.document.StoredField;
 import org.apache.lucene.index.DirectoryReader;
 import org.apache.lucene.index.DocValuesType;
 import org.apache.lucene.index.FieldInfo;
+import org.apache.lucene.index.FilterDirectoryReader;
 import org.apache.lucene.index.IndexReader;
 import org.apache.lucene.index.IndexWriter;
 import org.apache.lucene.index.IndexWriterConfig;
+import org.apache.lucene.index.LeafReader;
 import org.apache.lucene.index.LeafReaderContext;
 import org.apache.lucene.index.NoMergePolicy;
 import org.apache.lucene.spatial.SpatialStrategy;
@@ -556,9 +558,35 @@ public class LuceneGeoSchemaTest {
 		assertForceReindexMessage(assertThrows(PluginException.class, () -> indexer.getSourceGeometryLiteralsFor(0)));
 	}
 
-	/** Rolls its transaction back once, between a query passing the compatibility gate and opening the index. */
+	/** A failure to close the rejected reader does not hide why it was rejected. */
+	@Test
+	public void rejectedReaderThatFailsToCloseStillReportsTheRebuildError() throws Exception {
+		Path dataDir = tmpFolder.getRoot().toPath().resolve("rejected-reader-fails-to-close");
+		Files.createDirectories(dataDir);
+		writeCurrentSchemaIndexWithoutCommitMarker(dataDir);
+		RollbackBeforeReaderOpensIndexer indexer = new RollbackBeforeReaderOpensIndexer(plugin(dataDir.toFile()));
+		indexer.initialize();
+		indexer.begin();
+		indexer.freshIndex();
+		indexer.indexGeometryList(1L, subject -> "Subject " + subject, List.of(sampleGeometry));
+		indexer.commit();
+		indexer.rollBackBeforeNextReaderOpens = true;
+		indexer.failToCloseReader = true;
+
+		PluginException failure = assertThrows(PluginException.class, () -> indexer.getSourceGeometryLiteralsFor(0));
+
+		assertForceReindexMessage(failure);
+		assertEquals(1, failure.getSuppressed().length);
+		assertEquals("reader close failure", failure.getSuppressed()[0].getMessage());
+	}
+
+	/**
+	 * Rolls its transaction back once, between a query passing the compatibility gate and opening the index, and can
+	 * fail to close the readers it opens.
+	 */
 	private static final class RollbackBeforeReaderOpensIndexer extends LuceneGeoIndexer {
 		private boolean rollBackBeforeNextReaderOpens;
+		private boolean failToCloseReader;
 
 		private RollbackBeforeReaderOpensIndexer(GeoSparqlPlugin parent) {
 			super(parent, () -> "test-crs-environment");
@@ -575,6 +603,36 @@ public class LuceneGeoSchemaTest {
 				}
 			}
 			return super.openReader();
+		}
+
+		@Override
+		DirectoryReader openCommit() throws IOException {
+			DirectoryReader reader = super.openCommit();
+			if (!failToCloseReader) {
+				return reader;
+			}
+			return new FilterDirectoryReader(reader, new FilterDirectoryReader.SubReaderWrapper() {
+				@Override
+				public LeafReader wrap(LeafReader leaf) {
+					return leaf;
+				}
+			}) {
+				@Override
+				protected DirectoryReader doWrapDirectoryReader(DirectoryReader in) {
+					return in;
+				}
+
+				@Override
+				public CacheHelper getReaderCacheHelper() {
+					return null;
+				}
+
+				@Override
+				protected void doClose() throws IOException {
+					super.doClose();
+					throw new IOException("reader close failure");
+				}
+			};
 		}
 	}
 

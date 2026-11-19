@@ -758,19 +758,26 @@ public class LuceneGeoIndexer implements GeoSparqlIndexer {
 	 * can restore an incompatible commit in between, so the commit the query reads is checked as well.
 	 */
 	IndexReader openReader() throws IOException {
-		DirectoryReader reader = DirectoryReader.open(directory);
-		String incompatibility;
+		DirectoryReader reader = openCommit();
 		try {
-			incompatibility = incompatibleCommitMessage(reader);
+			String incompatibility = incompatibleCommitMessage(reader);
+			if (incompatibility != null) {
+				throw new PluginException(incompatibility);
+			}
+			return reader;
 		} catch (IOException | RuntimeException e) {
-			reader.close();
+			// The reason the reader is rejected matters more than a failure to close it.
+			try {
+				reader.close();
+			} catch (IOException | RuntimeException closeFailure) {
+				e.addSuppressed(closeFailure);
+			}
 			throw e;
 		}
-		if (incompatibility != null) {
-			reader.close();
-			throw new PluginException(incompatibility);
-		}
-		return reader;
+	}
+
+	DirectoryReader openCommit() throws IOException {
+		return DirectoryReader.open(directory);
 	}
 
 	/**
