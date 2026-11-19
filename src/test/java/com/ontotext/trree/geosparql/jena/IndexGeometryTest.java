@@ -21,8 +21,8 @@ public class IndexGeometryTest {
 	}
 
 	/**
-	 * JTS decides a geometry exactly only while products of coordinate differences stay normal doubles: every
-	 * coordinate is zero or of moderate magnitude, and the geometry is valid.
+	 * Lookup relies on JTS proofs only while products of coordinate differences stay normal doubles and Jena's
+	 * equality follows the point sets: every coordinate is zero or of moderate magnitude, and the geometry is valid.
 	 */
 	@Test
 	public void onlyAValidGeometryWithZeroOrModerateCoordinatesIsProvable() throws ParseException {

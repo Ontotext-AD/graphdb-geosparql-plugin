@@ -49,7 +49,7 @@ public final class IndexGeometry {
 	 * projected CRS spans more longitude than the cleanup widening of an index envelope.
 	 */
 	public static final double POLAR_CAP = 0.001;
-	/** Magnitudes of a non-zero coordinate within which JTS decides a geometry exactly; see {@link #isProvable}. */
+	/** Magnitudes of a non-zero coordinate within which lookup relies on JTS proofs; see {@link #isProvable}. */
 	public static final double MIN_PROVABLE_MAGNITUDE = 1e-100;
 	public static final double MAX_PROVABLE_MAGNITUDE = 1e100;
 	private static final Logger LOGGER = LoggerFactory.getLogger(IndexGeometry.class);
@@ -234,11 +234,12 @@ public final class IndexGeometry {
 	 * magnitude from {@value #MIN_PROVABLE_MAGNITUDE} to {@value #MAX_PROVABLE_MAGNITUDE}.
 	 *
 	 * <p>Jena may fail to relate an invalid geometry to one whose envelope meets it, and a pair that fails is no
-	 * match. JTS finds the side of a line a point lies on from products of coordinate differences. Within those
-	 * magnitudes the products, and the error terms its double-double arithmetic keeps, stay normal doubles, so it
-	 * decides exactly. Near 10⁻¹⁶² they round to zero, and JTS then finds a slightly bent line straight, two
-	 * geometries equal whose envelopes differ, or a rectangle over a notch within a polygon. Jena evaluates such a
-	 * geometry with the same JTS, so a pair with it is left to exact evaluation rather than decided by a proof.
+	 * match. JTS finds the side of a line a point lies on from products of coordinate differences, with error terms
+	 * that its double-double arithmetic keeps. Near 10⁻¹⁶² the products and terms round to zero, and JTS then finds a
+	 * slightly bent line straight, two geometries equal whose envelopes differ, or a rectangle over a notch within a
+	 * polygon. Within those magnitudes they stay normal doubles, which rules out those failures, though it does not
+	 * make JTS exact for every input. Jena evaluates such a geometry with the same JTS, so a pair with one is left to
+	 * exact evaluation rather than decided by a proof.
 	 */
 	public static boolean isProvable(Geometry geometry) {
 		boolean[] moderate = { true };
