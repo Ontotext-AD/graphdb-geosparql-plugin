@@ -2,9 +2,11 @@ package com.ontotext.trree.geosparql;
 
 import com.ontotext.trree.geosparql.jena.JenaGeoSparqlException;
 import com.ontotext.trree.geosparql.jena.JenaGeometryAdapter;
+import com.ontotext.trree.geosparql.jena.SourceGeometryLiteral;
 import com.ontotext.trree.geosparql.vocabulary.GeoConstants;
 import org.apache.lucene.search.BooleanQuery;
 import org.eclipse.rdf4j.model.Value;
+import org.locationtech.jts.geom.Coordinate;
 import org.junit.Test;
 
 import java.util.ArrayList;
@@ -17,6 +19,7 @@ import java.util.Random;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.TreeSet;
+import java.util.function.Function;
 import java.util.stream.Collectors;
 
 import static org.junit.Assert.assertTrue;
@@ -32,6 +35,17 @@ import static org.junit.Assert.assertTrue;
  *
  * <p>Besides random bounds, every seed compares a polygon covering the world, a polygon whose ring winds twice around
  * a square, a polygon about a millimetre across, and a feature that the repository does not hold.
+ *
+ * <p>Arctic seeds place points, lines and polygons between latitudes 66 and 80 in CRS84, EPSG:4326, Web Mercator and
+ * polar stereographic. Their lines and polygons span tens of degrees of longitude, so an edge Jena draws straight in
+ * one CRS runs far from the same edge drawn in another. They add a polygon a thousandth of a degree tall, a point
+ * that meets it only on such an edge, and a UTM point, whose CRS sorts before every Arctic CRS; and a CRS whose only
+ * geometry is deleted and a CRS whose only geometry is empty, which sort before that. One Arctic seed compares with
+ * three clauses, which leave a bound one placement besides its own CRS: the UTM CRS takes it, so polar stereographic
+ * is past the clause limit. A bound that is the subject in a projected CRS is looked up among sources of other
+ * CRSs by the prefix cells of their CRS84 envelopes, which can leave out a source that Jena relates to it only along
+ * such an edge; for those pairs, with a relation other than a disjoint one, the Arctic seeds check only that the
+ * index returns no row that the function does not.
  */
 public class GeoSparqlRandomizedDifferentialTest extends AbstractGeoSparqlPluginTest {
 	private static final String NAMESPACE = "http://example.com/randomized-differential/";
@@ -65,23 +79,53 @@ public class GeoSparqlRandomizedDifferentialTest extends AbstractGeoSparqlPlugin
 			new Crs("http://www.opengis.net/def/crs/EPSG/0/4979", true, true, false),
 			new Crs("http://www.opengis.net/def/crs/EPSG/0/3857", false, false, true),
 			new Crs("http://www.opengis.net/def/crs/EPSG/0/7856", false, false, true));
+	private static final String CRS84 = "http://www.opengis.net/def/crs/OGC/1.3/CRS84";
+	private static final String POLAR_STEREOGRAPHIC = "http://www.opengis.net/def/crs/EPSG/0/3413";
+	private static final List<Crs> ARCTIC_CRSS = List.of(CRSS.get(0), CRSS.get(1), CRSS.get(4),
+			new Crs(POLAR_STEREOGRAPHIC, false, false, true));
+	private static final String UTM_33N = "http://www.opengis.net/def/crs/EPSG/0/32633";
+	private static final Set<String> PROJECTED = Set.of("http://www.opengis.net/def/crs/EPSG/0/3857",
+			"http://www.opengis.net/def/crs/EPSG/0/7856", POLAR_STEREOGRAPHIC, UTM_33N);
+	private static final Set<String> DISJOINT_RELATIONS = Set.of("sfDisjoint", "ehDisjoint", "rcc8dc");
+	private static final String DELETED_ONLY_CRS = "http://www.opengis.net/def/crs/EPSG/0/32755";
+	private static final String EMPTY_ONLY_CRS = "http://www.opengis.net/def/crs/EPSG/0/32756";
+
+	/**
+	 * How a comparison draws its geometries and which fixed bounds it adds. Long edges also add the CRSs of only
+	 * deleted or empty geometries and allow for the lookup of a projected bound subject described above.
+	 */
+	private record Scenario(Function<Random, String> geometries, Map<String, String> fixedBounds, boolean longEdges) {
+	}
+
+	private static final Scenario BRISBANE = new Scenario(GeoSparqlRandomizedDifferentialTest::randomGeometry,
+			FIXED_BOUNDS, false);
 
 	@Test
 	public void seed1() throws Exception {
-		compare(1, 0);
+		compare(1, 0, BRISBANE);
 	}
 
 	@Test
 	public void seed2() throws Exception {
-		compare(2, 0);
+		compare(2, 0, BRISBANE);
 	}
 
 	@Test
 	public void seed3WithFewLuceneClauses() throws Exception {
-		compare(3, 4);
+		compare(3, 4, BRISBANE);
 	}
 
-	private void compare(long seed, int clauseLimit) throws Exception {
+	@Test
+	public void arcticSeed4() throws Exception {
+		compare(4, 0, arctic());
+	}
+
+	@Test
+	public void arcticSeed5WithFewLuceneClauses() throws Exception {
+		compare(5, 3, arctic());
+	}
+
+	private void compare(long seed, int clauseLimit, Scenario scenario) throws Exception {
 		Random random = new Random(seed);
 		Map<String, String> features = new LinkedHashMap<>();
 		List<String> rejected = new ArrayList<>();
@@ -90,7 +134,7 @@ public class GeoSparqlRandomizedDifferentialTest extends AbstractGeoSparqlPlugin
 				enablePlugin();
 			}
 			String name = "f" + i;
-			String wkt = randomGeometry(random);
+			String wkt = scenario.geometries().apply(random);
 			boolean valid = isValidSource(wkt);
 			// The plugin indexes nothing before it is enabled, and an invalid geometry would then fail enabling it.
 			if (!valid && i < FEATURES / 2) {
@@ -116,15 +160,18 @@ public class GeoSparqlRandomizedDifferentialTest extends AbstractGeoSparqlPlugin
 			features.put(name, wkt);
 		}
 		assertTrue("too few geometries accepted: " + rejected, features.size() >= FEATURES * 3 / 4);
-		for (Map.Entry<String, String> bound : new TreeMap<>(FIXED_BOUNDS).entrySet()) {
-			executeSparqlUpdateQuery(PREFIXES + "INSERT DATA {\n"
-					+ "  ex:" + bound.getKey() + " a geo:Feature ; geo:hasDefaultGeometry ex:" + bound.getKey() + "Geom .\n"
-					+ "  ex:" + bound.getKey() + "Geom a geo:Geometry ; geo:asWKT \"" + bound.getValue()
-					+ "\"^^geo:wktLiteral .\n}");
+		for (Map.Entry<String, String> bound : new TreeMap<>(scenario.fixedBounds()).entrySet()) {
+			insertFeature(bound.getKey(), bound.getValue());
 			features.put(bound.getKey(), bound.getValue());
 		}
+		if (scenario.longEdges()) {
+			insertFeature("gone", "<" + DELETED_ONLY_CRS + "> POINT(500000 7700000)");
+			executeSparqlUpdateQuery(PREFIXES + "DELETE WHERE { ex:gone ?p ?o } ;\nDELETE WHERE { ex:goneGeom ?p ?o }");
+			insertFeature("empty", "<" + EMPTY_ONLY_CRS + "> POINT EMPTY");
+			features.put("empty", "<" + EMPTY_ONLY_CRS + "> POINT EMPTY");
+		}
 		List<String> bounds = new ArrayList<>(features.keySet().stream().limit(BOUNDS).toList());
-		bounds.addAll(new TreeSet<>(FIXED_BOUNDS.keySet()));
+		bounds.addAll(new TreeSet<>(scenario.fixedBounds().keySet()));
 		bounds.add(ABSENT);
 		Set<Value> candidates = features.keySet().stream().map(name -> (Value) VF.createIRI(NAMESPACE, name))
 				.collect(Collectors.toCollection(LinkedHashSet::new));
@@ -149,7 +196,14 @@ public class GeoSparqlRandomizedDifferentialTest extends AbstractGeoSparqlPlugin
 								+ "  ex:" + bound + " geo:hasDefaultGeometry/geo:asWKT ?boundWkt .\n"
 								+ "  FILTER(geof:" + relation + "(" + (boundSubject ? "?boundWkt, ?candidateWkt"
 								: "?candidateWkt, ?boundWkt") + "))\n}");
-						if (!property.equals(function)) {
+						Set<Value> missing = new LinkedHashSet<>(function);
+						missing.removeAll(property);
+						String boundCrs = crsOf(features.get(bound));
+						if (scenario.longEdges() && boundSubject && boundCrs != null && PROJECTED.contains(boundCrs)
+								&& !DISJOINT_RELATIONS.contains(relation)) {
+							missing.removeIf(candidate -> !crsOf(features.get(name(candidate))).equals(boundCrs));
+						}
+						if (!function.containsAll(property) || !missing.isEmpty()) {
 							mismatches.add(describe(features, relation, bound, boundSubject, property, function));
 						}
 					}
@@ -173,10 +227,76 @@ public class GeoSparqlRandomizedDifferentialTest extends AbstractGeoSparqlPlugin
 	}
 
 	private static String wkts(Map<String, String> features, Set<Value> candidates) {
-		return candidates.stream().map(value -> {
-			String name = value.stringValue().substring(NAMESPACE.length());
-			return name + " " + features.get(name);
-		}).collect(Collectors.joining("; "));
+		return candidates.stream().map(value -> name(value) + " " + features.get(name(value)))
+				.collect(Collectors.joining("; "));
+	}
+
+	private static String name(Value candidate) {
+		return candidate.stringValue().substring(NAMESPACE.length());
+	}
+
+	/** The CRS of a geometry literal, or none for a feature the repository does not hold. */
+	private static String crsOf(String wkt) {
+		if (wkt == null) {
+			return null;
+		}
+		return wkt.startsWith("<") ? wkt.substring(1, wkt.indexOf('>')) : CRS84;
+	}
+
+	private void insertFeature(String name, String wkt) throws Exception {
+		executeSparqlUpdateQuery(PREFIXES + "INSERT DATA {\n"
+				+ "  ex:" + name + " a geo:Feature ; geo:hasDefaultGeometry ex:" + name + "Geom .\n"
+				+ "  ex:" + name + "Geom a geo:Geometry ; geo:asWKT \"" + wkt + "\"^^geo:wktLiteral .\n}");
+	}
+
+	/**
+	 * The Arctic scenario. Its fixed bounds are a CRS84 polygon a thousandth of a degree tall from longitude -45 to 45
+	 * at latitude 70, a polar stereographic point midway along the straight line Jena draws there between the middles
+	 * of the polygon's west and east sides, and a UTM zone 33N point at latitude 69.4.
+	 */
+	private static Scenario arctic() {
+		double[] west = polarStereographic(-45, 70.0005);
+		double[] east = polarStereographic(45, 70.0005);
+		Map<String, String> bounds = Map.of(
+				"thin", "POLYGON((-45 70,45 70,45 70.001,-45 70.001,-45 70))",
+				"chord", "<" + POLAR_STEREOGRAPHIC + "> POINT(" + ordinate((west[0] + east[0]) / 2) + " "
+						+ ordinate((west[1] + east[1]) / 2) + ")",
+				"utm", "<" + UTM_33N + "> POINT(500000 7700000)");
+		return new Scenario(GeoSparqlRandomizedDifferentialTest::randomArcticGeometry, bounds, true);
+	}
+
+	/**
+	 * A point, line or polygon between latitudes 66 and 80 in one of the Arctic CRSs. A line or polygon spans 5 to 60
+	 * degrees of longitude and up to two of latitude.
+	 */
+	private static String randomArcticGeometry(Random random) {
+		Crs crs = ARCTIC_CRSS.get(random.nextInt(ARCTIC_CRSS.size()));
+		double longitude = -40 + random.nextDouble() * 80;
+		double latitude = 66 + random.nextDouble() * 12;
+		double span = 5 + random.nextDouble() * 55;
+		double height = 0.001 + random.nextDouble() * 2;
+		return "<" + crs.uri() + "> " + switch (random.nextInt(4)) {
+			case 0 -> "POINT(" + position(crs, Ordinates.XY, random, longitude, latitude) + ")";
+			case 1 -> "LINESTRING(" + positions(crs, Ordinates.XY, random, longitude, latitude, longitude + span,
+					latitude + height) + ")";
+			case 2 -> "POLYGON((" + positions(crs, Ordinates.XY, random, longitude, latitude, longitude + span,
+					latitude, longitude + span, latitude + height, longitude, latitude + height, longitude, latitude)
+					+ "))";
+			default -> "POLYGON((" + positions(crs, Ordinates.XY, random, longitude, latitude, longitude + span,
+					latitude, longitude + span / 2, latitude + height, longitude, latitude) + "))";
+		};
+	}
+
+	/** A longitude and latitude in polar stereographic coordinates, as Jena transforms them. */
+	private static double[] polarStereographic(double longitude, double latitude) {
+		try {
+			Coordinate coordinate = SourceGeometryLiteral.fromWkt("POINT(" + ordinate(longitude) + " "
+					+ ordinate(latitude) + ")").asGeometryWrapper().transform(POLAR_STEREOGRAPHIC).getXYGeometry()
+					.getCoordinate();
+			return new double[] { coordinate.x, coordinate.y };
+		} catch (Exception e) {
+			throw new IllegalStateException("cannot place a point in polar stereographic coordinates", e);
+		}
 	}
 
 	/**
@@ -297,6 +417,9 @@ public class GeoSparqlRandomizedDifferentialTest extends AbstractGeoSparqlPlugin
 		if (crs.uri().endsWith("/3857")) {
 			return new double[] { MERCATOR_RADIUS * StrictMath.toRadians(longitude),
 					MERCATOR_RADIUS * StrictMath.log(StrictMath.tan(StrictMath.PI / 4 + StrictMath.toRadians(latitude) / 2)) };
+		}
+		if (crs.uri().equals(POLAR_STEREOGRAPHIC)) {
+			return polarStereographic(longitude, latitude);
 		}
 		if (crs.uri().endsWith("/7856")) {
 			return new double[] { 502000 + (longitude - LONGITUDE) * 98800, 6961000 + (latitude - LATITUDE) * 110900 };
