@@ -22,6 +22,7 @@ import java.util.TreeSet;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
+import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 
 /**
@@ -44,8 +45,8 @@ import static org.junit.Assert.assertTrue;
  * three clauses, which leave a bound one placement besides its own CRS: the UTM CRS takes it, so polar stereographic
  * is past the clause limit. A bound that is the subject in a projected CRS is looked up among sources of other
  * CRSs by the prefix cells of their CRS84 envelopes, which can leave out a source that Jena relates to it only along
- * such an edge; for those pairs, with a relation other than a disjoint one, the Arctic seeds check only that the
- * index returns no row that the function does not.
+ * such an edge. Each Arctic seed lists the pairs that lookup leaves out; only those may differ, and each must still
+ * be left out, so a seed fails once the lookup finds one.
  */
 public class GeoSparqlRandomizedDifferentialTest extends AbstractGeoSparqlPluginTest {
 	private static final String NAMESPACE = "http://example.com/randomized-differential/";
@@ -79,20 +80,16 @@ public class GeoSparqlRandomizedDifferentialTest extends AbstractGeoSparqlPlugin
 			new Crs("http://www.opengis.net/def/crs/EPSG/0/4979", true, true, false),
 			new Crs("http://www.opengis.net/def/crs/EPSG/0/3857", false, false, true),
 			new Crs("http://www.opengis.net/def/crs/EPSG/0/7856", false, false, true));
-	private static final String CRS84 = "http://www.opengis.net/def/crs/OGC/1.3/CRS84";
 	private static final String POLAR_STEREOGRAPHIC = "http://www.opengis.net/def/crs/EPSG/0/3413";
 	private static final List<Crs> ARCTIC_CRSS = List.of(CRSS.get(0), CRSS.get(1), CRSS.get(4),
 			new Crs(POLAR_STEREOGRAPHIC, false, false, true));
 	private static final String UTM_33N = "http://www.opengis.net/def/crs/EPSG/0/32633";
-	private static final Set<String> PROJECTED = Set.of("http://www.opengis.net/def/crs/EPSG/0/3857",
-			"http://www.opengis.net/def/crs/EPSG/0/7856", POLAR_STEREOGRAPHIC, UTM_33N);
-	private static final Set<String> DISJOINT_RELATIONS = Set.of("sfDisjoint", "ehDisjoint", "rcc8dc");
 	private static final String DELETED_ONLY_CRS = "http://www.opengis.net/def/crs/EPSG/0/32755";
 	private static final String EMPTY_ONLY_CRS = "http://www.opengis.net/def/crs/EPSG/0/32756";
 
 	/**
 	 * How a comparison draws its geometries and which fixed bounds it adds. Long edges also add the CRSs of only
-	 * deleted or empty geometries and allow for the lookup of a projected bound subject described above.
+	 * deleted or empty geometries.
 	 */
 	private record Scenario(Function<Random, String> geometries, Map<String, String> fixedBounds, boolean longEdges) {
 	}
@@ -102,30 +99,35 @@ public class GeoSparqlRandomizedDifferentialTest extends AbstractGeoSparqlPlugin
 
 	@Test
 	public void seed1() throws Exception {
-		compare(1, 0, BRISBANE);
+		compare(1, 0, BRISBANE, Set.of());
 	}
 
 	@Test
 	public void seed2() throws Exception {
-		compare(2, 0, BRISBANE);
+		compare(2, 0, BRISBANE, Set.of());
 	}
 
 	@Test
 	public void seed3WithFewLuceneClauses() throws Exception {
-		compare(3, 4, BRISBANE);
+		compare(3, 4, BRISBANE, Set.of());
 	}
 
 	@Test
 	public void arcticSeed4() throws Exception {
-		compare(4, 0, arctic());
+		compare(4, 0, arctic(), Set.of("chord sfIntersects thin", "chord sfWithin thin", "utm sfIntersects f19",
+				"utm sfWithin f19"));
 	}
 
 	@Test
 	public void arcticSeed5WithFewLuceneClauses() throws Exception {
-		compare(5, 3, arctic());
+		compare(5, 3, arctic(), Set.of("chord sfIntersects thin", "chord sfWithin thin"));
 	}
 
-	private void compare(long seed, int clauseLimit, Scenario scenario) throws Exception {
+	/**
+	 * @param knownMisses the pairs a projected bound subject is known to leave out, each as its bound, relation and
+	 *                    candidate
+	 */
+	private void compare(long seed, int clauseLimit, Scenario scenario, Set<String> knownMisses) throws Exception {
 		Random random = new Random(seed);
 		Map<String, String> features = new LinkedHashMap<>();
 		List<String> rejected = new ArrayList<>();
@@ -182,6 +184,7 @@ public class GeoSparqlRandomizedDifferentialTest extends AbstractGeoSparqlPlugin
 			BooleanQuery.setMaxClauseCount(clauseLimit);
 		}
 		List<String> mismatches = new ArrayList<>();
+		Set<String> leftOut = new TreeSet<>();
 		try {
 			for (String bound : bounds) {
 				for (String relation : RELATIONS) {
@@ -198,10 +201,11 @@ public class GeoSparqlRandomizedDifferentialTest extends AbstractGeoSparqlPlugin
 								: "?candidateWkt, ?boundWkt") + "))\n}");
 						Set<Value> missing = new LinkedHashSet<>(function);
 						missing.removeAll(property);
-						String boundCrs = crsOf(features.get(bound));
-						if (scenario.longEdges() && boundSubject && boundCrs != null && PROJECTED.contains(boundCrs)
-								&& !DISJOINT_RELATIONS.contains(relation)) {
-							missing.removeIf(candidate -> !crsOf(features.get(name(candidate))).equals(boundCrs));
+						if (boundSubject) {
+							missing.removeIf(candidate -> {
+								String miss = bound + " " + relation + " " + name(candidate);
+								return knownMisses.contains(miss) && leftOut.add(miss);
+							});
 						}
 						if (!function.containsAll(property) || !missing.isEmpty()) {
 							mismatches.add(describe(features, relation, bound, boundSubject, property, function));
@@ -213,6 +217,7 @@ public class GeoSparqlRandomizedDifferentialTest extends AbstractGeoSparqlPlugin
 			BooleanQuery.setMaxClauseCount(previousClauseLimit);
 		}
 		assertTrue("seed " + seed + ":\n" + String.join("\n", mismatches), mismatches.isEmpty());
+		assertEquals("seed " + seed + ": pairs a projected bound subject leaves out", new TreeSet<>(knownMisses), leftOut);
 	}
 
 	private static String describe(Map<String, String> features, String relation, String bound,
@@ -233,14 +238,6 @@ public class GeoSparqlRandomizedDifferentialTest extends AbstractGeoSparqlPlugin
 
 	private static String name(Value candidate) {
 		return candidate.stringValue().substring(NAMESPACE.length());
-	}
-
-	/** The CRS of a geometry literal, or none for a feature the repository does not hold. */
-	private static String crsOf(String wkt) {
-		if (wkt == null) {
-			return null;
-		}
-		return wkt.startsWith("<") ? wkt.substring(1, wkt.indexOf('>')) : CRS84;
 	}
 
 	private void insertFeature(String name, String wkt) throws Exception {
