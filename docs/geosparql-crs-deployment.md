@@ -40,7 +40,8 @@ A geometry with many points also stores a set of smaller boxes that together con
 first two rows, a bound geometry whose bounding box misses every one of those boxes does not select it. The boxes
 follow the outline only coarsely: a bound geometry in a small hole or bay can still meet a box and select the
 geometry, and a geometry whose boxes would cover most of its bounding box stores none. Geometries with fewer points,
-and invalid geometries, are selected by their bounding box alone.
+invalid geometries, and geometries with a non-zero coordinate below 10⁻¹⁰⁰ or above 10¹⁰⁰ in magnitude are selected
+by their bounding box alone.
 
 The last two rows rely on CRS84 index envelopes. A CRS84 index envelope of a source in another CRS is derived with
 Apache SIS and includes Jena's pinned cleanup displacement in CRS84 units. Apache SIS does not provide a universal
