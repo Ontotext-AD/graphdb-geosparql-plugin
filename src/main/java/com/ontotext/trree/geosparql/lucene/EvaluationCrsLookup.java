@@ -25,10 +25,10 @@ import java.util.Optional;
  * meet. A source may also carry boxes that together contain it; a bound whose envelope meets none of them shares no
  * point with the source.
  *
- * <p>The bound is placed in every source CRS of the reader that it shares, or in which every source is the left
- * operand. It always has a placement in its own CRS, which adds a clause only where the reader holds sources of that
- * CRS. A CRS in which Jena cannot place the bound relates none of its sources. Sources of every other CRS are
- * left to lookup by CRS84 index envelopes, which {@link #orElsewhere} restricts to them.
+ * <p>The bound is placed in every CRS of the reader's live spatial sources that it shares, or in which every source
+ * is the left operand. It always has a placement in its own CRS, which adds a clause only where the reader holds
+ * sources of that CRS. A CRS in which Jena cannot place the bound relates none of its sources. Sources of every other
+ * CRS are left to lookup by CRS84 index envelopes, which {@link #orElsewhere} restricts to them.
  *
  * <p>A lookup has one clause for each CRS it places the bound in, and Lucene limits the clauses of one query. In a
  * reader with more source CRSs than that limit allows, the sources of the remaining CRSs keep CRS84 lookup.

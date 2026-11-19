@@ -142,6 +142,42 @@ public class EvaluationCrsLookupTest {
     }
 
     /**
+     * A CRS whose documents hold only empty geometries, or are deleted, keeps its term in the index but takes no
+     * placement. With three clauses the bound is placed in its own CRS and one other. That is EPSG:3413 here, whose
+     * source meets the bound only where Jena joins two of the bound's transformed vertices with a straight line, far
+     * from the bound's CRS84 envelope and its prefix cells. EPSG:32633 sorts before it.
+     */
+    @Test
+    public void crssWithoutLiveSpatialSourcesTakeNoPlacement() throws Exception {
+        String polarStereographic = "http://www.opengis.net/def/crs/EPSG/0/3413";
+        IndexGeometry bound = geometry("POLYGON((-45 70,45 70,45 70.001,-45 70.001,-45 70))");
+        Envelope west = geometry("POINT(-45 70.0005)").evaluationEnvelope(polarStereographic, true).orElseThrow()
+                .envelope();
+        Envelope east = geometry("POINT(45 70.0005)").evaluationEnvelope(polarStereographic, true).orElseThrow()
+                .envelope();
+        IndexGeometry onChord = geometry("<" + polarStereographic + "> POINT(" + (west.getMinX() + east.getMinX()) / 2
+                + " " + (west.getMinY() + east.getMinY()) / 2 + ")");
+        assertTrue(holds(GeoSparqlPropertyRelation.SF_INTERSECTS, onChord.sourceGeometryLiteral(),
+                bound.sourceGeometryLiteral()));
+        LuceneGeoIndexer withEmpty = createIndexer("crs-of-empty-geometries");
+        index(withEmpty, List.of(onChord, geometry("<" + UTM_33N + "> POINT EMPTY")));
+        LuceneGeoIndexer withDeleted = createIndexer("crs-of-deleted-geometries");
+        index(withDeleted, List.of(onChord, geometry("<" + UTM_33N + "> POINT(500000 6700000)")));
+        withDeleted.begin();
+        withDeleted.indexGeometryList(2L, id -> "geometry-" + id, List.of());
+        withDeleted.commit();
+        withDeleted.complete();
+        int clauseLimit = BooleanQuery.getMaxClauseCount();
+        BooleanQuery.setMaxClauseCount(3);
+        try {
+            assertEquals(Set.of(1L), ids(withEmpty.getEnvelopeIntersections(bound, true)));
+            assertEquals(Set.of(1L), ids(withDeleted.getEnvelopeIntersections(bound, true)));
+        } finally {
+            BooleanQuery.setMaxClauseCount(clauseLimit);
+        }
+    }
+
+    /**
      * An infinite coordinate leaves a source's own envelope with a non-finite bound, which shows nothing about where
      * the source lies. The source stays a candidate wherever the bound may meet it and is never proved disjoint, and a
      * bound with such an envelope proves no source of its CRS disjoint.

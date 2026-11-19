@@ -11,6 +11,7 @@ import org.apache.lucene.document.NumericDocValuesField;
 import org.apache.lucene.document.StoredField;
 import org.apache.lucene.document.StringField;
 import org.apache.lucene.index.IndexReader;
+import org.apache.lucene.index.LeafReaderContext;
 import org.apache.lucene.index.MultiTerms;
 import org.apache.lucene.index.Terms;
 import org.apache.lucene.index.TermsEnum;
@@ -19,8 +20,12 @@ import org.apache.lucene.index.IndexOptions;
 import org.apache.lucene.index.Term;
 import org.apache.lucene.search.BooleanClause;
 import org.apache.lucene.search.BooleanQuery;
+import org.apache.lucene.search.CollectionTerminatedException;
+import org.apache.lucene.search.IndexSearcher;
 import org.apache.lucene.search.MatchAllDocsQuery;
 import org.apache.lucene.search.Query;
+import org.apache.lucene.search.ScoreMode;
+import org.apache.lucene.search.SimpleCollector;
 import org.apache.lucene.search.TermQuery;
 import org.apache.lucene.spatial.SpatialStrategy;
 import org.apache.lucene.util.BytesRef;
@@ -339,18 +344,54 @@ final class LuceneGeoDocumentSchema {
 				.build();
 	}
 
-	/** Returns the source CRS URIs of the reader's documents. */
+	/**
+	 * Returns the CRS URIs of the reader's live spatial sources. A CRS whose documents are all deleted, or all hold
+	 * empty geometries, keeps its term until segments merge; no spatial lookup can select one of those documents, so
+	 * the CRS is left out.
+	 */
 	static List<String> sourceCrsUris(IndexReader reader) throws IOException {
 		List<String> crsUris = new ArrayList<>();
 		Terms terms = MultiTerms.getTerms(reader, FIELD_SOURCE_CRS);
 		if (terms == null) {
 			return crsUris;
 		}
+		IndexSearcher searcher = new IndexSearcher(reader);
 		TermsEnum iterator = terms.iterator();
 		for (BytesRef term = iterator.next(); term != null; term = iterator.next()) {
-			crsUris.add(term.utf8ToString());
+			String crsUri = term.utf8ToString();
+			if (matchesAny(searcher, new BooleanQuery.Builder()
+					.add(sourceCrsQuery(crsUri), BooleanClause.Occur.FILTER)
+					.add(hasEnvelopeQuery(true), BooleanClause.Occur.FILTER)
+					.build())) {
+				crsUris.add(crsUri);
+			}
 		}
 		return crsUris;
+	}
+
+	/** Whether a live document matches the query. The search stops at the first one. */
+	private static boolean matchesAny(IndexSearcher searcher, Query query) throws IOException {
+		boolean[] found = { false };
+		searcher.search(query, new SimpleCollector() {
+			@Override
+			protected void doSetNextReader(LeafReaderContext context) {
+				if (found[0]) {
+					throw new CollectionTerminatedException();
+				}
+			}
+
+			@Override
+			public void collect(int doc) {
+				found[0] = true;
+				throw new CollectionTerminatedException();
+			}
+
+			@Override
+			public ScoreMode scoreMode() {
+				return ScoreMode.COMPLETE_NO_SCORES;
+			}
+		});
+		return found[0];
 	}
 
 	/** Matches sources whose own envelopes meet the closed envelope, both taken in one CRS. */
