@@ -19,7 +19,10 @@ import org.eclipse.rdf4j.model.impl.SimpleValueFactory;
 import org.eclipse.rdf4j.model.vocabulary.XSD;
 import org.locationtech.jts.geom.Geometry;
 import org.locationtech.jts.geom.CoordinateSequence;
+import org.locationtech.jts.geom.GeometryComponentFilter;
 import org.locationtech.jts.geom.util.GeometryEditor;
+import org.opengis.referencing.operation.TransformException;
+import org.opengis.util.FactoryException;
 
 import java.util.ServiceConfigurationError;
 import java.util.Objects;
@@ -28,11 +31,25 @@ import java.util.Objects;
  * CRS-preserving source geometry literal used for exact evaluation.
  */
 public final class SourceGeometryLiteral {
+	/**
+	 * Most coordinates that the right operands kept by one source hold together, each geometry component counting
+	 * {@link #COMPONENT_COORDINATES} more. An operand in a latitude-first CRS counts twice, since Jena holds it in
+	 * both axis orders. A large source evaluated in many CRSs keeps the operands that fit and is transformed again,
+	 * as Jena does, for each evaluation in the others.
+	 */
+	static final int MAX_KEPT_RIGHT_OPERAND_COORDINATES = 250_000;
+	/**
+	 * Coordinates that one geometry component counts for besides its own: a polygon, ring, line, point or collection,
+	 * empty or not, takes about as much memory for its objects and coordinate sequence as four coordinates do.
+	 */
+	static final int COMPONENT_COORDINATES = 4;
 	private final String lexicalForm;
 	private final String jenaLexicalForm;
 	private final IRI datatype;
 	private final IRI jenaDatatype;
 	private transient GeometryWrapper geometryWrapper;
+	private transient RightOperand rightOperands;
+	private transient long keptRightOperandCoordinates;
 
 	private SourceGeometryLiteral(String lexicalForm, IRI datatype, IRI jenaDatatype) {
 		this.lexicalForm = lexicalForm;
@@ -73,9 +90,10 @@ public final class SourceGeometryLiteral {
 		try {
 			Geometry parsingGeometry = toParsingCoordinateOrder(sourceGeometry, effectiveCrsUri,
 					storedDimensionInfo);
-			source.geometryWrapper = new StoredGeometryWrapper(parsingGeometry, sourceGeometry,
+			GeometryWrapper stored = new StoredGeometryWrapper(parsingGeometry, sourceGeometry,
 					effectiveCrsUri, jenaDatatype.stringValue(), storedDimensionInfo, source.jenaLexicalForm);
-			source.validateGeometryWrapper();
+			validate(stored);
+			source.geometryWrapper = stored;
 			return source;
 		} catch (JenaGeoSparqlException e) {
 			throw e;
@@ -138,8 +156,9 @@ public final class SourceGeometryLiteral {
 
 	public GeometryWrapper asGeometryWrapper() {
 		if (geometryWrapper == null) {
+			GeometryWrapper parsed;
 			try {
-				geometryWrapper = GeometryWrapper.extract(jenaLexicalForm, jenaDatatype.stringValue());
+				parsed = GeometryWrapper.extract(jenaLexicalForm, jenaDatatype.stringValue());
 			} catch (DatatypeFormatException e) {
 				throw new JenaGeoSparqlException("Invalid GeoSPARQL geometry literal: " + e.getMessage(), e);
 			} catch (ServiceConfigurationError e) {
@@ -147,22 +166,94 @@ public final class SourceGeometryLiteral {
 			} catch (RuntimeException e) {
 				throw new JenaGeoSparqlException("Invalid GeoSPARQL geometry literal: " + e.getMessage(), e);
 			}
-
-			validateGeometryWrapper();
+			// A source keeps a geometry only once it is valid, so a rejected literal is rejected on every use.
+			validate(parsed);
+			geometryWrapper = parsed;
 		}
 		return geometryWrapper;
 	}
 
-	private void validateGeometryWrapper() {
-		if (!geometryWrapper.isSRSRecognised()) {
-			throw new JenaGeoSparqlException(unsupportedCrsMessage(geometryWrapper.getSrsURI()), null, true);
+	/**
+	 * Returns this source as the right operand of an exact evaluation with the given left operand.
+	 *
+	 * <p>Jena evaluates a pair in the left operand's CRS. It transforms a right operand in another CRS and cleans up
+	 * its coordinates before every evaluation. This returns the operand Jena produces and keeps it per left CRS, so a
+	 * source evaluated against many left operands in one CRS is transformed once. It keeps operands up to
+	 * {@link #MAX_KEPT_RIGHT_OPERAND_COORDINATES} in all. A source in the left operand's CRS is its own right operand.
+	 */
+	GeometryWrapper asRightOperandFor(GeometryWrapper left) throws FactoryException, TransformException {
+		return asRightOperand(left.getSrsURI(), left);
+	}
+
+	/**
+	 * Returns this source as the right operand of an exact evaluation whose left operand is in the given CRS.
+	 *
+	 * <p>Jena selects and transforms the right operand by the left operand's CRS alone, so an empty geometry in
+	 * that CRS stands in for the left operand.
+	 */
+	GeometryWrapper asRightOperandIn(String leftCrsUri) throws FactoryException, TransformException {
+		return asRightOperand(leftCrsUri, null);
+	}
+
+	/** Whether {@link #asRightOperandIn} returns a kept operand for the CRS rather than transforming this again. */
+	boolean keepsRightOperandIn(String leftCrsUri) {
+		return leftCrsUri.equals(asGeometryWrapper().getSrsURI()) || keptRightOperand(leftCrsUri) != null;
+	}
+
+	private GeometryWrapper keptRightOperand(String leftCrsUri) {
+		for (RightOperand kept = rightOperands; kept != null; kept = kept.next()) {
+			if (kept.leftCrsUri().equals(leftCrsUri)) {
+				return kept.operand();
+			}
 		}
-		if (geometryWrapper.getSrsInfo().isGeographic()
-				&& !geometryWrapper.isEmpty()
-				&& !geometryWrapper.getSrsInfo().getDomainEnvelope()
-						.contains(geometryWrapper.getXYGeometry().getEnvelopeInternal())) {
+		return null;
+	}
+
+	private GeometryWrapper asRightOperand(String leftCrsUri, GeometryWrapper left)
+			throws FactoryException, TransformException {
+		GeometryWrapper source = asGeometryWrapper();
+		if (leftCrsUri.equals(source.getSrsURI())) {
+			return source;
+		}
+		GeometryWrapper kept = keptRightOperand(leftCrsUri);
+		if (kept != null) {
+			return kept;
+		}
+		GeometryWrapper leftOperand = left != null
+				? left : new GeometryWrapper(leftCrsUri, source.getGeometryDatatypeURI());
+		GeometryWrapper operand = leftOperand.checkTransformSRS(source);
+		long coordinates = keptCoordinates(operand.getXYGeometry());
+		if (operand.getParsingGeometry() != operand.getXYGeometry()) {
+			coordinates += keptCoordinates(operand.getParsingGeometry());
+		}
+		if (coordinates <= MAX_KEPT_RIGHT_OPERAND_COORDINATES - keptRightOperandCoordinates) {
+			keptRightOperandCoordinates += coordinates;
+			rightOperands = new RightOperand(leftCrsUri, operand, rightOperands);
+		}
+		return operand;
+	}
+
+	/** The coordinates a geometry counts for against {@link #MAX_KEPT_RIGHT_OPERAND_COORDINATES}. */
+	static long keptCoordinates(Geometry geometry) {
+		long[] components = {0};
+		geometry.apply((GeometryComponentFilter) component -> components[0]++);
+		return geometry.getNumPoints() + COMPONENT_COORDINATES * components[0];
+	}
+
+	/** One kept right operand and the operands kept before it. A source meets few left CRSs, so a list serves. */
+	private record RightOperand(String leftCrsUri, GeometryWrapper operand, RightOperand next) {
+	}
+
+	private static void validate(GeometryWrapper wrapper) {
+		if (!wrapper.isSRSRecognised()) {
+			throw new JenaGeoSparqlException(unsupportedCrsMessage(wrapper.getSrsURI()), null, true);
+		}
+		if (wrapper.getSrsInfo().isGeographic()
+				&& !wrapper.isEmpty()
+				&& !wrapper.getSrsInfo().getDomainEnvelope()
+						.contains(wrapper.getXYGeometry().getEnvelopeInternal())) {
 			throw new JenaGeoSparqlException("Geometry coordinates are outside the CRS domain for "
-					+ geometryWrapper.getSrsURI());
+					+ wrapper.getSrsURI());
 		}
 	}
 

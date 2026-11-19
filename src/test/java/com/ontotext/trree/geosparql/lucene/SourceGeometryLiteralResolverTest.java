@@ -19,8 +19,8 @@ public class SourceGeometryLiteralResolverTest {
 		StoredSourceGeometryIdentity identity = identity(source);
 		SourceGeometryLiteralResolver resolver = new SourceGeometryLiteralResolver();
 
-		assertSame(resolver.resolve(identity, sourceWkb, dimensions),
-				resolver.resolve(identity, sourceWkb, dimensions));
+		assertSame(resolver.resolve(identity, sourceWkb, dimensions, false),
+				resolver.resolve(identity, sourceWkb, dimensions, false));
 	}
 
 	@Test
@@ -30,10 +30,10 @@ public class SourceGeometryLiteralResolverTest {
 		StoredSourceGeometryIdentity identity = identity(first);
 		SourceGeometryLiteralResolver resolver = new SourceGeometryLiteralResolver();
 		resolver.resolve(identity, SourceGeometryWkbCodec.encode(first),
-				first.asGeometryWrapper().getDimensionInfo());
+				first.asGeometryWrapper().getDimensionInfo(), false);
 
 		PluginException exception = assertThrows(PluginException.class, () -> resolver.resolve(identity,
-				SourceGeometryWkbCodec.encode(conflicting), conflicting.asGeometryWrapper().getDimensionInfo()));
+				SourceGeometryWkbCodec.encode(conflicting), conflicting.asGeometryWrapper().getDimensionInfo(), false));
 
 		assertTrue(exception.getMessage().contains("force-reindex"));
 	}
@@ -44,12 +44,33 @@ public class SourceGeometryLiteralResolverTest {
 		StoredSourceGeometryIdentity identity = identity(source);
 		byte[] sourceWkb = SourceGeometryWkbCodec.encode(source);
 		SourceGeometryLiteralResolver resolver = new SourceGeometryLiteralResolver();
-		resolver.resolve(identity, sourceWkb, source.asGeometryWrapper().getDimensionInfo());
+		resolver.resolve(identity, sourceWkb, source.asGeometryWrapper().getDimensionInfo(), false);
 
 		PluginException exception = assertThrows(PluginException.class,
-				() -> resolver.resolve(identity, sourceWkb, new DimensionInfo(3, 3, 0)));
+				() -> resolver.resolve(identity, sourceWkb, new DimensionInfo(3, 3, 0), false));
 
 		assertTrue(exception.getMessage().contains("force-reindex"));
+	}
+
+	/**
+	 * Records that disagree on whether the source is parsed from its lexical form conflict in either order: the two
+	 * readings of a collection with an empty member can differ.
+	 */
+	@Test
+	public void repeatedIdentityWithADifferentLexicalFormMarkerRequiresForceReindex() {
+		SourceGeometryLiteral source = SourceGeometryLiteral.fromWkt("GEOMETRYCOLLECTION(POINT(1 2),POINT EMPTY)");
+		StoredSourceGeometryIdentity identity = identity(source);
+		byte[] sourceWkb = SourceGeometryWkbCodec.encode(source);
+		DimensionInfo dimensions = source.asGeometryWrapper().getDimensionInfo();
+		for (boolean firstFromLexicalForm : new boolean[] { true, false }) {
+			SourceGeometryLiteralResolver resolver = new SourceGeometryLiteralResolver();
+			resolver.resolve(identity, sourceWkb, dimensions, firstFromLexicalForm);
+
+			PluginException exception = assertThrows(PluginException.class,
+					() -> resolver.resolve(identity, sourceWkb, dimensions, !firstFromLexicalForm));
+
+			assertTrue(exception.getMessage().contains("force-reindex"));
+		}
 	}
 
 	@Test
@@ -59,11 +80,11 @@ public class SourceGeometryLiteralResolverTest {
 		StoredSourceGeometryIdentity identity = identity(first);
 		SourceGeometryLiteralResolver resolver = new SourceGeometryLiteralResolver();
 		SourceGeometryLiteral firstResolved = resolver.resolve(identity, SourceGeometryWkbCodec.encode(first),
-				first.asGeometryWrapper().getDimensionInfo());
+				first.asGeometryWrapper().getDimensionInfo(), false);
 
 		resolver.clear();
 		SourceGeometryLiteral secondResolved = resolver.resolve(identity, SourceGeometryWkbCodec.encode(second),
-				second.asGeometryWrapper().getDimensionInfo());
+				second.asGeometryWrapper().getDimensionInfo(), false);
 
 		assertNotSame(firstResolved, secondResolved);
 		assertTrue(secondResolved.asGeometryWrapper().getXYGeometry()

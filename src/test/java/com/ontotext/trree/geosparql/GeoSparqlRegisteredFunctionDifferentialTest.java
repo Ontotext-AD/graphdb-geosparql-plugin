@@ -9,6 +9,7 @@ import org.junit.Before;
 import org.junit.Test;
 
 import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Set;
 
 import static org.junit.Assert.assertEquals;
@@ -28,6 +29,21 @@ public class GeoSparqlRegisteredFunctionDifferentialTest extends AbstractGeoSpar
 	private static final String UTM_32N = "http://www.opengis.net/def/crs/EPSG/0/32632";
 	private static final String UTM_33N = "http://www.opengis.net/def/crs/EPSG/0/32633";
 	private static final String EPSG_4979 = "http://www.opengis.net/def/crs/EPSG/0/4979";
+	private static final String EPSG_4326 = "http://www.opengis.net/def/crs/EPSG/0/4326";
+	private static final String EPSG_4955 = "http://www.opengis.net/def/crs/EPSG/0/4955";
+	private static final String UTM_34N = "http://www.opengis.net/def/crs/EPSG/0/32634";
+	private static final String MERCATOR = "http://www.opengis.net/def/crs/EPSG/0/3857";
+	private static final String WEB_MERCATOR = "<http://www.opengis.net/def/crs/EPSG/0/3857> ";
+	/**
+	 * Collections of area dimension, separated from {@code distantArea}. The first four hold no polygon, and the
+	 * tiles are squares whose rings all start inside their union.
+	 */
+	private static final String[] AREA_DIMENSION_COLLECTIONS = { "pointAndEmptyArea", "projectedPointAndEmptyArea",
+			"lineAndEmptyArea", "ringAndEmptyArea", "projectedPointAndArea", "tiles", "projectedTiles" };
+	private static final String TILES_FROM_CENTRE = "GEOMETRYCOLLECTION(POLYGON((40 40,41 40,41 41,40 41,40 40)),"
+				+ "POLYGON((40 40,39 40,39 41,40 41,40 40)),"
+				+ "POLYGON((40 40,39 40,39 39,40 39,40 40)),"
+				+ "POLYGON((40 40,41 40,41 39,40 39,40 40)))";
 	private static final String UTM_32_POINT = "<" + UTM_32N + "> POINT(500000 5200000)";
 	private static final String UNEVALUABLE_UTM_32_POINT = "<" + UTM_32N + "> POINT(-100000000 0)";
 	private static final String ENVELOPE_INTERSECTION_BOUND_POINT =
@@ -38,6 +54,7 @@ public class GeoSparqlRegisteredFunctionDifferentialTest extends AbstractGeoSpar
 	public void insertFixtureAndEnablePlugin() throws Exception {
 		String crs84AtCleanedCoordinate = transformedPoint(UTM_32_POINT, IndexGeometry.INDEX_CRS, false);
 		String utm33AtCleanedCoordinate = transformedPoint(UTM_32_POINT, UTM_33N, true);
+		String mercatorOverlappingCentre = transformedPoint("POINT(50.5 50.5)", MERCATOR, true);
 		executeSparqlUpdateQuery(PREFIXES
 				+ "INSERT DATA {\n"
 				+ feature("utm32", "utm32Geom", UTM_32_POINT)
@@ -53,6 +70,73 @@ public class GeoSparqlRegisteredFunctionDifferentialTest extends AbstractGeoSpar
 				+ feature("emptyCollection", "emptyCollectionGeom", "GEOMETRYCOLLECTION EMPTY")
 				+ feature("collection", "collectionGeom",
 						"GEOMETRYCOLLECTION(POINT(5 5),LINESTRING(20 20,21 21))")
+				+ feature("pointAndEmptyArea", "pointAndEmptyAreaGeom",
+						"GEOMETRYCOLLECTION(POINT(40 40),POLYGON EMPTY)")
+				+ feature("projectedPointAndEmptyArea", "projectedPointAndEmptyAreaGeom",
+						WEB_MERCATOR + "GEOMETRYCOLLECTION(POINT(0 0),POLYGON EMPTY)")
+				+ feature("lineAndEmptyArea", "lineAndEmptyAreaGeom",
+						"GEOMETRYCOLLECTION(LINESTRING(40 40,41 41),POLYGON EMPTY)")
+				+ feature("ringAndEmptyArea", "ringAndEmptyAreaGeom",
+						"GEOMETRYCOLLECTION(LINESTRING(40 40,41 40,41 41,40 40),POLYGON EMPTY)")
+				+ feature("projectedPointAndArea", "projectedPointAndAreaGeom",
+						WEB_MERCATOR + "GEOMETRYCOLLECTION(POINT(0 0),POLYGON((0 0,0 1000,1000 1000,1000 0,0 0)))")
+				+ feature("projectedArea", "projectedAreaGeom",
+						WEB_MERCATOR + "POLYGON((0 0,0 1000,1000 1000,1000 0,0 0))")
+				+ feature("nearBrisbane", "nearBrisbaneGeom", "POINT(153.031 -27.47)")
+				+ feature("infiniteHeight", "infiniteHeightGeom", "<" + EPSG_4326 + "> POINT Z(-27.47 153.03 1e309)")
+				+ feature("finiteHeight", "finiteHeightGeom", "<" + EPSG_4326 + "> POINT Z(-27.47 153.03 55)")
+				+ feature("nearVancouver", "nearVancouverGeom",
+						"POLYGON((-123.002 49,-123.002 49.0005,-123.0015 49.0005,-123.002 49))")
+				+ feature("openingRing", "openingRingGeom", "<" + EPSG_4955
+						+ "> POLYGON Z((49 -123 0,49 -123.001 1,49.001 -123.001 2,49 -123 1000000))")
+				+ feature("closingRing", "closingRingGeom", "<" + EPSG_4955
+						+ "> POLYGON Z((49 -123 0,49 -123.001 1,49.001 -123.001 2,49 -123 0))")
+				+ feature("eastOfBrisbane", "eastOfBrisbaneGeom", "POINT(153.481 -27.47)")
+				+ feature("aroundBrisbane", "aroundBrisbaneGeom",
+						"POLYGON((153 -27.5,153.1 -27.5,153.1 -27.4,153 -27.4,153 -27.5))")
+				+ feature("besideBrisbane", "besideBrisbaneGeom", "LINESTRING(153 -27.5,153.06 -27.5,153.06 -27.44)")
+				+ feature("utmPoint", "utmPointGeom", "<" + UTM_34N + "> POINT(500000 6700000)")
+				+ feature("utmControl", "utmControlGeom", "<" + UTM_34N + "> POINT(400000 6600000)")
+				+ feature("overlappingSquare", "overlappingSquareGeom", "<" + MERCATOR + "> POLYGON((2000000 2000000,"
+						+ "2010000 2000000,2010000 2010000,2000000 2010000,2000000 2000000,2010000 2000000,"
+						+ "2010000 2010000,2000000 2010000,2000000 2000000))")
+				+ feature("overlappingSquareCentre", "overlappingSquareCentreGeom",
+						"<" + MERCATOR + "> POINT(2005000 2005000)")
+				+ feature("overlappingSquareOutside", "overlappingSquareOutsideGeom",
+						"<" + MERCATOR + "> POINT(2020000 2005000)")
+				+ feature("crs84OverlappingSquare", "crs84OverlappingSquareGeom",
+						"POLYGON((50 50,51 50,51 51,50 51,50 50,51 50,51 51,50 51,50 50))")
+				+ feature("crs84OverlappingCentre", "crs84OverlappingCentreGeom", "POINT(50.5 50.5)")
+				+ feature("projectedOverlappingCentre", "projectedOverlappingCentreGeom", mercatorOverlappingCentre)
+				+ feature("world", "worldGeom", "POLYGON((-180 -90,180 -90,180 90,-180 90,-180 -90))")
+				+ feature("collapsingPartLines", "collapsingPartLinesGeom",
+						"<" + EPSG_4326 + "> MULTILINESTRING((-30 -40,-30 -39),"
+								+ "(-28 -38,-28 -37.9999999))")
+				+ feature("zeroLengthPartLines", "zeroLengthPartLinesGeom",
+						"MULTILINESTRING((-40 -30,-39 -30),(-38 -28,-38 -28))")
+				+ feature("plainLine", "plainLineGeom", "LINESTRING(-40 -30,-39 -30)")
+				+ feature("beyondAntimeridian", "beyondAntimeridianGeom", "<" + MERCATOR + "> POINT(21000000 0)")
+				+ feature("infiniteRectangle", "infiniteRectangleGeom", "<" + UTM_34N
+						+ "> POLYGON((400000 6600000,1e309 6600000,1e309 6700000,400000 6700000,400000 6600000))")
+				+ feature("utmInside", "utmInsideGeom", "<" + UTM_34N + "> POINT(450000 6650000)")
+				+ feature("utmWest", "utmWestGeom", "<" + UTM_34N + "> POINT(300000 6650000)")
+				+ feature("infiniteCollection", "infiniteCollectionGeom", "<" + UTM_34N
+						+ "> GEOMETRYCOLLECTION(POINT(1e309 5),POINT(500000 6700000))")
+				+ "  ex:nanCollection a geo:Feature ; geo:hasDefaultGeometry ex:nanCollectionGeom .\n"
+				+ "  ex:nanCollectionGeom a geo:Geometry ; geo:asGML '''<gml:MultiPoint"
+				+ " xmlns:gml=\"http://www.opengis.net/gml/3.2\" srsName=\"" + UTM_34N + "\">"
+				+ "<gml:pointMember><gml:Point><gml:pos>NaN 5</gml:pos></gml:Point></gml:pointMember>"
+				+ "<gml:pointMember><gml:Point><gml:pos>500000 6700000</gml:pos></gml:Point></gml:pointMember>"
+				+ "</gml:MultiPoint>'''^^geo:gmlLiteral .\n"
+				+ feature("mixedHeights", "mixedHeightsGeom", "<" + EPSG_4326
+						+ "> GEOMETRYCOLLECTION Z(POINT(-27.47 153.03),POINT Z(-27.47 153.03 55))")
+				+ feature("uniformHeights", "uniformHeightsGeom", "<" + EPSG_4326
+						+ "> GEOMETRYCOLLECTION Z(POINT Z(-27.47 153.03 54),POINT Z(-27.47 153.03 55))")
+				+ feature("tiles", "tilesGeom", TILES_FROM_CENTRE)
+				+ feature("projectedTiles", "projectedTilesGeom", WEB_MERCATOR
+						+ "GEOMETRYCOLLECTION(POLYGON((0 0,1000 0,1000 1000,0 1000,0 0)),"
+						+ "POLYGON((0 0,-1000 0,-1000 1000,0 1000,0 0)),POLYGON((0 0,-1000 0,-1000 -1000,0 -1000,0 0)),"
+						+ "POLYGON((0 0,1000 0,1000 -1000,0 -1000,0 0)))")
 				+ feature("envelopeUnevaluableCandidate", "envelopeUnevaluableCandidateGeom",
 						UNEVALUABLE_UTM_32_POINT)
 				+ feature("envelopeMatchingCandidate", "envelopeMatchingCandidateGeom",
@@ -91,6 +175,197 @@ public class GeoSparqlRegisteredFunctionDifferentialTest extends AbstractGeoSpar
 		assertDifferential("sfIntersects", "leftArea", true, "emptyPoint", "emptyCollection", "collection");
 	}
 
+	/**
+	 * A collection of area dimension is disjoint from a separated area, and exact evaluation decides whether it is
+	 * RCC8 disconnected from it. Without a polygon, that depends on whether its points and lines have a boundary: an
+	 * open line has one, a point or closed ring does not. For tiles it depends on where their rings start, as
+	 * {@code JenaGeometryAdapterTest} records.
+	 */
+	@Test
+	public void disjointRelationsAgreeForCollectionsOfAreaDimension() throws Exception {
+		for (boolean boundSubject : new boolean[] { false, true }) {
+			assertDifferential("rcc8dc", "distantArea", boundSubject, AREA_DIMENSION_COLLECTIONS);
+			assertDifferential("sfDisjoint", "distantArea", boundSubject, AREA_DIMENSION_COLLECTIONS);
+			assertDifferential("rcc8dc", "pointAndEmptyArea", boundSubject, "leftArea", "projectedArea");
+			assertDifferential("rcc8dc", "lineAndEmptyArea", boundSubject, "leftArea", "projectedArea");
+			assertDifferential("rcc8dc", "tiles", boundSubject, "leftArea", "projectedArea");
+		}
+	}
+
+	/**
+	 * Jena cannot transform a point with an infinite height into CRS84, so no relation holds between it and a CRS84
+	 * subject, although their envelopes are apart within one prefix cell. The same point with a finite height is
+	 * disjoint from the subject.
+	 */
+	@Test
+	public void disjointRelationsAgreeForASourceJenaCannotTransform() throws Exception {
+		assertDifferential("sfDisjoint", "nearBrisbane", true, "infiniteHeight", "finiteHeight");
+		assertDifferential("ehDisjoint", "nearBrisbane", true, "infiniteHeight", "finiteHeight");
+	}
+
+	/**
+	 * A height-dependent datum shift moves the ends of a ring in EPSG:4955 apart when their heights differ, so Jena
+	 * cannot transform that ring into CRS84 although its horizontal envelope transforms, and no relation holds with
+	 * a CRS84 subject. The same ring with matching heights is disjoint from the subject.
+	 */
+	@Test
+	public void disjointRelationsAgreeForARingThatOpensWhenTransformed() throws Exception {
+		for (boolean boundSubject : new boolean[] { true, false }) {
+			assertDifferential("sfDisjoint", "nearVancouver", boundSubject, "openingRing", "closingRing");
+			assertDifferential("ehDisjoint", "nearVancouver", boundSubject, "openingRing", "closingRing");
+		}
+	}
+
+	/**
+	 * A collection of an XY point and an XYZ point is related as written, like a collection whose points share a
+	 * dimension: by its separated envelope, and through exact evaluation when envelopes meet, both for a line that
+	 * passes beside its points and for a polygon around them.
+	 */
+	@Test
+	public void relationsAgreeForACollectionOfMembersInDifferentDimensions() throws Exception {
+		for (boolean boundSubject : new boolean[] { true, false }) {
+			assertDifferential("sfDisjoint", "eastOfBrisbane", boundSubject, "mixedHeights", "uniformHeights");
+			assertDifferential("ehDisjoint", "eastOfBrisbane", boundSubject, "mixedHeights", "uniformHeights");
+			assertDifferential("sfDisjoint", "besideBrisbane", boundSubject, "mixedHeights", "uniformHeights");
+			assertDifferential("ehDisjoint", "besideBrisbane", boundSubject, "mixedHeights", "uniformHeights");
+			assertDifferential("sfIntersects", "aroundBrisbane", boundSubject, "mixedHeights", "uniformHeights");
+		}
+	}
+
+	/**
+	 * A NaN or infinite coordinate leaves a source's own envelope with a non-finite bound, which shows nothing about
+	 * where the source lies. Such a source is related exactly: it intersects a point it holds and is not disjoint from
+	 * it, while a distant point is disjoint from that point.
+	 */
+	@Test
+	public void relationsAgreeForSourcesWithNonFiniteEnvelopes() throws Exception {
+		for (boolean boundSubject : new boolean[] { false, true }) {
+			for (String relation : List.of("sfIntersects", "sfDisjoint", "ehDisjoint", "sfEquals")) {
+				assertDifferential(relation, "utmPoint", boundSubject, "nanCollection", "infiniteCollection",
+						"utmControl");
+			}
+		}
+	}
+
+	/**
+	 * A polygon with an infinite coordinate fills its raw envelope, but lookup compares the unbounded envelope that
+	 * replaces it, so filling proves nothing about which sources lie inside the bound. The disjoint relations agree
+	 * with Jena for sources inside and outside its finite corner.
+	 */
+	@Test
+	public void disjointRelationsAgreeForABoundWithAnInfiniteCoordinate() throws Exception {
+		for (boolean boundSubject : new boolean[] { false, true }) {
+			for (String relation : List.of("sfDisjoint", "ehDisjoint")) {
+				assertDifferential(relation, "infiniteRectangle", boundSubject, "utmInside", "utmWest", "utmPoint",
+						"utmControl");
+			}
+		}
+	}
+
+	/**
+	 * A polygon whose ring winds twice around a square is invalid. JTS can find that it fills its envelope, while
+	 * Jena finds a point inside the square disjoint from it, so filling proves nothing about an invalid bound, in a
+	 * projected CRS or in CRS84.
+	 */
+	@Test
+	public void disjointRelationsAgreeForASelfOverlappingBound() throws Exception {
+		for (boolean boundSubject : new boolean[] { false, true }) {
+			for (String relation : List.of("sfDisjoint", "ehDisjoint")) {
+				assertDifferential(relation, "overlappingSquare", boundSubject, "overlappingSquareCentre",
+						"overlappingSquareOutside");
+				assertDifferential(relation, "crs84OverlappingSquare", boundSubject, "crs84OverlappingCentre",
+						"projectedOverlappingCentre");
+			}
+		}
+	}
+
+	/**
+	 * Jena transforms a Web Mercator point east of the antimeridian to a longitude past 180°, outside the world
+	 * envelope that stands in for its CRS84 index envelope, so the point is disjoint from a world-filling bound.
+	 */
+	@Test
+	public void disjointRelationsAgreeForASourceWithTheWorldFallbackEnvelope() throws Exception {
+		for (String relation : List.of("sfDisjoint", "ehDisjoint", "rcc8dc")) {
+			assertDifferential(relation, "world", true, "beyondAntimeridian", "nearBrisbane");
+			assertDifferential(relation, "world", false, "beyondAntimeridian", "nearBrisbane");
+		}
+	}
+
+	/**
+	 * Jena rounds a geometry it transforms to the pinned precision, which can collapse a short part to one point, and
+	 * a literal can hold such a part itself. The part still widens the geometry's envelope.
+	 */
+	@Test
+	public void equalityRelationsAgreeForGeometriesWithCollapsedParts() throws Exception {
+		for (String relation : List.of("sfEquals", "ehEquals")) {
+			for (boolean boundSubject : new boolean[] { false, true }) {
+				assertDifferential(relation, "collapsingPartLines", boundSubject, "plainLine", "zeroLengthPartLines");
+				assertDifferential(relation, "zeroLengthPartLines", boundSubject, "plainLine");
+				assertDifferential(relation, "plainLine", boundSubject, "zeroLengthPartLines",
+						"collapsingPartLines");
+			}
+		}
+	}
+
+	/**
+	 * Two valid collections that differ by a bend of about 3e-163 in one line. JTS finds the side of a line a point
+	 * lies on from products of coordinate differences, which round to zero at this size, so it finds the bent line
+	 * straight and the collections equal, although their envelopes differ.
+	 */
+	@Test
+	public void equalityRelationsAgreeForGeometriesThatDifferByATinyBend() throws Exception {
+		String triangle = "POLYGON((-2 -1,-2 -2,-1 -2,-2 -1))";
+		executeSparqlUpdateQuery(PREFIXES + "INSERT DATA {\n"
+				+ feature("tinyStraight", "tinyStraightGeom",
+						"GEOMETRYCOLLECTION(LINESTRING(0 2e-163,0 1e-163)," + triangle + ")")
+				+ feature("tinyBend", "tinyBendGeom",
+						"GEOMETRYCOLLECTION(LINESTRING(0 2e-163,3e-163 1e-163,0 1e-163)," + triangle + ")")
+				+ "}");
+		for (String relation : List.of("sfEquals", "ehEquals", "rcc8eq")) {
+			for (boolean boundSubject : new boolean[] { false, true }) {
+				assertDifferential(relation, "tinyStraight", boundSubject, "tinyBend");
+				assertDifferential(relation, "tinyBend", boundSubject, "tinyStraight");
+			}
+		}
+	}
+
+	/**
+	 * A square with a notch about 1e-162 deep at one corner, and points in the notch. JTS finds a rectangle over the
+	 * notch within the square, though it finds each point disjoint from it. The 32 points make the bound's lookup
+	 * worth certifying rectangles for.
+	 */
+	@Test
+	public void disjointRelationsAgreeForABoundWithATinyNotch() throws Exception {
+		StringBuilder insert = new StringBuilder(PREFIXES + "INSERT DATA {\n").append(feature("notchedSquare",
+				"notchedSquareGeom", WEB_MERCATOR + "POLYGON((0 5e-162,3.5e-163 5e-162,7e-163 1e-162,8e-163 0,"
+						+ "1 0,1 1,0 1,0 5e-162))"));
+		String[] inNotch = new String[32];
+		for (int i = 0; i < inNotch.length; i++) {
+			inNotch[i] = "inNotch" + i;
+			insert.append(feature(inNotch[i], inNotch[i] + "Geom", WEB_MERCATOR + "POINT(0 1e-162)"));
+		}
+		executeSparqlUpdateQuery(insert.append("}").toString());
+		for (String relation : List.of("sfDisjoint", "ehDisjoint")) {
+			for (boolean boundSubject : new boolean[] { false, true }) {
+				assertDifferential(relation, "notchedSquare", boundSubject, inNotch);
+			}
+		}
+	}
+
+	/** An IRI that the repository does not hold has no geometry, so no relation holds with it. */
+	@Test
+	public void boundIriAbsentFromTheRepositoryMatchesNothing() throws Exception {
+		for (String relation : List.of("sfIntersects", "sfDisjoint", "ehCovers")) {
+			assertEquals(relation + " object-bound", Set.of(), queryCandidates(
+					"SELECT ?candidate WHERE { ?candidate geo:" + relation + " ex:absentFeature . }"));
+			assertEquals(relation + " subject-bound", Set.of(), queryCandidates(
+					"SELECT ?candidate WHERE { ex:absentFeature geo:" + relation + " ?candidate . }"));
+			assertEquals(relation + " both bound", Set.of(), queryCandidates("SELECT ?candidate WHERE {\n"
+					+ candidateValues(new String[] { "tiles", "nearBrisbane" })
+					+ "  ?candidate geo:" + relation + " ex:absentFeature .\n}"));
+		}
+	}
+
 	@Test
 	public void multipleDefaultGeometrySourcesUseExistentialEntitySemantics() throws Exception {
 		assertDifferential("sfIntersects", "leftArea", false, "multiSource");
@@ -126,8 +401,8 @@ public class GeoSparqlRegisteredFunctionDifferentialTest extends AbstractGeoSpar
 		Set<Value> functionResults = queryCandidates(""
 				+ "SELECT DISTINCT ?candidate WHERE {\n"
 				+ candidateValues(new String[] { unevaluableCandidate, matchingCandidate })
-				+ "  ?candidate geo:hasDefaultGeometry/geo:asWKT ?candidateWkt .\n"
-				+ "  ex:" + bound + " geo:hasDefaultGeometry/geo:asWKT ?boundWkt .\n"
+				+ "  ?candidate geo:hasDefaultGeometry/(geo:asWKT|geo:asGML) ?candidateWkt .\n"
+				+ "  ex:" + bound + " geo:hasDefaultGeometry/(geo:asWKT|geo:asGML) ?boundWkt .\n"
 				+ "  FILTER(geof:sfIntersects(?candidateWkt, ?boundWkt))\n"
 				+ "}");
 
@@ -152,8 +427,8 @@ public class GeoSparqlRegisteredFunctionDifferentialTest extends AbstractGeoSpar
 		Set<Value> functionResults = queryCandidates(""
 				+ "SELECT DISTINCT ?candidate WHERE {\n"
 				+ candidateValues(candidates)
-				+ "  ?candidate geo:hasDefaultGeometry/geo:asWKT ?candidateWkt .\n"
-				+ "  ex:" + bound + " geo:hasDefaultGeometry/geo:asWKT ?boundWkt .\n"
+				+ "  ?candidate geo:hasDefaultGeometry/(geo:asWKT|geo:asGML) ?candidateWkt .\n"
+				+ "  ex:" + bound + " geo:hasDefaultGeometry/(geo:asWKT|geo:asGML) ?boundWkt .\n"
 				+ "  FILTER(geof:" + relation + "(" + functionArguments + "))\n"
 				+ "}");
 

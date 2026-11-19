@@ -529,7 +529,7 @@ public class GeoSparqlRelationIteratorTest {
 
 		@Override
 		public CloseableIterator<CandidateEntity> getEnvelopeIntersections(
-				IndexGeometry boundSourceIndexGeometry) {
+				IndexGeometry boundSourceIndexGeometry, boolean candidateIsSubject) {
 			envelopeLookupCount++;
 			if (envelopeCandidates != null) {
 				return envelopeCandidates;
@@ -547,7 +547,7 @@ public class GeoSparqlRelationIteratorTest {
 
 		@Override
 		public CloseableIterator<EnvelopeDisjointCandidate> getEnvelopeDisjointCandidates(
-				IndexGeometry boundSourceIndexGeometry) {
+				IndexGeometry boundSourceIndexGeometry, boolean candidateIsSubject) {
 			return definiteCandidates;
 		}
 

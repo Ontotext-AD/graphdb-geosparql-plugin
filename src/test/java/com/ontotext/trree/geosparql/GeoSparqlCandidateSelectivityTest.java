@@ -85,7 +85,7 @@ public class GeoSparqlCandidateSelectivityTest {
 		IndexGeometry brisbane = geometry(
 				"<" + GDA2020 + "> POLYGON((-27.6 152.9,-27.3 152.9,-27.3 153.2,-27.6 153.2,-27.6 152.9))");
 		assertEquals(CandidateBoundsKind.TRANSFORMED, brisbane.candidateBoundsKind());
-		int candidates = countEntities(indexer.getEnvelopeIntersections(brisbane));
+		int candidates = countEntities(indexer.getEnvelopeIntersections(brisbane, false));
 		int indexed = transformedCount;
 		assertEquals(FEATURE_COUNT, indexed);
 		assertTrue("Brisbane query retrieved " + candidates + " of " + indexed
@@ -99,7 +99,7 @@ public class GeoSparqlCandidateSelectivityTest {
 		assertEquals(CandidateBoundsKind.NATIVE_CRS84, crs84Brisbane.candidateBoundsKind());
 
 		int boundSubjectEnvelopeCandidates = countEntities(
-				indexer.getEnvelopeIntersections(crs84Brisbane));
+				indexer.getEnvelopeIntersections(crs84Brisbane, false));
 		TraversalCounts boundSubjectCounts = countRelationTraversal(indexer, crs84Brisbane, true);
 		assertTrue("CRS84-bound subject envelope phase materialized "
 					+ boundSubjectEnvelopeCandidates + " of " + indexed + " features",
@@ -112,7 +112,7 @@ public class GeoSparqlCandidateSelectivityTest {
 				boundSubjectCounts.distinctCandidateEntities());
 
 		int boundObjectEnvelopeCandidates = countEntities(
-				indexer.getEnvelopeIntersections(crs84Brisbane));
+				indexer.getEnvelopeIntersections(crs84Brisbane, true));
 		TraversalCounts boundObjectCounts = countRelationTraversal(indexer, crs84Brisbane, false);
 		assertTrue("CRS84-bound object envelope phase materialized "
 					+ boundObjectEnvelopeCandidates + " of " + indexed + " features",
@@ -128,7 +128,7 @@ public class GeoSparqlCandidateSelectivityTest {
 		IndexGeometry mgaBrisbane = geometry("<" + MGA56
 				+ "> POLYGON((450000 6900000,450000 7020000,560000 7020000,560000 6900000,450000 6900000))");
 		assertEquals(CandidateBoundsKind.TRANSFORMED, mgaBrisbane.candidateBoundsKind());
-		int mgaCandidates = countEntities(indexer.getEnvelopeIntersections(mgaBrisbane));
+		int mgaCandidates = countEntities(indexer.getEnvelopeIntersections(mgaBrisbane, false));
 		assertTrue("MGA2020 Brisbane envelope retrieved " + mgaCandidates + " of " + indexed + " features",
 				mgaCandidates > 0 && mgaCandidates < indexed / 10);
 	}

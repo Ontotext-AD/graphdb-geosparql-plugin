@@ -17,6 +17,7 @@ import org.opengis.referencing.crs.CoordinateReferenceSystem;
 import org.opengis.referencing.operation.CoordinateOperation;
 
 import java.util.List;
+import java.util.Optional;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
@@ -86,6 +87,43 @@ public class ConservativeCrs84EnvelopeProjectorTest {
 		assertTrue(brisbane.indexEnvelope().getWidth() < 1.0);
 		assertTrue(brisbane.indexEnvelope().getHeight() < 1.0);
 		assertTrue(brisbane.indexEnvelope().contains(153.03, -27.47));
+	}
+
+	/**
+	 * A stored source's index envelope is checked against the geometry Jena produces when it transforms the source
+	 * into CRS84. Jena cannot transform a point with an infinite height, or a ring whose ends come apart when a
+	 * height-dependent datum shift moves them, so those take the world envelope although their horizontal envelopes
+	 * transform. Jena carries an infinite measure through unchanged, and finite controls keep selective envelopes that
+	 * contain Jena's result. A bound's envelope is not checked.
+	 */
+	@Test
+	public void storedIndexEnvelopeContainsJenasTransformationOrIsTheWorld() throws Exception {
+		String epsg4326 = "<http://www.opengis.net/def/crs/EPSG/0/4326> ";
+		String epsg4955 = "<http://www.opengis.net/def/crs/EPSG/0/4955> ";
+		for (String unevaluable : List.of(epsg4326 + "POINT Z(-27.47 153.03 1e309)",
+				epsg4955 + "POLYGON Z((49 -123 0,49 -123.001 1,49.001 -123.001 2,49 -123 1000000))")) {
+			IndexGeometry source = IndexGeometry.fromSourceGeometryLiteral(SourceGeometryLiteral.fromWkt(unevaluable));
+			assertEquals(unevaluable, CandidateBoundsKind.TRANSFORMED, source.candidateBoundsKind());
+			assertEquals(unevaluable, CandidateBoundsKind.WORLD_FALLBACK, source.storedBounds().kind());
+			assertEquals(unevaluable, ConservativeCrs84EnvelopeProjector.FALLBACK_EXACT_TRANSFORM_FAILURE,
+					source.storedBounds().fallbackReason());
+			assertEquals(unevaluable, worldEnvelope(), source.storedIndexEnvelope());
+		}
+		for (String evaluable : List.of(epsg4326 + "POINT M(-27.47 153.03 1e309)",
+				epsg4326 + "POINT Z(-27.47 153.03 55)",
+				epsg4955 + "POLYGON Z((49 -123 0,49 -123.001 1,49.001 -123.001 2,49 -123 0))",
+				"<http://www.opengis.net/def/crs/EPSG/0/7856> POINT(502000 6960000)")) {
+			SourceGeometryLiteral literal = SourceGeometryLiteral.fromWkt(evaluable);
+			IndexGeometry source = IndexGeometry.fromSourceGeometryLiteral(literal);
+			GeometryWrapper wrapper = literal.asGeometryWrapper();
+			Envelope transformed = new GeometryWrapper(IndexGeometry.INDEX_CRS, wrapper.getGeometryDatatypeURI())
+					.checkTransformSRS(wrapper).getXYGeometry().getEnvelopeInternal();
+
+			assertEquals(evaluable, CandidateBoundsKind.TRANSFORMED, source.storedBounds().kind());
+			assertTrue(evaluable, source.storedIndexEnvelope().covers(transformed));
+			assertTrue(evaluable, source.storedIndexEnvelope().covers(source.indexEnvelope()));
+			assertTrue(evaluable, source.storedIndexEnvelope().getWidth() < 1.0);
+		}
 	}
 
 	@Test
@@ -166,8 +204,8 @@ public class ConservativeCrs84EnvelopeProjectorTest {
 				line.sourceGeometryLiteral(), point.sourceGeometryLiteral()));
 		assertFalse(GeoSparqlPropertyRelation.EH_DISJOINT.evaluate(
 				line.sourceGeometryLiteral(), point.sourceGeometryLiteral()));
-		assertFalse(line.isEnvelopeCoveringRectangle());
-		assertFalse(point.isEnvelopeCoveringRectangle());
+		assertFalse(IndexGeometryFixtures.fillsCrs84Envelope(line));
+		assertFalse(IndexGeometryFixtures.fillsCrs84Envelope(point));
 	}
 
 	@Test
@@ -216,7 +254,7 @@ public class ConservativeCrs84EnvelopeProjectorTest {
 				SourceGeometryLiteral.fromWkt("POINT(20 20)"));
 
 		assertEquals(new Envelope(0.0, 10.0, 0.0, 10.0), rectangle.indexEnvelope());
-		assertTrue(rectangle.isEnvelopeCoveringRectangle());
+		assertTrue(IndexGeometryFixtures.fillsCrs84Envelope(rectangle));
 		assertTrue(rectangle.indexEnvelope().intersects(inside.indexEnvelope()));
 		assertFalse(rectangle.indexEnvelope().intersects(outside.indexEnvelope()));
 	}

@@ -155,7 +155,7 @@ public final class JenaFunctionEvaluator {
 	}
 
 	private static SourceGeometryLiteral sourceLiteral(Value value) {
-		return JenaGeometryAdapter.toSourceGeometryLiteral(value, true);
+		return RecentSourceGeometryLiterals.of(value);
 	}
 
 	private static GeometryWrapper geometry(Value value) {
@@ -174,10 +174,13 @@ public final class JenaFunctionEvaluator {
 		JenaCalculationPrecision.configure();
 		GeometryWrapper left = leftSource.asGeometryWrapper();
 		GeometryWrapper right = rightSource.asGeometryWrapper();
-		boolean hasGenericCollection = isGenericCollection(left) || isGenericCollection(right);
+		boolean hasGenericCollection = isGenericCollection(left.getXYGeometry())
+				|| isGenericCollection(right.getXYGeometry());
 		if (!permittedTopology(functionUri, left.getDimensionInfo(), right.getDimensionInfo())) {
 			return false;
 		}
+		// Each relation below needs its right operand in the left operand's CRS; a source keeps that operand.
+		right = rightSource.asRightOperandFor(left);
 		if (hasGenericCollection) {
 			return evaluateCollectionTopological(functionUri, left, right);
 		}
@@ -254,18 +257,18 @@ public final class JenaFunctionEvaluator {
 			String intersectionPattern) throws Exception {
 		GeometryWrapper left = leftSource.asGeometryWrapper();
 		GeometryWrapper right = rightSource.asGeometryWrapper();
-		if (isGenericCollection(left) || isGenericCollection(right)) {
+		if (isGenericCollection(left.getXYGeometry()) || isGenericCollection(right.getXYGeometry())) {
 			GeometryWrapper transformedRight = left.checkTransformSRS(right);
 			return RelateNG.relate(left.getXYGeometry(), transformedRight.getXYGeometry(), intersectionPattern);
 		}
 		return left.relate(right, intersectionPattern);
 	}
 
+	/** Relates a generic collection pair whose right operand is in the left operand's CRS. */
 	private static boolean evaluateCollectionTopological(String functionUri, GeometryWrapper left,
 			GeometryWrapper right) throws Exception {
-		GeometryWrapper transformedRight = left.checkTransformSRS(right);
 		Geometry leftGeometry = left.getXYGeometry();
-		Geometry rightGeometry = transformedRight.getXYGeometry();
+		Geometry rightGeometry = right.getXYGeometry();
 		if (GeoConstants.GEOF_SF_EQUALS.stringValue().equals(functionUri)
 				|| GeoConstants.GEOF_EH_EQUALS.stringValue().equals(functionUri)) {
 			return RelateNG.relate(leftGeometry, rightGeometry, SimpleFeaturesIntersectionPattern.EQUALS);
@@ -343,8 +346,12 @@ public final class JenaFunctionEvaluator {
 		return null;
 	}
 
-	private static boolean isGenericCollection(GeometryWrapper wrapper) {
-		return wrapper.getXYGeometry().getClass().equals(GeometryCollection.class);
+	/**
+	 * Whether a geometry is a generic collection, not a multi-geometry. Relations with a generic collection are
+	 * evaluated with JTS {@code RelateNG}, which relates a collection by the union of its members.
+	 */
+	static boolean isGenericCollection(Geometry geometry) {
+		return geometry.getClass().equals(GeometryCollection.class);
 	}
 
 	private static boolean permittedTopology(String functionUri, DimensionInfo left, DimensionInfo right) {

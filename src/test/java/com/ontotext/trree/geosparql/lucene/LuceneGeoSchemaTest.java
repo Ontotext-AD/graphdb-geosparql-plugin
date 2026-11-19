@@ -5,6 +5,7 @@ import com.ontotext.trree.geosparql.CandidateEntity;
 import com.ontotext.trree.geosparql.CloseableIterator;
 import com.ontotext.trree.geosparql.GeoSparqlConfig;
 import com.ontotext.trree.geosparql.GeoSparqlPlugin;
+import com.ontotext.trree.geosparql.GeoSparqlPropertyRelation;
 import com.ontotext.trree.geosparql.TestIndexGeometries;
 import com.ontotext.trree.geosparql.jena.IndexGeometry;
 import com.ontotext.trree.geosparql.jena.SourceGeometryLiteral;
@@ -16,9 +17,11 @@ import org.apache.lucene.document.StoredField;
 import org.apache.lucene.index.DirectoryReader;
 import org.apache.lucene.index.DocValuesType;
 import org.apache.lucene.index.FieldInfo;
+import org.apache.lucene.index.FilterDirectoryReader;
 import org.apache.lucene.index.IndexReader;
 import org.apache.lucene.index.IndexWriter;
 import org.apache.lucene.index.IndexWriterConfig;
+import org.apache.lucene.index.LeafReader;
 import org.apache.lucene.index.LeafReaderContext;
 import org.apache.lucene.index.NoMergePolicy;
 import org.apache.lucene.spatial.SpatialStrategy;
@@ -27,6 +30,8 @@ import org.apache.lucene.spatial.prefix.tree.QuadPrefixTree;
 import org.apache.lucene.store.ByteBuffersDirectory;
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.store.FSDirectory;
+import org.locationtech.jts.geom.Geometry;
+import org.locationtech.jts.geom.Point;
 import org.locationtech.spatial4j.context.SpatialContext;
 import org.junit.Before;
 import org.junit.Rule;
@@ -76,14 +81,17 @@ public class LuceneGeoSchemaTest {
 	}
 
 	private LuceneGeoIndexer createIndexer(File dataDir, String crsEnvironmentFingerprint) throws Exception {
+		LuceneGeoIndexer indexer = new LuceneGeoIndexer(plugin(dataDir), () -> crsEnvironmentFingerprint);
+		indexer.initialize();
+		return indexer;
+	}
+
+	private static GeoSparqlPlugin plugin(File dataDir) {
 		GeoSparqlPlugin parent = new GeoSparqlPlugin();
 		parent.setConfig(new GeoSparqlConfig());
 		parent.setLogger(LOG);
 		parent.setDataDir(dataDir);
-
-		LuceneGeoIndexer indexer = new LuceneGeoIndexer(parent, () -> crsEnvironmentFingerprint);
-		indexer.initialize();
-		return indexer;
+		return parent;
 	}
 
 	@Test
@@ -157,6 +165,34 @@ public class LuceneGeoSchemaTest {
 		return indexer;
 	}
 
+	/**
+	 * WKB gives a geometry one coordinate dimension. A collection of an XY point and an XYZ point is marked and parsed
+	 * from its lexical form when read back, so exact evaluation sees each member as written and Jena can transform
+	 * it. A collection whose members share a dimension is read back from WKB.
+	 */
+	@Test
+	public void collectionOfMembersInDifferentDimensionsIsReadFromItsLexicalForm() throws Exception {
+		String epsg4326 = "<http://www.opengis.net/def/crs/EPSG/0/4326> ";
+		SourceGeometryLiteral mixed = SourceGeometryLiteral.fromWkt(
+				epsg4326 + "GEOMETRYCOLLECTION Z(POINT(-27.47 153.03),POINT Z(-27.47 153.03 55))");
+		SourceGeometryLiteral uniform = SourceGeometryLiteral.fromWkt(
+				"GEOMETRYCOLLECTION Z(POINT Z(153.03 -27.47 54),POINT Z(153.03 -27.47 55))");
+		Document mixedDocument = currentSchemaDocument(1L, IndexGeometry.fromSourceGeometryLiteral(mixed));
+		Document uniformDocument = currentSchemaDocument(2L, IndexGeometry.fromSourceGeometryLiteral(uniform));
+
+		assertNotNull(mixedDocument.getField(LuceneGeoDocumentSchema.FIELD_SOURCE_FROM_LEXICAL_FORM));
+		assertNull(uniformDocument.getField(LuceneGeoDocumentSchema.FIELD_SOURCE_FROM_LEXICAL_FORM));
+		SourceGeometryLiteral readMixed = LuceneGeoDocumentSchema.sourceGeometryLiteral(mixedDocument,
+				new SourceGeometryLiteralResolver());
+		Geometry readMembers = readMixed.asGeometryWrapper().getParsingGeometry();
+		assertFalse(((Point) readMembers.getGeometryN(0)).getCoordinateSequence().hasZ());
+		assertTrue(((Point) readMembers.getGeometryN(1)).getCoordinateSequence().hasZ());
+		assertTrue(GeoSparqlPropertyRelation.SF_DISJOINT.evaluate(
+				SourceGeometryLiteral.fromWkt("POINT(153.481 -27.47)"), readMixed));
+		assertTrue(LuceneGeoDocumentSchema.sourceGeometryLiteral(uniformDocument, new SourceGeometryLiteralResolver())
+				.asGeometryWrapper().getXYGeometry().equalsExact(uniform.asGeometryWrapper().getXYGeometry()));
+	}
+
 	private Document currentSchemaDocument(long entityId, IndexGeometry geometry) {
 		return LuceneGeoDocumentSchema.toDocument(entityId, geometry,
 				testSpatialStrategy, testSpatialContext);
@@ -206,18 +242,6 @@ public class LuceneGeoSchemaTest {
 
         assertForceReindexMessage(exception);
     }
-
-	@Test
-	public void missingCandidateBoundsKindRequiresReindex() {
-		Document document = currentSchemaDocument(1L, sampleGeometry);
-		document.removeFields(LuceneGeoDocumentSchema.FIELD_CANDIDATE_BOUNDS_KIND);
-
-		PluginException exception = assertThrows(PluginException.class,
-				() -> LuceneGeoDocumentSchema.sourceGeometryLiteral(
-						document, new SourceGeometryLiteralResolver()));
-
-		assertForceReindexMessage(exception);
-	}
 
 	@Test
 	public void sourceCrsMustBeIndexedForSelectiveMixedCrsLookup() {
@@ -358,7 +382,7 @@ public class LuceneGeoSchemaTest {
         LuceneGeoIndexer indexer = createIndexer(missingEnvelopePointsDataDir.toFile());
 
         PluginException exception = assertThrows(PluginException.class,
-                () -> indexer.getEnvelopeIntersections(sampleGeometry));
+                () -> indexer.getEnvelopeIntersections(sampleGeometry, false));
 
         assertForceReindexMessage(exception);
     }
@@ -377,6 +401,35 @@ public class LuceneGeoSchemaTest {
                 () -> indexer.getSourceGeometryLiteralsFor(0));
 
         assertForceReindexMessage(exception);
+    }
+
+    /** Cover boxes written from cells of any area can leave out part of a geometry near 10⁻¹⁶². */
+    @Test
+    public void layoutWithCoverBoxesOfAnyAreaRequiresReindex() throws Exception {
+        Path dataDir = tmpFolder.getRoot().toPath().resolve("layout-cover-boxes-of-any-area");
+        Files.createDirectories(dataDir);
+        writeLayout(dataDir, "prefix-envelope-ordinate-preserving-source-wkb-envelope-marker-topology-dv-indexed-source-crs"
+                + "-source-envelope-index-envelope-source-cover-area-collection-lexical-sources-jena-crs84-envelope");
+
+        LuceneGeoIndexer indexer = createIndexer(dataDir.toFile());
+
+        assertForceReindexMessage(assertThrows(PluginException.class,
+                () -> indexer.getSourceGeometryLiteralsFor(0)));
+    }
+
+    /** A source with coordinates near 10⁻¹⁶² could carry cover boxes and be looked up by equal envelopes. */
+    @Test
+    public void layoutMarkingOnlyInvalidSourcesRequiresReindex() throws Exception {
+        Path dataDir = tmpFolder.getRoot().toPath().resolve("layout-invalid-source-marker");
+        Files.createDirectories(dataDir);
+        writeLayout(dataDir, "prefix-envelope-ordinate-preserving-source-wkb-envelope-marker-topology-dv-indexed-source-crs"
+                + "-source-envelope-index-envelope-source-cover-area-collection-lexical-sources-jena-crs84-envelope"
+                + "-normal-area-cover-invalid-source");
+
+        LuceneGeoIndexer indexer = createIndexer(dataDir.toFile());
+
+        assertForceReindexMessage(assertThrows(PluginException.class,
+                () -> indexer.getSourceGeometryLiteralsFor(0)));
     }
 
     @Test
@@ -483,6 +536,104 @@ public class LuceneGeoSchemaTest {
 		PluginException exception = assertThrows(PluginException.class,
 				() -> restarted.getSourceGeometryLiteralsFor(0));
 		assertForceReindexMessage(exception);
+	}
+
+	/**
+	 * A query passes the compatibility gate before it opens the index. When a rollback restores an incompatible commit
+	 * in between, the query reports the rebuild error instead of reading that commit.
+	 */
+	@Test
+	public void queryOpeningACommitRestoredByRollbackReportsTheRebuildError() throws Exception {
+		Path dataDir = tmpFolder.getRoot().toPath().resolve("rollback-before-reader-opens");
+		Files.createDirectories(dataDir);
+		writeCurrentSchemaIndexWithoutCommitMarker(dataDir);
+		RollbackBeforeReaderOpensIndexer indexer = new RollbackBeforeReaderOpensIndexer(plugin(dataDir.toFile()));
+		indexer.initialize();
+		indexer.begin();
+		indexer.freshIndex();
+		indexer.indexGeometryList(1L, subject -> "Subject " + subject, List.of(sampleGeometry));
+		indexer.commit();
+		indexer.rollBackBeforeNextReaderOpens = true;
+
+		assertForceReindexMessage(assertThrows(PluginException.class, () -> indexer.getSourceGeometryLiteralsFor(0)));
+	}
+
+	/** A failure to close the rejected reader does not hide why it was rejected. */
+	@Test
+	public void rejectedReaderThatFailsToCloseStillReportsTheRebuildError() throws Exception {
+		Path dataDir = tmpFolder.getRoot().toPath().resolve("rejected-reader-fails-to-close");
+		Files.createDirectories(dataDir);
+		writeCurrentSchemaIndexWithoutCommitMarker(dataDir);
+		RollbackBeforeReaderOpensIndexer indexer = new RollbackBeforeReaderOpensIndexer(plugin(dataDir.toFile()));
+		indexer.initialize();
+		indexer.begin();
+		indexer.freshIndex();
+		indexer.indexGeometryList(1L, subject -> "Subject " + subject, List.of(sampleGeometry));
+		indexer.commit();
+		indexer.rollBackBeforeNextReaderOpens = true;
+		indexer.failToCloseReader = true;
+
+		PluginException failure = assertThrows(PluginException.class, () -> indexer.getSourceGeometryLiteralsFor(0));
+
+		assertForceReindexMessage(failure);
+		assertEquals(1, failure.getSuppressed().length);
+		assertEquals("reader close failure", failure.getSuppressed()[0].getMessage());
+	}
+
+	/**
+	 * Rolls its transaction back once, between a query passing the compatibility gate and opening the index, and can
+	 * fail to close the readers it opens.
+	 */
+	private static final class RollbackBeforeReaderOpensIndexer extends LuceneGeoIndexer {
+		private boolean rollBackBeforeNextReaderOpens;
+		private boolean failToCloseReader;
+
+		private RollbackBeforeReaderOpensIndexer(GeoSparqlPlugin parent) {
+			super(parent, () -> "test-crs-environment");
+		}
+
+		@Override
+		IndexReader openReader() throws IOException {
+			if (rollBackBeforeNextReaderOpens) {
+				rollBackBeforeNextReaderOpens = false;
+				try {
+					rollback();
+				} catch (Exception e) {
+					throw new IOException(e);
+				}
+			}
+			return super.openReader();
+		}
+
+		@Override
+		DirectoryReader openCommit() throws IOException {
+			DirectoryReader reader = super.openCommit();
+			if (!failToCloseReader) {
+				return reader;
+			}
+			return new FilterDirectoryReader(reader, new FilterDirectoryReader.SubReaderWrapper() {
+				@Override
+				public LeafReader wrap(LeafReader leaf) {
+					return leaf;
+				}
+			}) {
+				@Override
+				protected DirectoryReader doWrapDirectoryReader(DirectoryReader in) {
+					return in;
+				}
+
+				@Override
+				public CacheHelper getReaderCacheHelper() {
+					return null;
+				}
+
+				@Override
+				protected void doClose() throws IOException {
+					super.doClose();
+					throw new IOException("reader close failure");
+				}
+			};
+		}
 	}
 
     @Test
@@ -720,10 +871,8 @@ public class LuceneGeoSchemaTest {
         try (FSDirectory dir = FSDirectory.open(indexDir);
              IndexWriter writer = new IndexWriter(dir, new IndexWriterConfig())) {
             Document document = currentSchemaDocument(1L, sampleGeometry);
-            document.removeFields(LuceneGeoDocumentSchema.FIELD_ENVELOPE_MIN_X);
-            document.removeFields(LuceneGeoDocumentSchema.FIELD_ENVELOPE_MAX_X);
-            document.removeFields(LuceneGeoDocumentSchema.FIELD_ENVELOPE_MIN_Y);
-            document.removeFields(LuceneGeoDocumentSchema.FIELD_ENVELOPE_MAX_Y);
+            document.removeFields(LuceneGeoDocumentSchema.FIELD_SOURCE_ENVELOPE);
+            document.removeFields(LuceneGeoDocumentSchema.FIELD_INDEX_ENVELOPE);
             writer.addDocument(document);
             Map<String, String> commitData = new HashMap<>();
             commitData.put(LuceneGeoDocumentSchema.COMMIT_SCHEMA_VERSION_KEY,
@@ -745,6 +894,20 @@ public class LuceneGeoSchemaTest {
                     LuceneGeoDocumentSchema.COMMIT_SCHEMA_VERSION_VALUE);
             commitData.put(LuceneGeoDocumentSchema.COMMIT_SCHEMA_LAYOUT_KEY,
                     "prefix-envelope-source-wkb-envelope-marker-topology-dv-envelope-points");
+            writer.setLiveCommitData(commitData.entrySet());
+        }
+    }
+
+    private void writeLayout(Path dataDir, String layout) throws Exception {
+        Path indexDir = GeoSparqlConfig.resolveIndexPath(dataDir);
+        Files.createDirectories(indexDir);
+        try (FSDirectory dir = FSDirectory.open(indexDir);
+             IndexWriter writer = new IndexWriter(dir, new IndexWriterConfig())) {
+            writer.addDocument(currentSchemaDocument(1L, sampleGeometry));
+            Map<String, String> commitData = new HashMap<>();
+            commitData.put(LuceneGeoDocumentSchema.COMMIT_SCHEMA_VERSION_KEY,
+                    LuceneGeoDocumentSchema.COMMIT_SCHEMA_VERSION_VALUE);
+            commitData.put(LuceneGeoDocumentSchema.COMMIT_SCHEMA_LAYOUT_KEY, layout);
             writer.setLiveCommitData(commitData.entrySet());
         }
     }

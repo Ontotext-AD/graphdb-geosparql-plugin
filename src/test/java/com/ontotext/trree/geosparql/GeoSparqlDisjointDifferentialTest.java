@@ -2,15 +2,19 @@ package com.ontotext.trree.geosparql;
 
 import com.ontotext.test.TemporaryLocalFolder;
 import com.ontotext.trree.geosparql.jena.IndexGeometry;
+import com.ontotext.trree.geosparql.jena.CandidateBoundsKind;
+import com.ontotext.trree.geosparql.jena.IndexGeometryFixtures;
 import com.ontotext.trree.geosparql.jena.SourceGeometryLiteral;
 import com.ontotext.trree.geosparql.lucene.LuceneGeoIndexer;
 import com.ontotext.trree.sdk.Entities;
 import org.eclipse.rdf4j.model.IRI;
 import org.eclipse.rdf4j.model.Value;
 import org.eclipse.rdf4j.model.impl.SimpleValueFactory;
+import org.apache.lucene.search.BooleanQuery;
 import org.junit.Rule;
 import org.junit.Test;
 import org.slf4j.LoggerFactory;
+import org.locationtech.jts.geom.Envelope;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -19,10 +23,12 @@ import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Random;
 import java.util.Set;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertTrue;
 
 public class GeoSparqlDisjointDifferentialTest {
 	private static final long BOUND = 100L;
@@ -46,6 +52,175 @@ public class GeoSparqlDisjointDifferentialTest {
 			assertEquals(relation + " subject-bound",
 					runReference(fixture, relation, BOUND, 0),
 					runPartitioned(fixture, relation, BOUND, 0));
+		}
+	}
+
+	@Test
+	public void interiorRectanglePruningMatchesExhaustiveEvaluationAcrossPolygonShapes() throws Exception {
+		List<String> bounds = List.of(
+				"POLYGON((0 0,6 0,0 6,0 0))",
+				"POLYGON((0 0,6 0,6 2,2 2,2 6,0 6,0 0))",
+				"POLYGON((0 0,6 0,6 6,0 6,0 0),(2 2,2 4,4 4,4 2,2 2))",
+				"POLYGON((3 0,6 3,3 6,0 3,3 0))",
+				"POLYGON((1 1,1.000000000000001 1,1.000000000000001 6,1 6,1 1))");
+		Map<Long, List<IndexGeometry>> sources = new HashMap<>();
+		List<String> sourceWkts = new ArrayList<>(List.of(
+				"POINT(0 0)", "POINT(-0.0 0.0)", "POINT(0.0 -0.0)", "POINT(3 3)", "POINT(6 0)",
+				"POINT EMPTY", "LINESTRING EMPTY", "POLYGON EMPTY", "GEOMETRYCOLLECTION EMPTY",
+				"LINESTRING(-1 3,7 3)", "LINESTRING(3 -1,3 7)",
+				"POLYGON((0 0,6 0,6 6,0 6,0 0))", "POLYGON((2.5 2.5,3.5 2.5,3.5 3.5,2.5 3.5,2.5 2.5))",
+				"MULTIPOINT((0 0),(8 8))", "GEOMETRYCOLLECTION(POINT(1 1),LINESTRING(3 -1,3 7))",
+				"MULTIPOLYGON(((0 0,1 0,1 1,0 1,0 0)),((8 8,9 8,9 9,8 9,8 8)))",
+				"<http://www.opengis.net/def/crs/EPSG/0/3857> POINT(100000 100000)"));
+		for (double x : List.of(Math.nextDown(2.0), 2.0, Math.nextUp(2.0),
+				Math.nextDown(4.0), 4.0, Math.nextUp(4.0))) {
+			sourceWkts.add("POINT(" + x + " " + (6 - x) + ")");
+		}
+		Random random = new Random(4427);
+		for (int i = 0; i < 40; i++) {
+			sourceWkts.add("POINT(" + (-1 + random.nextDouble() * 12) + " "
+					+ (-1 + random.nextDouble() * 12) + ")");
+		}
+		for (int i = 0; i < sourceWkts.size(); i++) {
+			sources.put(i + 1L, geometries(sourceWkts.get(i)));
+		}
+		sources.put(80L, geometries("POINT(1 1)", "POINT(5 5)"));
+		SourceGeometryLiteral fallback = SourceGeometryLiteral.fromWkt(
+				"<http://www.opengis.net/def/crs/EPSG/0/3857> POINT(2000000 1000000)");
+		sources.put(81L, List.of(IndexGeometryFixtures.withIndexEnvelope(fallback,
+				new Envelope(-180, 180, -90, 90), CandidateBoundsKind.WORLD_FALLBACK,
+				"unrepresentable-rectangle")));
+		for (int i = 0; i < bounds.size(); i++) {
+			sources.put(BOUND, geometries(bounds.get(i)));
+			Fixture fixture = createFixture("interior-rectangle-shape-" + i, sources);
+			for (GeoSparqlPropertyRelation relation : List.of(GeoSparqlPropertyRelation.SF_DISJOINT,
+					GeoSparqlPropertyRelation.EH_DISJOINT, GeoSparqlPropertyRelation.RCC8_DC)) {
+				assertEquals(relation + " object-bound shape " + i,
+						runReference(fixture, relation, 0, BOUND), runPartitioned(fixture, relation, 0, BOUND));
+				assertEquals(relation + " subject-bound shape " + i,
+						runReference(fixture, relation, BOUND, 0), runPartitioned(fixture, relation, BOUND, 0));
+			}
+		}
+	}
+
+	/**
+	 * At coordinates near 10⁻¹⁶², products of coordinate differences underflow and JTS can certify a rectangle
+	 * within a polygon that reaches outside it, or find that a polygon fills its envelope when it does not. Each
+	 * bound is scaled by a power of two so that its shape is exact. The L-shaped bound is the one of the shape test
+	 * above; its sources are a grid over the quarter of its envelope that holds its corner, mostly inside the bound
+	 * so that interior pruning runs, and a ninth of the grid lies in the missing corner. The second bound does not
+	 * fill its envelope, and its sources are a grid over that envelope.
+	 */
+	@Test
+	public void disjointLookupMatchesExhaustiveEvaluationAtUnderflowingScale() throws Exception {
+		assertMatchesExhaustiveEvaluationAtUnderflowingScale("underflowing-l-shape",
+				new int[] { 0, 0, 6, 0, 6, 2, 2, 2, 2, 6, 0, 6, 0, 0 }, new Envelope(0, 3, 0, 3));
+		assertMatchesExhaustiveEvaluationAtUnderflowingScale("underflowing-hexagon",
+				new int[] { 9, 13, 1, 10, 0, 6, 3, 4, 8, 7, 11, 5, 9, 13 }, new Envelope(0, 11, 4, 13));
+	}
+
+	private void assertMatchesExhaustiveEvaluationAtUnderflowingScale(String name, int[] boundCoordinates,
+			Envelope grid) throws Exception {
+		int exponent = -540;
+		StringBuilder ring = new StringBuilder();
+		for (int i = 0; i < boundCoordinates.length; i += 2) {
+			ring.append(i == 0 ? "" : ",").append(scaled(boundCoordinates[i], boundCoordinates[i + 1], exponent));
+		}
+		Map<Long, List<IndexGeometry>> sources = new HashMap<>();
+		sources.put(BOUND, geometries("POLYGON((" + ring + "))"));
+		long id = BOUND + 1;
+		for (int x = 0; x <= 12; x++) {
+			for (int y = 0; y <= 12; y++) {
+				sources.put(id++, geometries("POINT(" + scaled(grid.getMinX() + grid.getWidth() * x / 12,
+						grid.getMinY() + grid.getHeight() * y / 12, exponent) + ")"));
+			}
+		}
+		Fixture fixture = createFixture(name, sources);
+		for (GeoSparqlPropertyRelation relation : List.of(GeoSparqlPropertyRelation.SF_DISJOINT,
+				GeoSparqlPropertyRelation.EH_DISJOINT, GeoSparqlPropertyRelation.RCC8_DC)) {
+			assertEquals(name + " " + relation + " object-bound",
+					runReference(fixture, relation, 0, BOUND), runPartitioned(fixture, relation, 0, BOUND));
+			assertEquals(name + " " + relation + " subject-bound",
+					runReference(fixture, relation, BOUND, 0), runPartitioned(fixture, relation, BOUND, 0));
+		}
+	}
+
+	private static String scaled(double x, double y, int exponent) {
+		return Math.scalb(x, exponent) + " " + Math.scalb(y, exponent);
+	}
+
+	/**
+	 * A disjoint query reads the index in phases, and the bound is placed in no more source CRSs than Lucene's clause
+	 * limit allows. The sources of a CRS beyond that limit are left to the cleanup phase. A commit that removes the
+	 * sources of an earlier CRS before that phase places the bound in the CRS of such a source instead, so the
+	 * cleanup phase must still read the index as the earlier phases did. The removed sources lie in a segment of
+	 * their own, which the commit drops together with their CRS.
+	 */
+	@Test
+	public void commitBetweenDisjointPhasesKeepsEveryMatch() throws Exception {
+		int maxClauseCount = BooleanQuery.getMaxClauseCount();
+		BooleanQuery.setMaxClauseCount(4);
+		try {
+			Map<Long, List<IndexGeometry>> sources = new HashMap<>();
+			sources.put(BOUND, geometries("POLYGON((14 44,16 44,14 46,14 44))"));
+			long uncertain = 1L;
+			long cleanup = 2L;
+			long removed = 4L;
+			sources.put(uncertain, geometries("POINT(15.8 45.8)"));
+			sources.put(cleanup, geometries("<" + utm(33) + "> POINT(500000 6000000)"));
+			sources.put(3L, geometries("<" + utm(32) + "> POINT(500000 5000000)"));
+			Fixture fixture = createFixture("commit-between-disjoint-phases", sources);
+			index(fixture, removed, geometries("<" + utm(31) + "> POINT(500000 5000000)"));
+			fixture.entities.add(removed, SimpleValueFactory.getInstance()
+					.createIRI("http://example.com/entity/" + removed));
+
+			Set<Long> matches = new LinkedHashSet<>();
+			GeoSparqlRelationIterator iterator = new GeoSparqlRelationIterator(fixture.plugin,
+					GeoSparqlPropertyRelation.SF_DISJOINT, 0, PREDICATE, BOUND, fixture.entities);
+			try {
+				while (iterator.next()) {
+					matches.add(iterator.subject);
+					if (iterator.subject == uncertain) {
+						index(fixture, removed, List.of());
+					}
+				}
+			} finally {
+				iterator.close();
+			}
+
+			assertTrue(matches.toString(), matches.contains(uncertain));
+			assertTrue(matches.toString(), matches.contains(cleanup));
+		} finally {
+			BooleanQuery.setMaxClauseCount(maxClauseCount);
+		}
+	}
+
+	private static String utm(int zone) {
+		return "http://www.opengis.net/def/crs/EPSG/0/326" + zone;
+	}
+
+	private static void index(Fixture fixture, long entityId, List<IndexGeometry> geometries) throws Exception {
+		GeoSparqlIndexer indexer = fixture.plugin.indexer;
+		indexer.begin();
+		indexer.indexGeometryList(entityId, id -> "entity-" + id, geometries);
+		indexer.commit();
+		indexer.complete();
+	}
+
+	@Test
+	public void interiorPruningIsLocalToEachBoundAndEachCandidateSource() throws Exception {
+		Map<Long, List<IndexGeometry>> sources = new HashMap<>();
+		sources.put(BOUND, geometries("POLYGON((0 0,6 0,0 6,0 0))",
+				"POLYGON((10 10,16 10,10 16,10 10))"));
+		sources.put(1L, geometries("POINT(1 1)", "POINT(5 5)"));
+		sources.put(2L, geometries("POLYGON((1 1,2 1,1 2,1 1))",
+				"POLYGON((11 11,12 11,11 12,11 11))"));
+		sources.put(3L, geometries("POINT(11 11)"));
+		Fixture fixture = createFixture("interior-rectangles-multiple-sources", sources);
+		for (GeoSparqlPropertyRelation relation : List.of(GeoSparqlPropertyRelation.SF_DISJOINT,
+				GeoSparqlPropertyRelation.EH_DISJOINT, GeoSparqlPropertyRelation.RCC8_DC)) {
+			assertEquals(runReference(fixture, relation, 0, BOUND), runPartitioned(fixture, relation, 0, BOUND));
+			assertEquals(runReference(fixture, relation, BOUND, 0), runPartitioned(fixture, relation, BOUND, 0));
 		}
 	}
 

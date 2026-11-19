@@ -1,6 +1,5 @@
 package com.ontotext.trree.geosparql.lucene;
 
-import com.ontotext.trree.geosparql.jena.CandidateBoundsKind;
 import com.ontotext.trree.geosparql.jena.IndexGeometry;
 import com.ontotext.trree.geosparql.jena.SourceGeometryLiteral;
 import com.ontotext.trree.sdk.PluginException;
@@ -11,20 +10,33 @@ import org.apache.lucene.document.LongPoint;
 import org.apache.lucene.document.NumericDocValuesField;
 import org.apache.lucene.document.StoredField;
 import org.apache.lucene.document.StringField;
+import org.apache.lucene.index.IndexReader;
+import org.apache.lucene.index.LeafReaderContext;
+import org.apache.lucene.index.MultiTerms;
+import org.apache.lucene.index.Terms;
+import org.apache.lucene.index.TermsEnum;
 import org.apache.lucene.index.IndexableField;
 import org.apache.lucene.index.IndexOptions;
 import org.apache.lucene.index.Term;
 import org.apache.lucene.search.BooleanClause;
 import org.apache.lucene.search.BooleanQuery;
+import org.apache.lucene.search.CollectionTerminatedException;
+import org.apache.lucene.search.IndexSearcher;
 import org.apache.lucene.search.MatchAllDocsQuery;
 import org.apache.lucene.search.Query;
+import org.apache.lucene.search.ScoreMode;
+import org.apache.lucene.search.SimpleCollector;
 import org.apache.lucene.search.TermQuery;
 import org.apache.lucene.spatial.SpatialStrategy;
+import org.apache.lucene.util.BytesRef;
 import org.apache.jena.geosparql.implementation.DimensionInfo;
 import org.locationtech.jts.geom.Envelope;
 import org.locationtech.spatial4j.context.SpatialContext;
 import org.locationtech.spatial4j.shape.Rectangle;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.LinkedHashMap;
@@ -35,22 +47,49 @@ import java.util.Map;
  * Lucene GeoSPARQL document schema v2.
  */
 final class LuceneGeoDocumentSchema {
+	private static final Logger LOGGER = LoggerFactory.getLogger(LuceneGeoDocumentSchema.class);
 	/** Per-document GeoSPARQL Lucene schema version. */
 	static final int SCHEMA_VERSION = 2;
 	/** GraphDB entity id, stored for reconstruction and indexed/doc-valued for lookup and grouping. */
 	static final String FIELD_ID = "id";
-	/** Indexed terms for one CRS84 source envelope; absent on empty sentinels. */
+	/** Prefix cells of the CRS84 index envelope; absent on empty sentinels. */
 	static final String FIELD_SPATIAL_PREFIX = "geoData1";
-	/** Indexed exact lower X bound used only for safe envelope-containment pruning. */
-	static final String FIELD_ENVELOPE_MIN_X = "geoEnvelopeMinX";
-	/** Indexed exact upper X bound used only for safe envelope-containment pruning. */
-	static final String FIELD_ENVELOPE_MAX_X = "geoEnvelopeMaxX";
-	/** Indexed exact lower Y bound used only for safe envelope-containment pruning. */
-	static final String FIELD_ENVELOPE_MIN_Y = "geoEnvelopeMinY";
-	/** Indexed exact upper Y bound used only for safe envelope-containment pruning. */
-	static final String FIELD_ENVELOPE_MAX_Y = "geoEnvelopeMaxY";
+	/**
+	 * Boxes that together contain the source, in its own CRS: several points of four dimensions in the ordinate
+	 * order of {@link #FIELD_SOURCE_ENVELOPE}. Absent where the source's envelope describes it well enough.
+	 */
+	static final String FIELD_SOURCE_COVER = "geoSourceCover";
+	/** Indexed marker present on exactly the documents that carry cover boxes. */
+	static final String FIELD_HAS_SOURCE_COVER = "geoHasSourceCover";
+	/** Indexed marker present on exactly the spatial documents of area collections; see {@link IndexGeometry}. */
+	static final String FIELD_AREA_COLLECTION = "geoAreaCollection";
+	/**
+	 * Indexed marker present on exactly the spatial documents whose geometry, as Jena evaluates it in its own CRS, is
+	 * not {@link IndexGeometry#isProvable provable}. Equal envelopes do not show that such a geometry differs from
+	 * another; see {@link EvaluationCrsLookup#withEqualEnvelope}.
+	 */
+	static final String FIELD_UNPROVABLE_SOURCE = "geoUnprovableSource";
+	/**
+	 * XY envelope of the source in its own CRS, as one point of four dimensions: minimum X, maximum X, minimum Y
+	 * and maximum Y. It serves lookup in the CRS where Jena evaluates a pair. Absent on empty sentinels.
+	 */
+	static final String FIELD_SOURCE_ENVELOPE = "geoSourceEnvelope";
+	/**
+	 * CRS84 index envelope of a source in another CRS, as one point of the same four dimensions. A CRS84 source's
+	 * index envelope is its own envelope and is not stored a second time.
+	 */
+	static final String FIELD_INDEX_ENVELOPE = "geoIndexEnvelope";
+	private static final int MIN_X = 0;
+	private static final int MAX_X = 1;
+	private static final int MIN_Y = 2;
+	private static final int MAX_Y = 3;
 	/** Stored WKB for the complete native-CRS source geometry used to construct Jena exact-evaluation input. */
 	static final String FIELD_SOURCE_GEOMETRY = "geoData";
+	/**
+	 * Stored marker on exactly the documents whose WKB does not read back as the geometry Jena parses; exact
+	 * evaluation parses their stored lexical form instead. See {@link SourceGeometryWkbCodec#reproduces}.
+	 */
+	static final String FIELD_SOURCE_FROM_LEXICAL_FORM = "geoSourceFromLexicalForm";
 	/** Stored per-document schema number used for defensive validation after the commit-level check. */
 	static final String FIELD_SCHEMA_VERSION = "geoSchemaVersion";
 	/** Stored authoritative RDF lexical form; the compatibility name does not denote a CRS84 geometry. */
@@ -65,23 +104,36 @@ final class LuceneGeoDocumentSchema {
 	static final String FIELD_SOURCE_SPATIAL_DIMENSION = "geoSourceSpatialDimension";
 	/** Stored and doc-valued source topological dimension preserving relation-family applicability. */
 	static final String FIELD_SOURCE_TOPOLOGICAL_DIMENSION = "geoSourceTopologicalDimension";
-	/** Stored CRS URI used to derive the index envelope in geoData1; currently always CRS84. */
+	/** Stored CRS URI of numeric envelopes and prefix covers; currently always CRS84. */
 	static final String FIELD_INDEX_CRS = "geoIndexCrs";
 	/** Indexed and stored marker separating spatial envelope documents from non-spatial empty sentinels. */
 	static final String FIELD_HAS_ENVELOPE = "geoHasEnvelope";
-	/** Indexed and stored candidate-envelope provenance. */
-	static final String FIELD_CANDIDATE_BOUNDS_KIND = "geoCandidateBoundsKind";
 	static final String HAS_ENVELOPE_VALUE = "1";
 	static final String NO_ENVELOPE_VALUE = "0";
+	static final String HAS_SOURCE_COVER_VALUE = "1";
+	static final String AREA_COLLECTION_VALUE = "1";
+	static final String UNPROVABLE_SOURCE_VALUE = "1";
+	/** Ends of the CRS84 longitude range, which name the same meridian. */
+	private static final double MINIMUM_LONGITUDE = -180.0;
+	private static final double MAXIMUM_LONGITUDE = 180.0;
+	/** Latitudes of the poles, where every meridian meets. */
+	private static final double SOUTH_POLE_LATITUDE = -90.0;
+	private static final double NORTH_POLE_LATITUDE = 90.0;
 	/** Commit metadata key used for the constant-time index-level schema compatibility check. */
 	static final String COMMIT_SCHEMA_VERSION_KEY = "geosparql.luceneSchemaVersion";
 	/** Commit metadata value for the required schema version. */
 	static final String COMMIT_SCHEMA_VERSION_VALUE = Integer.toString(SCHEMA_VERSION);
 	/** Commit metadata key identifying the concrete field layout within the schema version. */
 	static final String COMMIT_SCHEMA_LAYOUT_KEY = "geosparql.luceneSchemaLayout";
-	/** Commit metadata value requiring source WKB, exact envelope bounds, provenance, and indexed source CRS. */
+	/**
+	 * Commit metadata value requiring source WKB, the envelope marker, indexed source CRS, each spatial source's
+	 * envelope in its own CRS, the CRS84 index envelope of each source in another CRS, cover boxes for large
+	 * sources, the area collection marker, the marker for sources parsed from their lexical form, a CRS84 index
+	 * envelope checked against Jena's transformation, cover boxes built only from cells of normal area, and cover
+	 * boxes only for provable sources, with a marker on the others.
+	 */
 	static final String COMMIT_SCHEMA_LAYOUT_VALUE =
-			"prefix-envelope-ordinate-preserving-source-wkb-envelope-marker-topology-dv-envelope-points-bounds-kind-indexed-source-crs";
+			"prefix-envelope-ordinate-preserving-source-wkb-envelope-marker-topology-dv-indexed-source-crs-source-envelope-index-envelope-source-cover-area-collection-lexical-sources-jena-crs84-envelope-normal-area-cover-unprovable-source";
 	/** Commit metadata key identifying the CRS transformation inputs used for candidate envelopes. */
 	static final String COMMIT_CRS_ENVIRONMENT_FINGERPRINT_KEY = "geosparql.crsEnvironmentFingerprint";
 	static final String SCHEMA_MISMATCH_MESSAGE =
@@ -117,25 +169,38 @@ final class LuceneGeoDocumentSchema {
 		doc.add(new NumericDocValuesField(FIELD_ID, entityId));
 
 		if (geometry.isSpatialCandidate()) {
-			Envelope envelope = geometry.indexEnvelope();
+			Envelope envelope = geometry.storedIndexEnvelope();
 			Rectangle shape = ctx.getShapeFactory().rect(
 					envelope.getMinX(), envelope.getMaxX(), envelope.getMinY(), envelope.getMaxY());
 			for (Field field : strategy.createIndexableFields(shape)) {
 				doc.add(field);
 			}
-			doc.add(new DoublePoint(FIELD_ENVELOPE_MIN_X, envelope.getMinX()));
-			doc.add(new DoublePoint(FIELD_ENVELOPE_MAX_X, envelope.getMaxX()));
-			doc.add(new DoublePoint(FIELD_ENVELOPE_MIN_Y, envelope.getMinY()));
-			doc.add(new DoublePoint(FIELD_ENVELOPE_MAX_Y, envelope.getMaxY()));
+			Envelope sourceEnvelope = geometry.sourceEnvelope();
+			doc.add(new DoublePoint(FIELD_SOURCE_ENVELOPE, sourceEnvelope.getMinX(), sourceEnvelope.getMaxX(),
+					sourceEnvelope.getMinY(), sourceEnvelope.getMaxY()));
+			// Cover boxes are built only for a provable geometry; any other is marked instead.
+			if (IndexGeometry.isProvable(source.asGeometryWrapper().getXYGeometry())) {
+				addSourceCover(doc, geometry);
+			} else {
+				doc.add(new StringField(FIELD_UNPROVABLE_SOURCE, UNPROVABLE_SOURCE_VALUE, Field.Store.NO));
+			}
+			if (geometry.isAreaCollection()) {
+				doc.add(new StringField(FIELD_AREA_COLLECTION, AREA_COLLECTION_VALUE, Field.Store.NO));
+			}
+			if (!IndexGeometry.INDEX_CRS.equals(source.effectiveCrsUri())) {
+				doc.add(new DoublePoint(FIELD_INDEX_ENVELOPE, envelope.getMinX(), envelope.getMaxX(),
+						envelope.getMinY(), envelope.getMaxY()));
+			}
 		}
 		doc.add(new StringField(FIELD_HAS_ENVELOPE,
 				geometry.isSpatialCandidate() ? HAS_ENVELOPE_VALUE : NO_ENVELOPE_VALUE, Field.Store.YES));
-		doc.add(new StringField(FIELD_CANDIDATE_BOUNDS_KIND,
-				geometry.candidateBoundsKind().name(), Field.Store.YES));
 		// Empty source geometry literals still need an entity-bearing document so full scans can reconstruct
 		// them for exact predicate evaluation. Their sentinel document deliberately has no Lucene spatial fields.
 
 		doc.add(new StoredField(FIELD_SOURCE_GEOMETRY, sourceGeometryWkb));
+		if (!SourceGeometryWkbCodec.reproduces(source, sourceGeometryWkb)) {
+			doc.add(new StoredField(FIELD_SOURCE_FROM_LEXICAL_FORM, 1));
+		}
 		doc.add(new StoredField(FIELD_SCHEMA_VERSION, SCHEMA_VERSION));
 		doc.add(new StoredField(FIELD_SOURCE_LEXICAL_FORM, source.lexicalForm()));
 		doc.add(new StoredField(FIELD_SOURCE_DATATYPE, source.datatype().stringValue()));
@@ -149,6 +214,28 @@ final class LuceneGeoDocumentSchema {
 		return doc;
 	}
 
+	/**
+	 * Adds the boxes that together contain a valid source and the marker identifying documents that carry them. A
+	 * source gets neither, and is described by its envelope alone, when it has no boxes or they cannot be built: a marker
+	 * without boxes would name a source that no bound can meet.
+	 */
+	private static void addSourceCover(Document doc, IndexGeometry geometry) {
+		List<Envelope> boxes;
+		try {
+			boxes = SourceCoverBoxes.of(geometry.sourceGeometryLiteral().asGeometryWrapper().getXYGeometry());
+		} catch (RuntimeException e) {
+			LOGGER.debug("Indexing a source without cover boxes", e);
+			return;
+		}
+		if (boxes.isEmpty()) {
+			return;
+		}
+		for (Envelope box : boxes) {
+			doc.add(new DoublePoint(FIELD_SOURCE_COVER, box.getMinX(), box.getMaxX(), box.getMinY(), box.getMaxY()));
+		}
+		doc.add(new StringField(FIELD_HAS_SOURCE_COVER, HAS_SOURCE_COVER_VALUE, Field.Store.NO));
+	}
+
 	static SourceGeometryLiteral sourceGeometryLiteral(Document doc, SourceGeometryLiteralResolver sourceResolver) {
 		assertCurrentSchemaDocument(doc);
 		byte[] sourceGeometryWkb = binaryFieldValue(doc, FIELD_SOURCE_GEOMETRY);
@@ -157,7 +244,8 @@ final class LuceneGeoDocumentSchema {
 				doc.get(FIELD_SOURCE_LEXICAL_FORM),
 				doc.get(FIELD_SOURCE_DATATYPE),
 				doc.get(FIELD_SOURCE_CRS));
-		return sourceResolver.resolve(identity, sourceGeometryWkb, dimensions);
+		return sourceResolver.resolve(identity, sourceGeometryWkb, dimensions,
+				doc.getField(FIELD_SOURCE_FROM_LEXICAL_FORM) != null);
 	}
 
 	static long entityId(Document doc) {
@@ -182,7 +270,6 @@ final class LuceneGeoDocumentSchema {
 				&& numericFieldValue(doc, FIELD_SOURCE_SPATIAL_DIMENSION) != null
 				&& numericFieldValue(doc, FIELD_SOURCE_TOPOLOGICAL_DIMENSION) != null
 				&& hasValidEnvelopeMarker(doc)
-				&& hasValidCandidateBoundsKind(doc)
 				&& IndexGeometry.INDEX_CRS.equals(doc.get(FIELD_INDEX_CRS));
 	}
 
@@ -215,6 +302,10 @@ final class LuceneGeoDocumentSchema {
 		return LongPoint.newExactQuery(FIELD_ID, entityId);
 	}
 
+	static Query entityIdsAtLeastQuery(long entityId) {
+		return LongPoint.newRangeQuery(FIELD_ID, entityId, Long.MAX_VALUE);
+	}
+
 	static Query allDocumentsQuery() {
 		return new MatchAllDocsQuery();
 	}
@@ -224,30 +315,398 @@ final class LuceneGeoDocumentSchema {
 				hasEnvelope ? HAS_ENVELOPE_VALUE : NO_ENVELOPE_VALUE));
 	}
 
-	static Query candidateBoundsKindQuery(CandidateBoundsKind kind) {
-		return new TermQuery(new Term(FIELD_CANDIDATE_BOUNDS_KIND, kind.name()));
+	/** Whether any document of the reader is an area collection. */
+	static boolean hasAreaCollections(IndexReader reader) throws IOException {
+		return reader.docFreq(new Term(FIELD_AREA_COLLECTION, AREA_COLLECTION_VALUE)) > 0;
+	}
+
+	static Query areaCollectionQuery() {
+		return new TermQuery(new Term(FIELD_AREA_COLLECTION, AREA_COLLECTION_VALUE));
+	}
+
+	static Query unprovableSourceQuery() {
+		return new TermQuery(new Term(FIELD_UNPROVABLE_SOURCE, UNPROVABLE_SOURCE_VALUE));
+	}
+
+	/** Whether any document of the reader carries cover boxes. */
+	static boolean hasSourceCovers(IndexReader reader) throws IOException {
+		return reader.docFreq(new Term(FIELD_HAS_SOURCE_COVER, HAS_SOURCE_COVER_VALUE)) > 0;
+	}
+
+	/**
+	 * Matches sources that carry cover boxes of which none meets the closed envelope, both taken in one CRS. Such a
+	 * source shares no point with a geometry inside that envelope.
+	 */
+	static Query sourceCoverApartQuery(Envelope envelope) {
+		return new BooleanQuery.Builder()
+				.add(new TermQuery(new Term(FIELD_HAS_SOURCE_COVER, HAS_SOURCE_COVER_VALUE)), BooleanClause.Occur.FILTER)
+				.add(boxesMeetingQuery(FIELD_SOURCE_COVER, envelope), BooleanClause.Occur.MUST_NOT)
+				.build();
+	}
+
+	/**
+	 * Returns the CRS URIs of the reader's live spatial sources. A CRS whose documents are all deleted, or all hold
+	 * empty geometries, keeps its term until segments merge; no spatial lookup can select one of those documents, so
+	 * the CRS is left out.
+	 */
+	static List<String> sourceCrsUris(IndexReader reader) throws IOException {
+		List<String> crsUris = new ArrayList<>();
+		Terms terms = MultiTerms.getTerms(reader, FIELD_SOURCE_CRS);
+		if (terms == null) {
+			return crsUris;
+		}
+		IndexSearcher searcher = uncachedSearcher(reader);
+		TermsEnum iterator = terms.iterator();
+		for (BytesRef term = iterator.next(); term != null; term = iterator.next()) {
+			String crsUri = term.utf8ToString();
+			if (matchesAny(searcher, spatialSourcesQuery(crsUri))) {
+				crsUris.add(crsUri);
+			}
+		}
+		return crsUris;
+	}
+
+	/** Whether the reader holds a live spatial source of the CRS. */
+	static boolean hasSpatialSourcesIn(IndexReader reader, String crsUri) throws IOException {
+		return matchesAny(uncachedSearcher(reader), spatialSourcesQuery(crsUri));
+	}
+
+	/**
+	 * Whether the reader holds a live spatial source of any CRS but the given one. Each other CRS is searched on its
+	 * own, and the first live source ends the check. One search that excluded the given CRS would pass over every
+	 * source of that CRS before finding none outside it, and in a reader of one CRS that is every source.
+	 */
+	static boolean hasSpatialSourcesOutside(IndexReader reader, String crsUri) throws IOException {
+		Terms terms = MultiTerms.getTerms(reader, FIELD_SOURCE_CRS);
+		if (terms == null) {
+			return false;
+		}
+		IndexSearcher searcher = uncachedSearcher(reader);
+		TermsEnum iterator = terms.iterator();
+		for (BytesRef term = iterator.next(); term != null; term = iterator.next()) {
+			String otherCrsUri = term.utf8ToString();
+			if (!otherCrsUri.equals(crsUri) && matchesAny(searcher, spatialSourcesQuery(otherCrsUri))) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	private static Query spatialSourcesQuery(String crsUri) {
+		return new BooleanQuery.Builder()
+				.add(hasEnvelopeQuery(true), BooleanClause.Occur.FILTER)
+				.add(sourceCrsQuery(crsUri), BooleanClause.Occur.FILTER)
+				.build();
+	}
+
+	private static IndexSearcher uncachedSearcher(IndexReader reader) {
+		IndexSearcher searcher = new IndexSearcher(reader);
+		// Each lookup reads its own reader, so a cached result is never reused; caching one only builds a set of
+		// every matching document, where the search needs the first.
+		searcher.setQueryCache(null);
+		return searcher;
+	}
+
+	/** Whether a live document matches the query. The search stops at the first one. */
+	private static boolean matchesAny(IndexSearcher searcher, Query query) throws IOException {
+		boolean[] found = { false };
+		searcher.search(query, new SimpleCollector() {
+			@Override
+			protected void doSetNextReader(LeafReaderContext context) {
+				if (found[0]) {
+					throw new CollectionTerminatedException();
+				}
+			}
+
+			@Override
+			public void collect(int doc) {
+				found[0] = true;
+				throw new CollectionTerminatedException();
+			}
+
+			@Override
+			public ScoreMode scoreMode() {
+				return ScoreMode.COMPLETE_NO_SCORES;
+			}
+		});
+		return found[0];
+	}
+
+	/** Matches sources whose own envelopes meet the closed envelope, both taken in one CRS. */
+	static Query sourceEnvelopeIntersectsQuery(Envelope envelope) {
+		return boxesMeetingQuery(FIELD_SOURCE_ENVELOPE, envelope);
+	}
+
+	/** Matches documents with a box in the field that meets the closed envelope. */
+	private static Query boxesMeetingQuery(String field, Envelope envelope) {
+		return DoublePoint.newRangeQuery(field,
+				new double[]{Double.NEGATIVE_INFINITY, lowerBound(envelope.getMinX()),
+						Double.NEGATIVE_INFINITY, lowerBound(envelope.getMinY())},
+				new double[]{upperBound(envelope.getMaxX()), Double.POSITIVE_INFINITY,
+						upperBound(envelope.getMaxY()), Double.POSITIVE_INFINITY});
+	}
+
+	/**
+	 * Matches sources whose own envelopes equal the envelope, both taken in one CRS, and sources whose envelopes are
+	 * unbounded. Every source matches an unbounded envelope; see {@link IndexGeometry#comparableEnvelope}.
+	 */
+	static Query sourceEnvelopeEqualsQuery(Envelope envelope) {
+		if (IndexGeometry.isUnbounded(envelope)) {
+			return sourceEnvelopeIntersectsQuery(envelope);
+		}
+		return new BooleanQuery.Builder()
+				.add(equalEnvelopesQuery(envelope), BooleanClause.Occur.SHOULD)
+				.add(equalEnvelopesQuery(IndexGeometry.unboundedEnvelope()), BooleanClause.Occur.SHOULD)
+				.setMinimumNumberShouldMatch(1)
+				.build();
+	}
+
+	private static Query equalEnvelopesQuery(Envelope envelope) {
+		return DoublePoint.newRangeQuery(FIELD_SOURCE_ENVELOPE,
+				new double[]{lowerBound(envelope.getMinX()), lowerBound(envelope.getMaxX()),
+						lowerBound(envelope.getMinY()), lowerBound(envelope.getMaxY())},
+				new double[]{upperBound(envelope.getMinX()), upperBound(envelope.getMaxX()),
+						upperBound(envelope.getMinY()), upperBound(envelope.getMaxY())});
+	}
+
+	/**
+	 * Matches sources whose own envelopes meet the closed envelope and reach beyond at least one of its sides, both
+	 * taken in one CRS: the sources {@link #sourceEnvelopeIntersectsQuery} matches and
+	 * {@link #sourceEnvelopeWithinQuery} does not. Each side is one range that also requires the envelopes to meet,
+	 * so the point tree visits the sources across that side rather than every source beyond it. The four sides are
+	 * joined in pairs, so no query holds more than two clauses.
+	 */
+	static Query sourceEnvelopeCrossingQuery(Envelope envelope) {
+		return either(
+				either(crossingSide(envelope, MIN_X, Math.nextDown(lowerBound(envelope.getMinX()))),
+						crossingSide(envelope, MAX_X, Math.nextUp(upperBound(envelope.getMaxX())))),
+				either(crossingSide(envelope, MIN_Y, Math.nextDown(lowerBound(envelope.getMinY()))),
+						crossingSide(envelope, MAX_Y, Math.nextUp(upperBound(envelope.getMaxY())))));
+	}
+
+	/**
+	 * Sources whose envelopes meet the closed envelope, with a minimum ordinate at most the limit or a maximum
+	 * ordinate at least the limit. The limit lies past the side, so it narrows the range of meeting envelopes.
+	 */
+	private static Query crossingSide(Envelope envelope, int ordinate, double limit) {
+		double[] lower = {Double.NEGATIVE_INFINITY, lowerBound(envelope.getMinX()),
+				Double.NEGATIVE_INFINITY, lowerBound(envelope.getMinY())};
+		double[] upper = {upperBound(envelope.getMaxX()), Double.POSITIVE_INFINITY,
+				upperBound(envelope.getMaxY()), Double.POSITIVE_INFINITY};
+		if (ordinate == MIN_X || ordinate == MIN_Y) {
+			upper[ordinate] = limit;
+		} else {
+			lower[ordinate] = limit;
+		}
+		return DoublePoint.newRangeQuery(FIELD_SOURCE_ENVELOPE, lower, upper);
+	}
+
+	/** Matches what either query matches. Joining four sides in pairs keeps every query within two clauses. */
+	private static Query either(Query first, Query second) {
+		return new BooleanQuery.Builder()
+				.add(first, BooleanClause.Occur.SHOULD)
+				.add(second, BooleanClause.Occur.SHOULD)
+				.setMinimumNumberShouldMatch(1)
+				.build();
+	}
+
+	/** Matches sources whose own envelopes lie inside the closed envelope, both taken in one CRS. */
+	static Query sourceEnvelopeWithinQuery(Envelope envelope) {
+		return DoublePoint.newRangeQuery(FIELD_SOURCE_ENVELOPE,
+				new double[]{lowerBound(envelope.getMinX()), Double.NEGATIVE_INFINITY,
+						lowerBound(envelope.getMinY()), Double.NEGATIVE_INFINITY},
+				new double[]{Double.POSITIVE_INFINITY, upperBound(envelope.getMaxX()),
+						Double.POSITIVE_INFINITY, upperBound(envelope.getMaxY())});
+	}
+
+	// Numeric point ranges distinguish signed zeros, while geometric coordinate comparisons do not.
+	private static double lowerBound(double ordinate) {
+		return ordinate == 0.0 ? -0.0 : ordinate;
+	}
+
+	private static double upperBound(double ordinate) {
+		return ordinate == 0.0 ? 0.0 : ordinate;
 	}
 
 	static Query sourceCrsQuery(String sourceCrsUri) {
 		return new TermQuery(new Term(FIELD_SOURCE_CRS, sourceCrsUri));
 	}
 
-	static Query envelopeWithinQuery(Envelope boundEnvelope) {
+	/**
+	 * Matches sources whose CRS84 index envelopes meet the closed bound, including those that meet it despite their
+	 * longitudes.
+	 */
+	static Query envelopeIntersectsQuery(Envelope boundEnvelope) {
+		double[] lower = unbounded(Double.NEGATIVE_INFINITY);
+		double[] upper = unbounded(Double.POSITIVE_INFINITY);
+		upper[MIN_X] = upperBound(boundEnvelope.getMaxX());
+		lower[MAX_X] = lowerBound(boundEnvelope.getMinX());
+		upper[MIN_Y] = upperBound(boundEnvelope.getMaxY());
+		lower[MAX_Y] = lowerBound(boundEnvelope.getMinY());
+		Query overlapping = indexEnvelopeInBox(lower, upper);
+		Query meetingDespiteLongitude = envelopeMeetsDespiteLongitudeQuery(boundEnvelope);
+		if (meetingDespiteLongitude == null) {
+			return overlapping;
+		}
 		return new BooleanQuery.Builder()
-				.add(DoublePoint.newRangeQuery(FIELD_ENVELOPE_MIN_X,
-						boundEnvelope.getMinX(), Double.POSITIVE_INFINITY),
-						BooleanClause.Occur.FILTER)
-				.add(DoublePoint.newRangeQuery(FIELD_ENVELOPE_MAX_X,
-						Double.NEGATIVE_INFINITY, boundEnvelope.getMaxX()),
-						BooleanClause.Occur.FILTER)
-				.add(DoublePoint.newRangeQuery(FIELD_ENVELOPE_MIN_Y,
-						boundEnvelope.getMinY(), Double.POSITIVE_INFINITY),
-						BooleanClause.Occur.FILTER)
-				.add(DoublePoint.newRangeQuery(FIELD_ENVELOPE_MAX_Y,
-						Double.NEGATIVE_INFINITY, boundEnvelope.getMaxY()),
-						BooleanClause.Occur.FILTER)
+				.add(overlapping, BooleanClause.Occur.SHOULD)
+				.add(meetingDespiteLongitude, BooleanClause.Occur.SHOULD)
+				.setMinimumNumberShouldMatch(1)
 				.build();
 	}
+
+	/**
+	 * Matches CRS84 index envelopes strictly separated from the bound on at least one axis, except those meeting it
+	 * across the antimeridian or at a pole.
+	 */
+	static Query envelopeDisjointQuery(Envelope boundEnvelope) {
+		// Mathematical nextDown/nextUp exclude both signed zeros when the bound is zero.
+		Query separated = either(
+				either(indexEnvelopeOrdinateAtMost(MAX_X, Math.nextDown(boundEnvelope.getMinX())),
+						indexEnvelopeOrdinateAtLeast(MIN_X, Math.nextUp(boundEnvelope.getMaxX()))),
+				either(indexEnvelopeOrdinateAtMost(MAX_Y, Math.nextDown(boundEnvelope.getMinY())),
+						indexEnvelopeOrdinateAtLeast(MIN_Y, Math.nextUp(boundEnvelope.getMaxY()))));
+		Query meetingDespiteLongitude = envelopeMeetsDespiteLongitudeQuery(boundEnvelope);
+		if (meetingDespiteLongitude == null) {
+			return separated;
+		}
+		return new BooleanQuery.Builder()
+				.add(separated, BooleanClause.Occur.FILTER)
+				.add(meetingDespiteLongitude, BooleanClause.Occur.MUST_NOT)
+				.build();
+	}
+
+	/**
+	 * Matches CRS84 index envelopes that can meet the bound although their longitude ranges are apart, or returns
+	 * null for a bound away from the antimeridian and the poles.
+	 */
+	static Query envelopeMeetsDespiteLongitudeQuery(Envelope boundEnvelope) {
+		Query acrossAntimeridian = envelopeMeetsAcrossAntimeridianQuery(boundEnvelope);
+		Query atPole = envelopeMeetsAtPoleQuery(boundEnvelope);
+		if (acrossAntimeridian == null || atPole == null) {
+			return acrossAntimeridian == null ? atPole : acrossAntimeridian;
+		}
+		return new BooleanQuery.Builder()
+				.add(acrossAntimeridian, BooleanClause.Occur.SHOULD)
+				.add(atPole, BooleanClause.Occur.SHOULD)
+				.setMinimumNumberShouldMatch(1)
+				.build();
+	}
+
+	/**
+	 * Matches envelopes that reach the same polar cap as the bound, or returns null for a bound away from the poles.
+	 *
+	 * <p>Meridians converge at a pole. Within {@link IndexGeometry#POLAR_CAP} of it, Jena's cleanup of a coordinate
+	 * transformed into a projected CRS can place sources from different meridians at one position, so longitude
+	 * does not separate envelopes there.
+	 */
+	private static Query envelopeMeetsAtPoleQuery(Envelope boundEnvelope) {
+		double southernCap = SOUTH_POLE_LATITUDE + IndexGeometry.POLAR_CAP;
+		double northernCap = NORTH_POLE_LATITUDE - IndexGeometry.POLAR_CAP;
+		boolean boundReachesSouthernCap = boundEnvelope.getMinY() <= southernCap;
+		boolean boundReachesNorthernCap = boundEnvelope.getMaxY() >= northernCap;
+		if (!boundReachesSouthernCap && !boundReachesNorthernCap) {
+			return null;
+		}
+		BooleanQuery.Builder sameCap = new BooleanQuery.Builder().setMinimumNumberShouldMatch(1);
+		if (boundReachesSouthernCap) {
+			sameCap.add(indexEnvelopeOrdinateAtMost(MIN_Y, southernCap), BooleanClause.Occur.SHOULD);
+		}
+		if (boundReachesNorthernCap) {
+			sameCap.add(indexEnvelopeOrdinateAtLeast(MAX_Y, northernCap), BooleanClause.Occur.SHOULD);
+		}
+		return sameCap.build();
+	}
+
+	/**
+	 * Matches envelopes that meet the bound across the antimeridian, or returns null for a bound away from it.
+	 *
+	 * <p>Longitudes +180 and -180 are one meridian, and exact evaluation in a projected CRS treats it as continuous.
+	 * Envelopes that end within {@link IndexGeometry#ANTIMERIDIAN_MARGIN} of opposite ends of the longitude range
+	 * therefore meet when their closed latitude ranges overlap.
+	 */
+	private static Query envelopeMeetsAcrossAntimeridianQuery(Envelope boundEnvelope) {
+		double westernEnd = MINIMUM_LONGITUDE + IndexGeometry.ANTIMERIDIAN_MARGIN;
+		double easternEnd = MAXIMUM_LONGITUDE - IndexGeometry.ANTIMERIDIAN_MARGIN;
+		boolean boundReachesEasternEnd = boundEnvelope.getMaxX() >= easternEnd;
+		boolean boundReachesWesternEnd = boundEnvelope.getMinX() <= westernEnd;
+		if (!boundReachesEasternEnd && !boundReachesWesternEnd) {
+			return null;
+		}
+		BooleanQuery.Builder oppositeEnd = new BooleanQuery.Builder().setMinimumNumberShouldMatch(1);
+		if (boundReachesEasternEnd) {
+			oppositeEnd.add(latitudesOverlapping(boundEnvelope, MIN_X, Double.NEGATIVE_INFINITY, westernEnd),
+					BooleanClause.Occur.SHOULD);
+		}
+		if (boundReachesWesternEnd) {
+			oppositeEnd.add(latitudesOverlapping(boundEnvelope, MAX_X, easternEnd, Double.POSITIVE_INFINITY),
+					BooleanClause.Occur.SHOULD);
+		}
+		return oppositeEnd.build();
+	}
+
+	/** Matches index envelopes with one ordinate in a range whose closed latitude range overlaps the bound's. */
+	private static Query latitudesOverlapping(Envelope boundEnvelope, int ordinate, double from, double to) {
+		double[] lower = unbounded(Double.NEGATIVE_INFINITY);
+		double[] upper = unbounded(Double.POSITIVE_INFINITY);
+		lower[ordinate] = from;
+		upper[ordinate] = to;
+		upper[MIN_Y] = upperBound(boundEnvelope.getMaxY());
+		lower[MAX_Y] = lowerBound(boundEnvelope.getMinY());
+		return indexEnvelopeInBox(lower, upper);
+	}
+
+	/**
+	 * Matches sources whose CRS84 index envelope is the {@link IndexGeometry#worldFallbackEnvelope world fallback
+	 * envelope}, which says nothing of where they lie.
+	 */
+	static Query worldFallbackIndexEnvelopeQuery() {
+		Envelope world = IndexGeometry.worldFallbackEnvelope();
+		double[] ordinates = {world.getMinX(), world.getMaxX(), world.getMinY(), world.getMaxY()};
+		return DoublePoint.newRangeQuery(FIELD_INDEX_ENVELOPE, ordinates, ordinates);
+	}
+
+	/** Matches CRS84 index envelopes extending beyond at least one side of the closed bound. */
+	static Query envelopeNotWithinQuery(Envelope boundEnvelope) {
+		return either(
+				either(indexEnvelopeOrdinateAtMost(MIN_X, Math.nextDown(boundEnvelope.getMinX())),
+						indexEnvelopeOrdinateAtLeast(MAX_X, Math.nextUp(boundEnvelope.getMaxX()))),
+				either(indexEnvelopeOrdinateAtMost(MIN_Y, Math.nextDown(boundEnvelope.getMinY())),
+						indexEnvelopeOrdinateAtLeast(MAX_Y, Math.nextUp(boundEnvelope.getMaxY()))));
+	}
+
+	private static Query indexEnvelopeOrdinateAtMost(int ordinate, double value) {
+		double[] upper = unbounded(Double.POSITIVE_INFINITY);
+		upper[ordinate] = value;
+		return indexEnvelopeInBox(unbounded(Double.NEGATIVE_INFINITY), upper);
+	}
+
+	private static Query indexEnvelopeOrdinateAtLeast(int ordinate, double value) {
+		double[] lower = unbounded(Double.NEGATIVE_INFINITY);
+		lower[ordinate] = value;
+		return indexEnvelopeInBox(lower, unbounded(Double.POSITIVE_INFINITY));
+	}
+
+	/**
+	 * Matches sources whose CRS84 index envelope, as (minimum X, maximum X, minimum Y, maximum Y), lies in a closed
+	 * box. A CRS84 source's index envelope is its own envelope, which is the one it stores.
+	 */
+	private static Query indexEnvelopeInBox(double[] lower, double[] upper) {
+		Query ownEnvelopeOfCrs84Source = new BooleanQuery.Builder()
+				.add(sourceCrsQuery(IndexGeometry.INDEX_CRS), BooleanClause.Occur.FILTER)
+				.add(DoublePoint.newRangeQuery(FIELD_SOURCE_ENVELOPE, lower, upper), BooleanClause.Occur.FILTER)
+				.build();
+		return new BooleanQuery.Builder()
+				.add(DoublePoint.newRangeQuery(FIELD_INDEX_ENVELOPE, lower, upper), BooleanClause.Occur.SHOULD)
+				.add(ownEnvelopeOfCrs84Source, BooleanClause.Occur.SHOULD)
+				.setMinimumNumberShouldMatch(1)
+				.build();
+	}
+
+	private static double[] unbounded(double value) {
+		return new double[]{value, value, value, value};
+	}
+
 
 	private static DimensionInfo sourceDimensionInfo(Document doc) {
 		Number coordinate = numericFieldValue(doc, FIELD_SOURCE_COORDINATE_DIMENSION);
@@ -266,15 +725,6 @@ final class LuceneGeoDocumentSchema {
 	private static boolean hasValidEnvelopeMarker(Document doc) {
 		String value = doc.get(FIELD_HAS_ENVELOPE);
 		return HAS_ENVELOPE_VALUE.equals(value) || NO_ENVELOPE_VALUE.equals(value);
-	}
-
-	private static boolean hasValidCandidateBoundsKind(Document doc) {
-		try {
-			CandidateBoundsKind.valueOf(doc.get(FIELD_CANDIDATE_BOUNDS_KIND));
-			return true;
-		} catch (IllegalArgumentException | NullPointerException e) {
-			return false;
-		}
 	}
 
 	private static boolean hasIndexedSourceCrs(Document doc) {

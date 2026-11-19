@@ -49,6 +49,7 @@ import java.util.Set;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
@@ -75,6 +76,11 @@ public class GeoSparqlCandidateEnvelopeDifferentialTest {
 	private static final String UTM_33N = "http://www.opengis.net/def/crs/EPSG/0/32633";
 	private static final String UTM_34N = "http://www.opengis.net/def/crs/EPSG/0/32634";
 	private static final String WEB_MERCATOR = "http://www.opengis.net/def/crs/EPSG/0/3857";
+	private static final String ANTARCTIC_POLAR_STEREOGRAPHIC = "http://www.opengis.net/def/crs/EPSG/0/3031";
+	private static final String UTM_1N = "http://www.opengis.net/def/crs/EPSG/0/32601";
+	private static final String UTM_31N = "http://www.opengis.net/def/crs/EPSG/0/32631";
+	private static final String UTM_60N = "http://www.opengis.net/def/crs/EPSG/0/32660";
+	private static final String ARCTIC_POLAR_STEREOGRAPHIC = "http://www.opengis.net/def/crs/EPSG/0/3413";
 	private static final String LAMBERT_93 = "http://www.opengis.net/def/crs/EPSG/0/2154";
 	private static final String WGS84_3D = "http://www.opengis.net/def/crs/EPSG/0/4979";
 	private static final String GDA2020_3D = "http://www.opengis.net/def/crs/EPSG/0/7843";
@@ -558,9 +564,173 @@ public class GeoSparqlCandidateEnvelopeDifferentialTest {
 		Fixture cleanupFixture = createFixture("unevaluable-disjoint-cleanup-candidate",
 				Map.of(1L, List.of(utm32), 2L, List.of(distantEpsg4979)));
 		assertFalse(envelopeHits(cleanupFixture, distantEpsg4979).contains(1L));
-		assertTrue(disjointCleanupHits(cleanupFixture, distantEpsg4979, true).contains(1L));
+		// Jena cannot place the bound in UTM 32N, so a UTM subject is no candidate of any disjoint phase.
+		assertFalse(disjointCleanupHits(cleanupFixture, distantEpsg4979, true).contains(1L));
 		assertEquals(Set.of(),
 				runIndexed(cleanupFixture, GeoSparqlPropertyRelation.SF_DISJOINT, 0, 2L));
+	}
+
+	/**
+	 * Longitudes +180 and -180 are one meridian. A projected source that reaches it is exact-evaluated in its own
+	 * CRS, where that meridian is continuous, while its CRS84 index envelope ends at one side of the longitude range.
+	 * The Antarctic polygons share the projected edge {@code x = 0}, which is that meridian.
+	 */
+	@Test
+	public void sourcesMeetingAcrossTheAntimeridianAgreeWithEntityLevelReference() throws Exception {
+		Map<Long, List<IndexGeometry>> sources = new LinkedHashMap<>();
+		sources.put(1L, geometries("<" + ANTARCTIC_POLAR_STEREOGRAPHIC
+				+ "> POLYGON((0 -2000000,100000 -2000000,100000 -1000000,0 -1000000,0 -2000000))"));
+		sources.put(2L, geometries("POLYGON((-180 -75,-175 -75,-175 -72,-180 -72,-180 -75))"));
+		sources.put(3L, geometries("<" + ANTARCTIC_POLAR_STEREOGRAPHIC + "> POINT(-0.0 -1500000)"));
+		sources.put(4L, geometries("POINT(" + Math.nextUp(-180.0) + " -73)"));
+		sources.put(5L, geometries("<" + UTM_1N + "> POINT(166021.443081 0)"));
+		sources.put(6L, geometries("POINT(180 0)"));
+		sources.put(7L, geometries("<" + ANTARCTIC_POLAR_STEREOGRAPHIC
+				+ "> POLYGON((-100000 -2000000,0 -2000000,0 -1000000,-100000 -1000000,-100000 -2000000))"));
+		Fixture fixture = createFixture("antimeridian", sources);
+
+		IndexGeometry polarArea = sources.get(1L).get(0);
+		assertEquals(180.0, polarArea.indexEnvelope().getMaxX(), 0.0);
+		assertEquals(-180.0, sources.get(2L).get(0).indexEnvelope().getMinX(), 0.0);
+		for (long touching : new long[] { 2L, 3L, 4L }) {
+			assertTrue("Antarctic area must intersect source " + touching,
+					GeoSparqlPropertyRelation.SF_INTERSECTS.evaluate(polarArea.sourceGeometryLiteral(),
+							sources.get(touching).get(0).sourceGeometryLiteral()));
+		}
+
+		for (GeoSparqlPropertyRelation relation : GeoSparqlPropertyRelation.values()) {
+			for (long boundEntityId : fixture.sources.keySet()) {
+				assertIndexedEqualsReference(fixture, relation, 0, boundEntityId);
+				assertIndexedEqualsReference(fixture, relation, boundEntityId, 0);
+			}
+		}
+	}
+
+	/**
+	 * Each projected point is Jena's own transformation of a CRS84 point on the antimeridian. Exact evaluation relates
+	 * it to both CRS84 spellings of that position, whichever end of the longitude range its index envelope reaches.
+	 */
+	@Test
+	public void projectedPointsOnTheAntimeridianMatchBothCrs84LongitudeSigns() throws Exception {
+		Map<String, Double> latitudes = new LinkedHashMap<>();
+		latitudes.put(ANTARCTIC_POLAR_STEREOGRAPHIC, -75.0);
+		latitudes.put(ARCTIC_POLAR_STEREOGRAPHIC, 75.0);
+		latitudes.put(UTM_1N, 45.0);
+		latitudes.put(UTM_60N, 45.0);
+		for (Map.Entry<String, Double> entry : latitudes.entrySet()) {
+			String crs = entry.getKey();
+			SourceGeometryLiteral east = SourceGeometryLiteral.fromWkt("POINT(180 " + entry.getValue() + ")");
+			SourceGeometryLiteral west = SourceGeometryLiteral.fromWkt("POINT(-180 " + entry.getValue() + ")");
+			Coordinate projected = east.asGeometryWrapper().transform(crs).getXYGeometry().getCoordinate();
+			SourceGeometryLiteral onAntimeridian = SourceGeometryLiteral.fromWkt(
+					"<" + crs + "> POINT(" + projected.x + " " + projected.y + ")");
+			assertTrue(crs, GeoSparqlPropertyRelation.SF_INTERSECTS.evaluate(onAntimeridian, east));
+			assertTrue(crs, GeoSparqlPropertyRelation.SF_INTERSECTS.evaluate(onAntimeridian, west));
+
+			Map<Long, List<IndexGeometry>> sources = new LinkedHashMap<>();
+			sources.put(1L, List.of(IndexGeometry.fromSourceGeometryLiteral(onAntimeridian)));
+			sources.put(2L, List.of(IndexGeometry.fromSourceGeometryLiteral(east)));
+			sources.put(3L, List.of(IndexGeometry.fromSourceGeometryLiteral(west)));
+			Fixture fixture = createFixture("antimeridian-point-" + crs.substring(crs.lastIndexOf('/') + 1), sources);
+			for (GeoSparqlPropertyRelation relation : GeoSparqlPropertyRelation.values()) {
+				for (long boundEntityId : fixture.sources.keySet()) {
+					assertIndexedEqualsReference(fixture, relation, 0, boundEntityId);
+					assertIndexedEqualsReference(fixture, relation, boundEntityId, 0);
+				}
+			}
+		}
+	}
+
+	/**
+	 * Meridians converge at a pole. Within metres of it, Jena's cleanup of a coordinate transformed into a projected
+	 * CRS spans more longitude than the widening of an index envelope, so a CRS84 point on a different meridian can be
+	 * placed on the edge of a projected area. Each area has an edge on the named meridian.
+	 */
+	@Test
+	public void sourcesRoundedTogetherNearAPoleAgreeWithEntityLevelReference() throws Exception {
+		String southernEdgeOnAntimeridian = "<" + ANTARCTIC_POLAR_STEREOGRAPHIC
+				+ "> POLYGON((0 -200,10 -200,10 -0.5,0 -0.5,0 -200))";
+		String southernEdgeOnPrimeMeridian = "<" + ANTARCTIC_POLAR_STEREOGRAPHIC
+				+ "> POLYGON((0 0.5,10 0.5,10 200,0 200,0 0.5))";
+		String northernEdgeOnCentralMeridian = "<" + ARCTIC_POLAR_STEREOGRAPHIC
+				+ "> POLYGON((0 -200,10 -200,10 -0.5,0 -0.5,0 -200))";
+		assertRoundedTogetherNearPole("south-antimeridian", southernEdgeOnAntimeridian, -180, 1, -89.99999);
+		assertRoundedTogetherNearPole("south-prime-meridian", southernEdgeOnPrimeMeridian, 0, -1, -89.99999);
+		assertRoundedTogetherNearPole("north-central-meridian", northernEdgeOnCentralMeridian, -45, -1, 89.99999);
+	}
+
+	private void assertRoundedTogetherNearPole(String name, String areaWkt, double edgeLongitude, int direction,
+			double latitude) throws Exception {
+		Map<Long, List<IndexGeometry>> sources = new LinkedHashMap<>();
+		sources.put(1L, geometries(areaWkt));
+		sources.put(2L, geometries("POINT(" + (edgeLongitude + direction * 2e-6) + " " + latitude + ")"));
+		sources.put(3L, geometries("POINT(" + (edgeLongitude + direction * 1e-5) + " " + latitude + ")"));
+		sources.put(4L, geometries("POINT(" + (edgeLongitude + direction * 1e-3) + " " + latitude + ")"));
+		SourceGeometryLiteral area = sources.get(1L).get(0).sourceGeometryLiteral();
+		for (long rounded : new long[] { 2L, 3L }) {
+			assertTrue(name + " area must intersect source " + rounded, GeoSparqlPropertyRelation.SF_INTERSECTS.evaluate(
+					area, sources.get(rounded).get(0).sourceGeometryLiteral()));
+		}
+		assertFalse(name, GeoSparqlPropertyRelation.SF_INTERSECTS.evaluate(
+				area, sources.get(4L).get(0).sourceGeometryLiteral()));
+
+		Fixture fixture = createFixture("near-pole-" + name, sources);
+		for (GeoSparqlPropertyRelation relation : GeoSparqlPropertyRelation.values()) {
+			for (long boundEntityId : fixture.sources.keySet()) {
+				assertIndexedEqualsReference(fixture, relation, 0, boundEntityId);
+				assertIndexedEqualsReference(fixture, relation, boundEntityId, 0);
+			}
+		}
+	}
+
+	/**
+	 * Jena evaluates a relation in the subject's CRS and joins the transformed vertices of a CRS84 polygon with
+	 * straight lines there. Where the projection curves a parallel or a meridian, such a line lies outside the
+	 * polygon's CRS84 edge, so a projected source beyond the polygon's index envelope can be within the evaluated
+	 * polygon. Each projected point is Jena's transformation of the named CRS84 position.
+	 *
+	 * <p>The corner (2.5 52.03125) of the last polygon lies on a row boundary of the default prefix grid. The edge
+	 * falling east of it stays below that boundary, so only the polygon's index envelope reaches the row above it
+	 * at the longitude of the point.
+	 */
+	@Test
+	public void projectedSourcesWithinTheStraightEdgesOfATransformedCrs84PolygonAgreeWithEntityLevelReference()
+			throws Exception {
+		assertProjectedPointWithinTransformedPolygon("utm-one-degree", UTM_31N,
+				"POLYGON((2.5 51,3.5 51,3.5 52,2.5 52,2.5 51))", "3 52.0001");
+		assertProjectedPointWithinTransformedPolygon("utm-tenth-of-a-degree", UTM_31N,
+				"POLYGON((2.95 51.9,3.05 51.9,3.05 52,2.95 52,2.95 51.9))", "3 52.000005");
+		assertProjectedPointWithinTransformedPolygon("lambert-conic", LAMBERT_93,
+				"POLYGON((2.5 46,3.5 46,3.5 47,2.5 47,2.5 46))", "3 47.0001");
+		assertProjectedPointWithinTransformedPolygon("utm-beside-antimeridian", UTM_60N,
+				"POLYGON((-180 40,-175 40,-175 50,-180 50,-180 40))", "179.995 45");
+		assertProjectedPointWithinTransformedPolygon("polar-stereographic", ANTARCTIC_POLAR_STEREOGRAPHIC,
+				"POLYGON((80 -89.9,90 -89.9,90 -89.5,80 -89.5,80 -89.9))", "85 -89.9001");
+		assertProjectedPointWithinTransformedPolygon("utm-corner-on-a-grid-row", UTM_31N,
+				"POLYGON((2.5 51,3.5 51,3.5 52.031,2.5 52.03125,2.5 51))", "3 52.0315");
+	}
+
+	private void assertProjectedPointWithinTransformedPolygon(String name, String projectedCrs, String polygonWkt,
+			String crs84Position) throws Exception {
+		Coordinate projected = SourceGeometryLiteral.fromWkt("POINT(" + crs84Position + ")").asGeometryWrapper()
+				.transform(projectedCrs).getXYGeometry().getCoordinate();
+		Map<Long, List<IndexGeometry>> sources = new LinkedHashMap<>();
+		sources.put(1L, geometries("<" + projectedCrs + "> POINT(" + projected.x + " " + projected.y + ")"));
+		sources.put(2L, geometries(polygonWkt));
+		IndexGeometry point = sources.get(1L).get(0);
+		IndexGeometry polygon = sources.get(2L).get(0);
+		assertFalse(name + " index envelopes must be apart",
+				point.indexEnvelope().intersects(polygon.indexEnvelope()));
+		assertTrue(name + " point must be within the polygon", GeoSparqlPropertyRelation.SF_WITHIN.evaluate(
+				point.sourceGeometryLiteral(), polygon.sourceGeometryLiteral()));
+
+		Fixture fixture = createFixture("transformed-polygon-" + name, sources);
+		for (GeoSparqlPropertyRelation relation : GeoSparqlPropertyRelation.values()) {
+			for (long boundEntityId : fixture.sources.keySet()) {
+				assertIndexedEqualsReference(fixture, relation, 0, boundEntityId);
+				assertIndexedEqualsReference(fixture, relation, boundEntityId, 0);
+			}
+		}
 	}
 
 	@Test
@@ -573,7 +743,7 @@ public class GeoSparqlCandidateEnvelopeDifferentialTest {
 		Fixture fixture = createFixture("definite-non-match-proofs", sources);
 		IndexGeometry bound = sources.get(100L).get(0);
 
-		assertTrue(bound.isEnvelopeCoveringRectangle());
+		assertTrue(IndexGeometryFixtures.fillsCrs84Envelope(bound));
 		assertFalse(GeoSparqlPropertyRelation.SF_DISJOINT.evaluate(
 				bound.sourceGeometryLiteral(), sources.get(1L).get(0).sourceGeometryLiteral()));
 		assertFalse(GeoSparqlPropertyRelation.SF_DISJOINT.evaluate(
@@ -581,6 +751,55 @@ public class GeoSparqlCandidateEnvelopeDifferentialTest {
 		assertEquals(Set.of(3L), runIndexed(fixture, GeoSparqlPropertyRelation.SF_DISJOINT, 0, 100L));
 		assertEquals(Set.of(3L), runIndexed(fixture, GeoSparqlPropertyRelation.EH_DISJOINT, 0, 100L));
 		assertEquals(Set.of(), runIndexed(fixture, GeoSparqlPropertyRelation.RCC8_DC, 0, 100L));
+	}
+
+	/**
+	 * A ring of 202 points carries cover boxes, and its hole leaves the middle of its envelope uncovered. Bound 2 is a
+	 * multipolygon whose parts overlap, which Jena cannot relate to the ring as an RCC8 relation, so that pair is no
+	 * match. Bound 3 is a valid polygon in the same place, disjoint from the ring. Source 4 is a polygon whose envelope
+	 * is apart from both bounds. Indexed results equal the exact results for each bound, relation and direction.
+	 */
+	@Test
+	public void boundsInTheHoleOfACoveredRingGiveTheExactResults() throws Exception {
+		Map<Long, List<IndexGeometry>> sources = new LinkedHashMap<>();
+		sources.put(1L, geometries(ringAroundTheOrigin(10, 8, 100)));
+		sources.put(2L, geometries("MULTIPOLYGON(((-2 -2,1 -2,1 1,-2 1,-2 -2)),((-1 -1,2 -1,2 2,-1 2,-1 -1)))"));
+		sources.put(3L, geometries("POLYGON((-2 -2,2 -2,2 2,-2 2,-2 -2))"));
+		sources.put(4L, geometries("POLYGON((30 30,31 30,31 31,30 31,30 30))"));
+		Fixture fixture = createFixture("bounds-in-a-covered-hole", sources);
+		List<SourceGeometryLiteral> ring = List.of(sources.get(1L).get(0).sourceGeometryLiteral());
+		List<SourceGeometryLiteral> overlappingParts = List.of(sources.get(2L).get(0).sourceGeometryLiteral());
+
+		assertNull(exactRelationOrUnknown(GeoSparqlPropertyRelation.RCC8_DC, ring, overlappingParts));
+		assertNull(exactRelationOrUnknown(GeoSparqlPropertyRelation.RCC8_DC, overlappingParts, ring));
+		for (GeoSparqlPropertyRelation relation : List.of(GeoSparqlPropertyRelation.RCC8_DC,
+				GeoSparqlPropertyRelation.SF_DISJOINT, GeoSparqlPropertyRelation.EH_DISJOINT,
+				GeoSparqlPropertyRelation.SF_INTERSECTS)) {
+			for (long bound : new long[]{2L, 3L}) {
+				assertIndexedEqualsReference(fixture, relation, 0, bound);
+				assertIndexedEqualsReference(fixture, relation, bound, 0);
+			}
+		}
+		assertTrue(runIndexed(fixture, GeoSparqlPropertyRelation.RCC8_DC, 0, 3L).contains(1L));
+	}
+
+	/** A polygon around 0 0 with an outer ring and a hole, each of the given number of segments. */
+	private static String ringAroundTheOrigin(double outer, double inner, int segments) {
+		return "POLYGON((" + circleAroundTheOrigin(outer, segments) + "),(" + circleAroundTheOrigin(inner, segments)
+				+ "))";
+	}
+
+	private static String circleAroundTheOrigin(double radius, int segments) {
+		StringBuilder circle = new StringBuilder();
+		for (int i = 0; i <= segments; i++) {
+			double angle = 2 * Math.PI * (i % segments) / segments;
+			if (i > 0) {
+				circle.append(',');
+			}
+			circle.append(String.format(Locale.ROOT, "%.9f %.9f", radius * Math.cos(angle),
+					radius * Math.sin(angle)));
+		}
+		return circle.toString();
 	}
 
 	private void assertDefiniteMatchesAreExact(Fixture fixture, GeoSparqlPropertyRelation relation,
@@ -750,7 +969,7 @@ public class GeoSparqlCandidateEnvelopeDifferentialTest {
 	}
 
 	private static Set<Long> envelopeHits(Fixture fixture, IndexGeometry bound) throws Exception {
-		CloseableIterator<CandidateEntity> candidates = fixture.plugin.indexer.getEnvelopeIntersections(bound);
+		CloseableIterator<CandidateEntity> candidates = fixture.plugin.indexer.getEnvelopeIntersections(bound, false);
 		return candidateEntityIds(candidates);
 	}
 
