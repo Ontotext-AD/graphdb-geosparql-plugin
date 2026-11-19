@@ -736,7 +736,7 @@ public class LuceneGeoIndexer implements GeoSparqlIndexer {
 			if (indexReader != null) {
 				try {
 					indexReader.close();
-				} catch (IOException cleanupFailure) {
+				} catch (IOException | RuntimeException cleanupFailure) {
 					e.addSuppressed(cleanupFailure);
 				}
 			}

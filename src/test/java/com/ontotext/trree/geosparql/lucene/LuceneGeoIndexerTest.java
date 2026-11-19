@@ -176,12 +176,17 @@ public class LuceneGeoIndexerTest {
     }
 
     private FailingTermsLuceneGeoIndexer createFailingTermsIndexer(RuntimeException termsFailure) throws Exception {
+        return createFailingTermsIndexer(termsFailure, null);
+    }
+
+    private FailingTermsLuceneGeoIndexer createFailingTermsIndexer(RuntimeException termsFailure,
+            RuntimeException closeFailure) throws Exception {
         final GeoSparqlPlugin parent = new GeoSparqlPlugin();
         parent.setConfig(new GeoSparqlConfig());
         parent.setLogger(LOG);
         parent.setDataDir(tmpFolder.newFolder());
 
-        FailingTermsLuceneGeoIndexer indexer = new FailingTermsLuceneGeoIndexer(parent, termsFailure);
+        FailingTermsLuceneGeoIndexer indexer = new FailingTermsLuceneGeoIndexer(parent, termsFailure, closeFailure);
         indexer.initialize();
         return indexer;
     }
@@ -867,6 +872,25 @@ public class LuceneGeoIndexerTest {
                 () -> indexer.getEnvelopeIntersections(bound, true));
     }
 
+    /**
+     * When releasing the reader also fails after query construction fails, the construction failure is still the
+     * reported cause, and the release failure is attached to it.
+     */
+    @Test
+    public void candidateLookupKeepsTheQueryConstructionFailureWhenReleasingItsReaderFails() throws Exception {
+        IllegalStateException termsFailure = new IllegalStateException("Terms are unavailable.");
+        IllegalStateException closeFailure = new IllegalStateException("The reader failed to close.");
+        FailingTermsLuceneGeoIndexer indexer = createFailingTermsIndexer(termsFailure, closeFailure);
+        indexer.begin();
+        indexer.indexGeometryList(1L, id -> "Subject " + id, List.of(TestIndexGeometries.fromWkt("POINT(0 0)")));
+        indexer.commit();
+        indexer.complete();
+
+        assertReaderReleasedAfterFailure(indexer, termsFailure,
+                () -> indexer.getEnvelopeIntersections(TestIndexGeometries.fromWkt("POINT(1 1)"), true));
+        assertArrayEquals(new Throwable[] { closeFailure }, termsFailure.getSuppressed());
+    }
+
     private static void assertReaderReleasedAfterFailure(FailingTermsLuceneGeoIndexer indexer,
             RuntimeException termsFailure, ThrowingRunnable lookup) {
         PluginException failure = assertThrows(PluginException.class, lookup);
@@ -1089,19 +1113,26 @@ public class LuceneGeoIndexerTest {
         }
     }
 
-    /** An indexer whose readers fail every terms lookup, and which keeps the last reader it opened. */
+    /**
+     * An indexer whose readers fail every terms lookup, and also fail when closed if given a close failure, and which
+     * keeps the last reader it opened.
+     */
     private static final class FailingTermsLuceneGeoIndexer extends LuceneGeoIndexer {
         private final RuntimeException termsFailure;
+        private final RuntimeException closeFailure;
         private FailingTermsDirectoryReader lastOpenedReader;
 
-        private FailingTermsLuceneGeoIndexer(GeoSparqlPlugin parent, RuntimeException termsFailure) {
+        private FailingTermsLuceneGeoIndexer(GeoSparqlPlugin parent, RuntimeException termsFailure,
+                RuntimeException closeFailure) {
             super(parent);
             this.termsFailure = termsFailure;
+            this.closeFailure = closeFailure;
         }
 
         @Override
         IndexReader openReader() throws IOException {
-            lastOpenedReader = new FailingTermsDirectoryReader((DirectoryReader) super.openReader(), termsFailure);
+            lastOpenedReader = new FailingTermsDirectoryReader((DirectoryReader) super.openReader(), termsFailure,
+                    closeFailure);
             return lastOpenedReader;
         }
 
@@ -1112,8 +1143,10 @@ public class LuceneGeoIndexerTest {
 
     private static final class FailingTermsDirectoryReader extends FilterDirectoryReader {
         private final RuntimeException termsFailure;
+        private final RuntimeException closeFailure;
 
-        private FailingTermsDirectoryReader(DirectoryReader reader, RuntimeException termsFailure) throws IOException {
+        private FailingTermsDirectoryReader(DirectoryReader reader, RuntimeException termsFailure,
+                RuntimeException closeFailure) throws IOException {
             super(reader, new SubReaderWrapper() {
                 @Override
                 public LeafReader wrap(LeafReader leaf) {
@@ -1136,11 +1169,20 @@ public class LuceneGeoIndexerTest {
                 }
             });
             this.termsFailure = termsFailure;
+            this.closeFailure = closeFailure;
         }
 
         @Override
         protected DirectoryReader doWrapDirectoryReader(DirectoryReader reader) throws IOException {
-            return new FailingTermsDirectoryReader(reader, termsFailure);
+            return new FailingTermsDirectoryReader(reader, termsFailure, closeFailure);
+        }
+
+        @Override
+        protected void doClose() throws IOException {
+            super.doClose();
+            if (closeFailure != null) {
+                throw closeFailure;
+            }
         }
 
         @Override
