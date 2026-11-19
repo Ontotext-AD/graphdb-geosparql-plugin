@@ -60,7 +60,9 @@ another layout reports the index as incompatible. Until the index is rebuilt it 
 query and rejects updates that add or remove geometries; restarting GraphDB does not change that. After upgrading the
 plugin, rebuild the index. After returning to an earlier plugin version, rebuild it with that version. Restoring an
 index that version built instead is safe only together with the repository data it was built from; an older index
-does not reflect later geometry changes.
+does not reflect later geometry changes. A version before 4.0 that rebuilds or updates an index leaves its layout
+record unchanged, so on returning to 4.0 or later that index is not reported as incompatible: rebuild it after the
+upgrade.
 
 Versions before 4.0 do not check the layout: they open an index of another layout, answer queries from it and write
 updates to it. Before returning to such a version, rebuild the index with it, or restore its index together with the

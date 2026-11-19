@@ -54,7 +54,10 @@ correctness control.
 The last row is the coarse case. Jena transforms every candidate into the bound geometry's CRS and cleans its
 coordinates there, so the bounding box it compares is not known until the candidate is transformed. Non-disjoint
 relations select candidates by the prefix cells of their CRS84 index envelopes, which can retain many candidates for
-a small bound geometry. Disjoint relations exact-evaluate every source in a CRS other than the bound geometry's,
+a small bound geometry. They can also miss a pair: Jena joins a candidate's transformed vertices with straight lines
+in the bound geometry's CRS, and a pair related only where such a line runs more than one prefix cell (0.176° by
+0.088° at the default QUAD precision 11) outside the candidate's CRS84 index envelope is not selected. Prefix-tree
+lookup in versions before 4.0 misses these pairs too. Disjoint relations exact-evaluate every source in a CRS other than the bound geometry's,
 because independently derived CRS84 envelopes do not establish a positive disjoint result when coordinate cleanup
 occurs in another CRS.
 
