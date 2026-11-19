@@ -355,21 +355,40 @@ final class LuceneGeoDocumentSchema {
 		if (terms == null) {
 			return crsUris;
 		}
-		IndexSearcher searcher = new IndexSearcher(reader);
-		// Each lookup reads its own reader, so a cached result is never reused; caching one only builds a set of
-		// every matching document, where the search needs the first.
-		searcher.setQueryCache(null);
+		IndexSearcher searcher = uncachedSearcher(reader);
 		TermsEnum iterator = terms.iterator();
 		for (BytesRef term = iterator.next(); term != null; term = iterator.next()) {
 			String crsUri = term.utf8ToString();
-			if (matchesAny(searcher, new BooleanQuery.Builder()
-					.add(sourceCrsQuery(crsUri), BooleanClause.Occur.FILTER)
-					.add(hasEnvelopeQuery(true), BooleanClause.Occur.FILTER)
-					.build())) {
+			if (matchesAny(searcher, spatialSourcesQuery(crsUri, BooleanClause.Occur.FILTER))) {
 				crsUris.add(crsUri);
 			}
 		}
 		return crsUris;
+	}
+
+	/** Whether the reader holds a live spatial source of the CRS. */
+	static boolean hasSpatialSourcesIn(IndexReader reader, String crsUri) throws IOException {
+		return matchesAny(uncachedSearcher(reader), spatialSourcesQuery(crsUri, BooleanClause.Occur.FILTER));
+	}
+
+	/** Whether the reader holds a live spatial source of any CRS but the given one. */
+	static boolean hasSpatialSourcesOutside(IndexReader reader, String crsUri) throws IOException {
+		return matchesAny(uncachedSearcher(reader), spatialSourcesQuery(crsUri, BooleanClause.Occur.MUST_NOT));
+	}
+
+	private static Query spatialSourcesQuery(String crsUri, BooleanClause.Occur crs) {
+		return new BooleanQuery.Builder()
+				.add(hasEnvelopeQuery(true), BooleanClause.Occur.FILTER)
+				.add(sourceCrsQuery(crsUri), crs)
+				.build();
+	}
+
+	private static IndexSearcher uncachedSearcher(IndexReader reader) {
+		IndexSearcher searcher = new IndexSearcher(reader);
+		// Each lookup reads its own reader, so a cached result is never reused; caching one only builds a set of
+		// every matching document, where the search needs the first.
+		searcher.setQueryCache(null);
+		return searcher;
 	}
 
 	/** Whether a live document matches the query. The search stops at the first one. */

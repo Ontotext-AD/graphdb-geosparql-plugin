@@ -28,7 +28,9 @@ import java.util.Optional;
  * <p>The bound is placed in every CRS of the reader's live spatial sources that it shares, or in which every source
  * is the left operand. It always has a placement in its own CRS, which adds a clause only where the reader holds
  * sources of that CRS. A CRS in which Jena cannot place the bound relates none of its sources. Sources of every other
- * CRS are left to lookup by CRS84 index envelopes, which {@link #orElsewhere} restricts to them.
+ * CRS are left to lookup by CRS84 index envelopes, which {@link #orElsewhere} restricts to them. Where the bound is
+ * the left operand, its own CRS is the only placement, so the lookup lists no CRSs; it only checks whether the
+ * reader holds live spatial sources in that CRS and outside it.
  *
  * <p>A lookup has one clause for each CRS it places the bound in, and Lucene limits the clauses of one query. In a
  * reader with more source CRSs than that limit allows, the remaining CRSs take no placement. Only subjects take a
@@ -53,10 +55,16 @@ final class EvaluationCrsLookup {
 		lookup.hasSourceCovers = LuceneGeoDocumentSchema.hasSourceCovers(reader);
 		// The bound is always placed among the sources of its own CRS, so a CRS84 lookup never selects those.
 		String boundCrsUri = bound.sourceGeometryLiteral().effectiveCrsUri();
-		List<String> sourceCrsUris = LuceneGeoDocumentSchema.sourceCrsUris(reader);
 		lookup.boundCrsUri = boundCrsUri;
-		lookup.boundCrsHasSources = sourceCrsUris.contains(boundCrsUri);
 		lookup.placements.put(boundCrsUri, bound.evaluationEnvelope(boundCrsUri, candidateIsSubject).orElseThrow());
+		if (!candidateIsSubject) {
+			// Jena evaluates every pair in the bound's CRS, so no other CRS takes a placement.
+			lookup.boundCrsHasSources = LuceneGeoDocumentSchema.hasSpatialSourcesIn(reader, boundCrsUri);
+			lookup.leavesSourcesElsewhere = LuceneGeoDocumentSchema.hasSpatialSourcesOutside(reader, boundCrsUri);
+			return lookup;
+		}
+		List<String> sourceCrsUris = LuceneGeoDocumentSchema.sourceCrsUris(reader);
+		lookup.boundCrsHasSources = sourceCrsUris.contains(boundCrsUri);
 		for (String sourceCrsUri : sourceCrsUris) {
 			if (lookup.placements.containsKey(sourceCrsUri)) {
 				continue;
@@ -69,8 +77,7 @@ final class EvaluationCrsLookup {
 				lookup.placements.put(sourceCrsUri, placement.get());
 			} else {
 				lookup.leavesSourcesElsewhere = true;
-				// Only a subject takes a placement outside the bound's CRS, so only subjects lose one to the limit.
-				lookup.leavesCrssPastTheClauseLimit |= !hasClauseLeft && candidateIsSubject;
+				lookup.leavesCrssPastTheClauseLimit |= !hasClauseLeft;
 			}
 		}
 		return lookup;

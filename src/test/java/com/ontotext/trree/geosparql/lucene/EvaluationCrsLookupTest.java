@@ -10,6 +10,7 @@ import com.ontotext.trree.geosparql.GeoSparqlPropertyRelation;
 import com.ontotext.trree.geosparql.jena.IndexGeometry;
 import com.ontotext.trree.geosparql.jena.JenaGeoSparqlException;
 import com.ontotext.trree.geosparql.jena.SourceGeometryLiteral;
+import org.apache.lucene.index.IndexReader;
 import org.apache.lucene.search.BooleanQuery;
 import org.junit.Rule;
 import org.junit.Test;
@@ -157,10 +158,7 @@ public class EvaluationCrsLookupTest {
         LuceneGeoIndexer withDeleted = createIndexer("crs-of-deleted-geometries");
         index(withDeleted, List.of(pointOnThinPolarBoundChord(), geometry("<" + UTM_33N + "> POINT(500000 6700000)"),
                 farFromBound));
-        withDeleted.begin();
-        withDeleted.indexGeometryList(2L, id -> "geometry-" + id, List.of());
-        withDeleted.commit();
-        withDeleted.complete();
+        delete(withDeleted, 2L);
         int clauseLimit = BooleanQuery.getMaxClauseCount();
         BooleanQuery.setMaxClauseCount(3);
         try {
@@ -208,6 +206,42 @@ public class EvaluationCrsLookupTest {
             assertEquals(Set.of(1L), ids(indexer.getEnvelopeIntersections(geometry(BOUND), false)));
         } finally {
             BooleanQuery.setMaxClauseCount(clauseLimit);
+        }
+    }
+
+    /**
+     * A bound that is the subject is placed only in its own CRS, so the lookup only checks whether the reader holds
+     * live spatial sources in that CRS and outside it. A CRS whose sources are all deleted or all empty holds none,
+     * on either side, and the live sources on the other side stay candidates.
+     */
+    @Test
+    public void objectsOfABoundSubjectAreFoundWhereOtherCrssHoldOnlyDeletedOrEmptySources() throws Exception {
+        IndexGeometry bound = geometry(BOUND);
+        IndexGeometry ownInside = geometry("POINT(15.5 60.5)");
+        IndexGeometry otherInside = geometry(literal(UTM_33N, "POINT(15.5 60.5)"));
+        LuceneGeoIndexer liveInBoth = createIndexer("bound-subject-live-in-both");
+        index(liveInBoth, List.of(ownInside, otherInside));
+        LuceneGeoIndexer liveOutside = createIndexer("bound-subject-live-outside");
+        index(liveOutside, List.of(geometry("POINT EMPTY"), otherInside, ownInside));
+        delete(liveOutside, 3L);
+        LuceneGeoIndexer liveInOwn = createIndexer("bound-subject-live-in-own");
+        index(liveInOwn, List.of(ownInside, geometry("<" + UTM_33N + "> POINT EMPTY"),
+                geometry(literal(EPSG_4326, "POINT(15.5 60.5)"))));
+        delete(liveInOwn, 3L);
+
+        assertEquals(Set.of(1L, 2L), ids(liveInBoth.getEnvelopeIntersections(bound, false)));
+        assertEquals(Set.of(2L), ids(liveOutside.getEnvelopeIntersections(bound, false)));
+        assertEquals(Set.of(1L), ids(liveInOwn.getEnvelopeIntersections(bound, false)));
+        assertSpatialSources(liveInBoth, true, true);
+        assertSpatialSources(liveOutside, false, true);
+        assertSpatialSources(liveInOwn, true, false);
+    }
+
+    private static void assertSpatialSources(LuceneGeoIndexer indexer, boolean inCrs84, boolean outsideCrs84)
+            throws Exception {
+        try (IndexReader reader = indexer.openReader()) {
+            assertEquals(inCrs84, LuceneGeoDocumentSchema.hasSpatialSourcesIn(reader, CRS84));
+            assertEquals(outsideCrs84, LuceneGeoDocumentSchema.hasSpatialSourcesOutside(reader, CRS84));
         }
     }
 
@@ -514,6 +548,13 @@ public class EvaluationCrsLookupTest {
         for (int i = 0; i < geometries.size(); i++) {
             indexer.indexGeometryList(i + 1L, id -> "geometry-" + id, List.of(geometries.get(i)));
         }
+        indexer.commit();
+        indexer.complete();
+    }
+
+    private static void delete(LuceneGeoIndexer indexer, long id) throws Exception {
+        indexer.begin();
+        indexer.indexGeometryList(id, entity -> "geometry-" + entity, List.of());
         indexer.commit();
         indexer.complete();
     }
