@@ -27,26 +27,28 @@ import static org.junit.Assert.assertTrue;
 
 /**
  * Compares indexed property relations with their registered filter functions over seeded random geometries that
- * stress candidate lookup: six CRSs, two- and three-dimensional, geographic and projected; points, lines, polygons,
- * multi-geometries and collections; heights and measures that are sometimes huge or infinite; collections with
- * members of different dimensions or with empty members; self-intersecting polygons; and, in projected CRSs,
- * points and polygons with an infinite coordinate. All lie within a few kilometres of each other near Brisbane, so many pairs meet, touch or
- * nearly do. Half of the geometries are indexed when the plugin is enabled and the rest by later updates. One seed
- * compares with a Lucene clause limit low enough that the bound cannot be placed in every CRS.
+ * stress candidate lookup. Half of the geometries are indexed when the plugin is enabled and the rest by later
+ * updates, and every seed also compares a feature that the repository does not hold.
  *
- * <p>Besides random bounds, every seed compares a polygon covering the world, a polygon whose ring winds twice around
- * a square, a polygon about a millimetre across, and a feature that the repository does not hold.
+ * <p>Brisbane seeds draw from six CRSs, two- and three-dimensional, geographic and projected: points, lines,
+ * polygons, multi-geometries and collections; heights and measures that are sometimes huge or infinite; collections
+ * with members of different dimensions or with empty members; self-intersecting polygons; and, in projected CRSs,
+ * points and polygons with an infinite coordinate. All lie within a few kilometres of each other near Brisbane, so
+ * many pairs meet, touch or nearly do. Besides random bounds, they compare a polygon covering the world, a polygon
+ * whose ring winds twice around a square and a polygon about a millimetre across. One Brisbane seed compares with a
+ * Lucene clause limit low enough that the bound cannot be placed in every CRS.
  *
  * <p>Arctic seeds place points, lines and polygons between latitudes 66 and 80 in CRS84, EPSG:4326, Web Mercator and
  * polar stereographic. Their lines and polygons span tens of degrees of longitude, so an edge Jena draws straight in
  * one CRS runs far from the same edge drawn in another. They add a polygon a thousandth of a degree tall, a point
- * that meets it only on such an edge, and a UTM point, whose CRS sorts before every Arctic CRS; and a CRS whose only
- * geometry is deleted and a CRS whose only geometry is empty, which sort before that. One Arctic seed compares with
- * three clauses, which leave a bound one placement besides its own CRS: the UTM CRS takes it, so polar stereographic
- * is past the clause limit. A bound that is the subject in a projected CRS is looked up among sources of other
- * CRSs by the prefix cells of their CRS84 envelopes, which can leave out a source that Jena relates to it only along
- * such an edge. Each Arctic seed lists the pairs that lookup leaves out; only those may differ, and each must still
- * be left out, so a seed fails once the lookup finds one.
+ * that meets it only on such an edge, a UTM zone 33N point, a CRS whose only geometry is deleted and a CRS whose
+ * only geometry is empty. Those three CRSs sort in that order, EPSG:32633, EPSG:32755 and EPSG:32756, before every
+ * Arctic CRS. One Arctic seed compares with three clauses, which leave a bound one placement besides its own CRS:
+ * the UTM CRS takes it, the CRSs of only deleted or empty geometries take none, and polar stereographic is past the
+ * clause limit. A bound that is the subject in a projected CRS is looked up among sources of other CRSs by the
+ * prefix cells of their CRS84 envelopes, which can leave out a source that Jena relates to it only along such an
+ * edge. Each Arctic seed lists the pairs that lookup leaves out; only those may differ, and each must still be left
+ * out, so a seed fails once the lookup finds one.
  */
 public class GeoSparqlRandomizedDifferentialTest extends AbstractGeoSparqlPluginTest {
 	private static final String NAMESPACE = "http://example.com/randomized-differential/";
