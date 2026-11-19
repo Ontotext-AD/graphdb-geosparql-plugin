@@ -320,6 +320,28 @@ public class JenaGeometryAdapterTest {
 				SourceGeometryLiteral.fromWkt(TILES_FROM_CORNERS), separated));
 	}
 
+	/**
+	 * Dependency limitation: JTS 1.20.0 {@code RelateNG} fails on a polygon with an empty interior ring, which Jena
+	 * reads from {@code ()} and JTS finds valid. Exact evaluation relates a generic collection with {@code RelateNG}, so
+	 * a collection holding such a polygon is neither disjoint from nor intersecting a triangle whose envelope meets its
+	 * own, while the same collection without the ring is disjoint from it. Indexed disjoint lookup can find the pair
+	 * disjoint by the cover boxes of a large source, so the property relation and its filter function can differ for
+	 * such a collection. Once {@code RelateNG} relates the polygon as it does without the ring, the collection is
+	 * disjoint from the triangle, this test fails, and the two agree.
+	 */
+	@Test
+	public void collectionHoldingAPolygonWithAnEmptyRingIsRelatedToNothing() {
+		SourceGeometryLiteral triangle = SourceGeometryLiteral.fromWkt("POLYGON((0 0,10 0,10 10,0 0))");
+		SourceGeometryLiteral withRing =
+				SourceGeometryLiteral.fromWkt("GEOMETRYCOLLECTION(POLYGON((1 8,2 8,1 9,1 8),()))");
+		SourceGeometryLiteral withoutRing =
+				SourceGeometryLiteral.fromWkt("GEOMETRYCOLLECTION(POLYGON((1 8,2 8,1 9,1 8)))");
+
+		assertFalse(GeoSparqlPropertyRelation.SF_DISJOINT.evaluate(List.of(withRing), List.of(triangle)));
+		assertFalse(GeoSparqlPropertyRelation.SF_INTERSECTS.evaluate(List.of(withRing), List.of(triangle)));
+		assertTrue(GeoSparqlPropertyRelation.SF_DISJOINT.evaluate(List.of(withoutRing), List.of(triangle)));
+	}
+
 	private static boolean isAreaCollection(String wkt) {
 		return IndexGeometry.fromSourceGeometryLiteral(SourceGeometryLiteral.fromWkt(wkt)).isAreaCollection();
 	}
