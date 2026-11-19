@@ -80,13 +80,13 @@ public class EvaluationCrsLookupTest {
     }
 
     /**
-     * A lookup has one clause for each CRS it places the bound in. Where the reader holds more source CRSs than
-     * Lucene allows clauses, the sources of the remaining CRSs are looked up by CRS84 index envelopes and none is
-     * lost: with twelve clauses the bound is placed in eleven CRSs, and the sources beside it in EPSG:4326 and
-     * EPSG:3857 are candidates again because they share its prefix cells.
+     * A lookup has one clause for each CRS it places the bound in. With twelve clauses the bound is placed in its
+     * own CRS and ten of the twenty source CRSs. Every source of the other ten, eight UTM CRSs, EPSG:3857 and
+     * EPSG:4326, is left to exact evaluation, so the sources beside the bound in the last two are candidates too.
+     * Every disjoint source is still found, and every definite disjoint match holds.
      */
     @Test
-    public void sourcesOfCrssBeyondTheClauseLimitAreLookedUpByIndexEnvelopes() throws Exception {
+    public void lookupPastTheClauseLimitLosesNoSource() throws Exception {
         Set<Long> inside = new TreeSet<>();
         List<IndexGeometry> sources = sourcesInManyCrss(inside);
         LuceneGeoIndexer indexer = createIndexer("clause-limit");
