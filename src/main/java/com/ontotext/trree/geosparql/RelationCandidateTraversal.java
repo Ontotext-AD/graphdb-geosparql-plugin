@@ -340,13 +340,9 @@ final class RelationCandidateTraversal implements CloseableIterator<RelationCand
 		RuntimeException failure = null;
 		for (Closeable closeable : open) {
 			try {
-				closeIterator(closeable);
+				closeIterator(closeable, failure);
 			} catch (RuntimeException e) {
-				if (failure == null) {
-					failure = e;
-				} else {
-					failure.addSuppressed(e);
-				}
+				failure = e;
 			}
 		}
 		if (failure != null) {
@@ -354,15 +350,20 @@ final class RelationCandidateTraversal implements CloseableIterator<RelationCand
 		}
 	}
 
-	private void closeIterator(Closeable iterator) {
+	/**
+	 * Closes an iterator. Its failure is suppressed by the failure that ended the traversal or, failing that, by an
+	 * earlier failure to close; without either, a runtime failure is thrown and an I/O failure is logged.
+	 */
+	private void closeIterator(Closeable iterator, RuntimeException closeFailure) {
 		if (iterator == null) {
 			return;
 		}
 		try {
 			iterator.close();
 		} catch (IOException | RuntimeException e) {
-			if (endingFailure != null) {
-				endingFailure.addSuppressed(e);
+			RuntimeException primary = endingFailure != null ? endingFailure : closeFailure;
+			if (primary != null) {
+				primary.addSuppressed(e);
 			} else if (e instanceof RuntimeException runtimeFailure) {
 				throw runtimeFailure;
 			} else {

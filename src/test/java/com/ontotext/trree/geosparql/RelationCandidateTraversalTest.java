@@ -284,8 +284,8 @@ public class RelationCandidateTraversalTest {
 	/** An early close releases every reader, and reports the first failure with the later ones suppressed. */
 	@Test
 	public void earlyCloseClosesTheLookupWhenClosingTheActiveIteratorFails() {
-		for (RuntimeException lookupCloseFailure : Arrays.asList(null,
-				new IllegalStateException("lookup close failure"))) {
+		for (Exception lookupCloseFailure : Arrays.asList(null,
+				new IllegalStateException("lookup close failure"), new IOException("lookup close failure"))) {
 			IndexGeometry bound = geometry("POINT(0 0)");
 			TrackingGeoSparqlIndexer indexer = new TrackingGeoSparqlIndexer();
 			indexer.addEnvelopeDisjointCandidates(bound, new EnvelopeDisjointCandidate(1L, 0));
