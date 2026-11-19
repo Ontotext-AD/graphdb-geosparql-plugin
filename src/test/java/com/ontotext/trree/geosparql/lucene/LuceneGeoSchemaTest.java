@@ -415,6 +415,21 @@ public class LuceneGeoSchemaTest {
                 () -> indexer.getSourceGeometryLiteralsFor(0)));
     }
 
+    /** A source with coordinates near 10⁻¹⁶² could carry cover boxes and be looked up by equal envelopes. */
+    @Test
+    public void layoutMarkingOnlyInvalidSourcesRequiresReindex() throws Exception {
+        Path dataDir = tmpFolder.getRoot().toPath().resolve("layout-invalid-source-marker");
+        Files.createDirectories(dataDir);
+        writeLayout(dataDir, "prefix-envelope-ordinate-preserving-source-wkb-envelope-marker-topology-dv-indexed-source-crs"
+                + "-source-envelope-index-envelope-source-cover-area-collection-lexical-sources-jena-crs84-envelope"
+                + "-normal-area-cover-invalid-source");
+
+        LuceneGeoIndexer indexer = createIndexer(dataDir.toFile());
+
+        assertForceReindexMessage(assertThrows(PluginException.class,
+                () -> indexer.getSourceGeometryLiteralsFor(0)));
+    }
+
     @Test
     public void testMarkedCurrentSchemaV2IndexPassesStartupGate() throws Exception {
         Path markedDataDir = tmpFolder.getRoot().toPath().resolve("marked-schema-v2");

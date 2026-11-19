@@ -2,6 +2,7 @@ package com.ontotext.trree.geosparql.jena;
 
 import org.apache.jena.geosparql.implementation.GeometryWrapper;
 import org.apache.jena.geosparql.implementation.vocabulary.SRS_URI;
+import org.locationtech.jts.geom.CoordinateFilter;
 import org.locationtech.jts.geom.Dimension;
 import org.locationtech.jts.geom.Geometry;
 import org.locationtech.jts.geom.Envelope;
@@ -48,6 +49,9 @@ public final class IndexGeometry {
 	 * projected CRS spans more longitude than the cleanup widening of an index envelope.
 	 */
 	public static final double POLAR_CAP = 0.001;
+	/** Magnitudes of a non-zero coordinate within which JTS decides a geometry exactly; see {@link #isProvable}. */
+	public static final double MIN_PROVABLE_MAGNITUDE = 1e-100;
+	public static final double MAX_PROVABLE_MAGNITUDE = 1e100;
 	private static final Logger LOGGER = LoggerFactory.getLogger(IndexGeometry.class);
 	private static final ConservativeCrs84EnvelopeProjector ENVELOPE_PROJECTOR =
 			new ConservativeCrs84EnvelopeProjector();
@@ -134,19 +138,19 @@ public final class IndexGeometry {
 	}
 
 	/**
-	 * Whether the geometry is a non-empty, valid polygon that covers every point of its envelope, whose area is
-	 * {@link #hasNormalArea normal}. Only such a polygon proves that a geometry inside its envelope meets it: JTS
-	 * may find that a self-overlapping ring fills its envelope while Jena finds a point inside that envelope
-	 * disjoint from it.
+	 * Whether the geometry is a non-empty, {@link #isProvable provable} polygon that covers every point of its
+	 * envelope, whose area is {@link #hasNormalArea normal}. Only such a polygon proves that a geometry inside its
+	 * envelope meets it: JTS may find that a self-overlapping ring fills its envelope while Jena finds a point inside
+	 * that envelope disjoint from it.
 	 *
-	 * @param valid whether the geometry is valid, asked only of a polygon that passes the cheaper checks
+	 * @param provable whether the geometry is provable, asked only of a polygon that passes the cheaper checks
 	 */
-	public static boolean fillsItsEnvelope(Geometry geometry, BooleanSupplier valid) {
+	public static boolean fillsItsEnvelope(Geometry geometry, BooleanSupplier provable) {
 		if (geometry.isEmpty() || !(geometry instanceof Polygon) || !hasNormalArea(geometry.getEnvelopeInternal())) {
 			return false;
 		}
 		try {
-			return valid.getAsBoolean()
+			return provable.getAsBoolean()
 					&& RelateNG.relate(geometry, geometry.getEnvelope(), RelatePredicate.equalsTopo());
 		} catch (RuntimeException e) {
 			// The proof is optional. Topology JTS cannot decide leaves the pair to exact evaluation.
@@ -215,16 +219,44 @@ public final class IndexGeometry {
 	}
 
 	/**
-	 * Whether the envelope's area is a normal double: finite, and not so small that it underflows. JTS decides
-	 * topology from products of coordinate differences, which the area of an envelope bounds for the geometries
-	 * inside it. Once those products underflow, as they do for coordinates near 10⁻¹⁶², it can find a rectangle
-	 * within a polygon that reaches outside it, or no point of a line in a rectangle that holds one, and they can
-	 * overflow likewise. A rectangle or envelope is used as a proof only when its area is normal, and a geometry is
-	 * split into such rectangles only when its own envelope's area is.
+	 * Whether the envelope's area is a normal double: finite, and not so small that it underflows. A rectangle is
+	 * used as a proof only when its area is normal, and a geometry is split into rectangles only when its own
+	 * envelope's area is. The area says nothing about the edges of a geometry inside the envelope, which
+	 * {@link #isProvable} checks.
 	 */
 	public static boolean hasNormalArea(Envelope envelope) {
 		double area = envelope.getWidth() * envelope.getHeight();
 		return Double.isFinite(area) && area >= Double.MIN_NORMAL;
+	}
+
+	/**
+	 * Whether lookup may rely on what JTS proves about the geometry: it is valid, and every coordinate is zero or has a
+	 * magnitude from {@value #MIN_PROVABLE_MAGNITUDE} to {@value #MAX_PROVABLE_MAGNITUDE}.
+	 *
+	 * <p>Jena may fail to relate an invalid geometry to one whose envelope meets it, and a pair that fails is no
+	 * match. JTS finds the side of a line a point lies on from products of coordinate differences. Within those
+	 * magnitudes the products, and the error terms its double-double arithmetic keeps, stay normal doubles, so it
+	 * decides exactly. Near 10⁻¹⁶² they round to zero, and JTS then finds a slightly bent line straight, two
+	 * geometries equal whose envelopes differ, or a rectangle over a notch within a polygon. Jena evaluates such a
+	 * geometry with the same JTS, so a pair with it is left to exact evaluation rather than decided by a proof.
+	 */
+	public static boolean isProvable(Geometry geometry) {
+		boolean[] moderate = { true };
+		geometry.apply((CoordinateFilter) coordinate -> moderate[0] &= isModerate(coordinate.getX())
+				&& isModerate(coordinate.getY()));
+		if (!moderate[0]) {
+			return false;
+		}
+		try {
+			return geometry.isValid();
+		} catch (RuntimeException e) {
+			return false;
+		}
+	}
+
+	private static boolean isModerate(double ordinate) {
+		double magnitude = Math.abs(ordinate);
+		return magnitude == 0 || magnitude >= MIN_PROVABLE_MAGNITUDE && magnitude <= MAX_PROVABLE_MAGNITUDE;
 	}
 
 	/**

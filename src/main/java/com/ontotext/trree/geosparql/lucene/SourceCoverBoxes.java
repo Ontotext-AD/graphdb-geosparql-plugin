@@ -25,8 +25,9 @@ import java.util.List;
  * geometry inside it, which would need computed intersection points. Every kept box contains a point of the
  * geometry.
  *
- * <p>Boxes are built only for a valid geometry, since the ways Jena decides inside and outside can disagree on an
- * invalid one; indexing checks validity before it asks for them. The number of boxes follows the size of the
+ * <p>Boxes are built only for a {@link IndexGeometry#isProvable provable} geometry, since the ways Jena decides
+ * inside and outside can disagree on an invalid one or one with coordinates near 10⁻¹⁶²; indexing checks before it
+ * asks for them. The number of boxes follows the size of the
  * geometry, because a box is worth storing for the cost of loading and evaluating the geometry it spares. A geometry
  * too small for enough boxes to follow its outline gets none and is described by its envelope. A geometry whose
  * envelope lacks a {@link IndexGeometry#hasNormalArea normal area} gets no boxes either, and a cell is quartered
@@ -47,7 +48,7 @@ final class SourceCoverBoxes {
 	}
 
 	/**
-	 * Returns boxes whose union contains a valid geometry, or none when its envelope describes it well enough.
+	 * Returns boxes whose union contains a provable geometry, or none when its envelope describes it well enough.
 	 */
 	static List<Envelope> of(Geometry geometry) {
 		int points = geometry.getNumPoints();

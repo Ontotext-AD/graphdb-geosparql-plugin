@@ -84,10 +84,10 @@ final class EvaluationCrsLookup {
 		Query meeting = LuceneGeoDocumentSchema.sourceEnvelopeIntersectsQuery(bound.envelope());
 		/*
 		 * A source apart from the bound by its cover boxes becomes a definite disjoint match without exact
-		 * evaluation, although the two envelopes meet. Jena may fail to relate such a pair when the bound is
-		 * invalid, and a pair that fails is no match, so cover boxes decide nothing for an invalid bound.
+		 * evaluation, although the two envelopes meet. Jena may relate such a pair otherwise when the bound is
+		 * invalid or has coordinates near 10⁻¹⁶², so cover boxes decide nothing for a bound that is not provable.
 		 */
-		if (!hasSourceCovers || !bound.isValid()) {
+		if (!hasSourceCovers || !bound.isProvable()) {
 			return meeting;
 		}
 		return new BooleanQuery.Builder()
@@ -99,21 +99,23 @@ final class EvaluationCrsLookup {
 	/**
 	 * Sources that may equal the bound. Equal point sets have the same least and greatest X and Y, and the envelope
 	 * of a valid geometry is exactly those of its points, so two valid geometries that are equal have equal
-	 * envelopes. An invalid one can have a part that Jena's equality leaves out, such as a line whose ends coincide,
-	 * though the part still widens its envelope: an invalid source, and every source against an invalid bound, is
-	 * kept wherever the envelopes meet.
+	 * envelopes. Jena's equality can disagree with the point sets in two ways: it leaves out a part of an invalid
+	 * geometry, such as a line whose ends coincide, though the part still widens the envelope, and it finds a
+	 * slightly bent line straight at coordinates near 10⁻¹⁶². A source that is not
+	 * {@link IndexGeometry#isProvable provable}, and every source against such a bound, is therefore kept wherever
+	 * the envelopes meet.
 	 */
 	Query withEqualEnvelope() {
 		return inEachCrs((sourceCrsUri, bound) -> {
 			Query meeting = mayMeet(bound);
-			if (!bound.isValid()) {
+			if (!bound.isProvable()) {
 				return meeting;
 			}
 			return new BooleanQuery.Builder()
 					.add(LuceneGeoDocumentSchema.sourceEnvelopeEqualsQuery(bound.envelope()), BooleanClause.Occur.SHOULD)
 					.add(new BooleanQuery.Builder()
 							.add(meeting, BooleanClause.Occur.FILTER)
-							.add(LuceneGeoDocumentSchema.invalidSourceQuery(), BooleanClause.Occur.FILTER)
+							.add(LuceneGeoDocumentSchema.unprovableSourceQuery(), BooleanClause.Occur.FILTER)
 							.build(), BooleanClause.Occur.SHOULD)
 					.setMinimumNumberShouldMatch(1)
 					.build();

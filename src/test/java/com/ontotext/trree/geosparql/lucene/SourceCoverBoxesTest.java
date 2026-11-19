@@ -134,7 +134,7 @@ public class SourceCoverBoxesTest {
 
 	/**
 	 * The checks Jena uses to tell inside from outside can disagree on an invalid geometry, so indexing gives it no
-	 * boxes and marks it invalid instead.
+	 * boxes and marks it as not provable instead.
 	 */
 	@Test
 	public void invalidGeometryIsIndexedWithoutBoxes() throws Exception {
@@ -150,9 +150,9 @@ public class SourceCoverBoxesTest {
 		Document validDocument = LuceneGeoDocumentSchema.toDocument(2L, TestIndexGeometries.fromWkt(RING),
 				strategy, SpatialContext.GEO);
 		assertNull(invalidDocument.getField(LuceneGeoDocumentSchema.FIELD_HAS_SOURCE_COVER));
-		assertNotNull(invalidDocument.getField(LuceneGeoDocumentSchema.FIELD_INVALID_SOURCE));
+		assertNotNull(invalidDocument.getField(LuceneGeoDocumentSchema.FIELD_UNPROVABLE_SOURCE));
 		assertNotNull(validDocument.getField(LuceneGeoDocumentSchema.FIELD_HAS_SOURCE_COVER));
-		assertNull(validDocument.getField(LuceneGeoDocumentSchema.FIELD_INVALID_SOURCE));
+		assertNull(validDocument.getField(LuceneGeoDocumentSchema.FIELD_UNPROVABLE_SOURCE));
 	}
 
 	private static boolean inSomeBox(List<Envelope> boxes, Coordinate point) {

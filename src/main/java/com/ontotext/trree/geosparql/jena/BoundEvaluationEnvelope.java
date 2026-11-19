@@ -33,7 +33,7 @@ public final class BoundEvaluationEnvelope {
 	/** Points of the placed bound when it is a non-empty polygon, otherwise -1. */
 	private final int polygonPoints;
 	private Boolean fillsEnvelope;
-	private Boolean valid;
+	private Boolean provable;
 
 	private BoundEvaluationEnvelope() {
 		this.source = null;
@@ -65,13 +65,13 @@ public final class BoundEvaluationEnvelope {
 	}
 
 	/**
-	 * Whether the bound, as Jena evaluates it, is a valid polygon that covers every point of its envelope. A source
-	 * whose envelope lies inside that envelope then meets the bound and cannot be disjoint from it.
+	 * Whether the bound, as Jena evaluates it, is a provable polygon that covers every point of its envelope. A
+	 * source whose envelope lies inside that envelope then meets the bound and cannot be disjoint from it.
 	 *
 	 * <p>The proof compares the whole polygon with its envelope, and only disjoint pruning uses it, so it is made on
 	 * first use. A bound that cannot be placed again proves nothing, and nor does one whose envelope is unbounded:
 	 * the proof would hold for its raw envelope, not for the unbounded one lookup compares. Nor does a bound that
-	 * {@link IndexGeometry#fillsItsEnvelope} rejects, such as an invalid one.
+	 * {@link IndexGeometry#fillsItsEnvelope} rejects, such as an invalid one or one with coordinates near 10⁻¹⁶².
 	 */
 	public boolean fillsEnvelope() {
 		if (fillsEnvelope == null) {
@@ -81,7 +81,7 @@ public final class BoundEvaluationEnvelope {
 				} else {
 					// One placed copy serves both checks: a copy too large to keep would be placed again.
 					Geometry geometry = bound().getXYGeometry();
-					fillsEnvelope = IndexGeometry.fillsItsEnvelope(geometry, () -> isValid(geometry));
+					fillsEnvelope = IndexGeometry.fillsItsEnvelope(geometry, () -> isProvable(geometry));
 				}
 			} catch (FactoryException | TransformException e) {
 				fillsEnvelope = false;
@@ -90,42 +90,39 @@ public final class BoundEvaluationEnvelope {
 		return fillsEnvelope;
 	}
 
-	/** Whether the bound, as Jena evaluates it, is a valid polygon of at most the given number of points. */
-	public boolean isValidPolygonOfAtMost(int points) {
-		return polygonPoints >= 0 && polygonPoints <= points && isValid();
+	/** Whether the bound, as Jena evaluates it, is a provable polygon of at most the given number of points. */
+	public boolean isProvablePolygonOfAtMost(int points) {
+		return polygonPoints >= 0 && polygonPoints <= points && isProvable();
 	}
 
 	/**
-	 * Whether the bound, as Jena evaluates it, is a valid geometry. Jena may fail to relate an invalid geometry to
-	 * a source whose envelope meets it, and a pair that fails is no match.
+	 * Whether lookup may rely on what JTS proves about the bound as Jena evaluates it; see
+	 * {@link IndexGeometry#isProvable}.
 	 */
-	public boolean isValid() {
-		if (valid == null) {
+	public boolean isProvable() {
+		if (provable == null) {
 			try {
-				return isValid(bound().getXYGeometry());
+				return isProvable(bound().getXYGeometry());
 			} catch (FactoryException | TransformException e) {
-				valid = false;
+				provable = false;
 			}
 		}
-		return valid;
+		return provable;
 	}
 
-	/** Whether the bound is valid, given the geometry Jena evaluates for it. */
-	private boolean isValid(Geometry geometry) {
-		if (valid == null) {
-			try {
-				valid = geometry.isValid();
-			} catch (RuntimeException e) {
-				valid = false;
-			}
+	/** Whether the bound is provable, given the geometry Jena evaluates for it. */
+	private boolean isProvable(Geometry geometry) {
+		if (provable == null) {
+			provable = IndexGeometry.isProvable(geometry);
 		}
-		return valid;
+		return provable;
 	}
 
 	/**
 	 * Whether Jena finds a rectangle of the evaluation CRS within the bound. A source whose envelope lies inside
 	 * such a rectangle lies inside the bound and cannot be disjoint from it. A rectangle without a
-	 * {@link IndexGeometry#hasNormalArea normal area} is never found within it.
+	 * {@link IndexGeometry#hasNormalArea normal area} is never found within it, and the caller asks only about a
+	 * {@link #isProvable provable} bound.
 	 */
 	public boolean covers(Envelope rectangle) throws FactoryException, TransformException {
 		return IndexGeometry.hasNormalArea(rectangle) && rectangle(rectangle).within(bound());

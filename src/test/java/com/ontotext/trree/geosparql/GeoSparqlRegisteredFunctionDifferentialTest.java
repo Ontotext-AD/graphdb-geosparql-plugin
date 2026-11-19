@@ -307,6 +307,51 @@ public class GeoSparqlRegisteredFunctionDifferentialTest extends AbstractGeoSpar
 		}
 	}
 
+	/**
+	 * Two valid collections that differ by a bend of about 3e-163 in one line. JTS finds the side of a line a point
+	 * lies on from products of coordinate differences, which round to zero at this size, so it finds the bent line
+	 * straight and the collections equal, although their envelopes differ.
+	 */
+	@Test
+	public void equalityRelationsAgreeForGeometriesThatDifferByATinyBend() throws Exception {
+		String triangle = "POLYGON((-2 -1,-2 -2,-1 -2,-2 -1))";
+		executeSparqlUpdateQuery(PREFIXES + "INSERT DATA {\n"
+				+ feature("tinyStraight", "tinyStraightGeom",
+						"GEOMETRYCOLLECTION(LINESTRING(0 2e-163,0 1e-163)," + triangle + ")")
+				+ feature("tinyBend", "tinyBendGeom",
+						"GEOMETRYCOLLECTION(LINESTRING(0 2e-163,3e-163 1e-163,0 1e-163)," + triangle + ")")
+				+ "}");
+		for (String relation : List.of("sfEquals", "ehEquals", "rcc8eq")) {
+			for (boolean boundSubject : new boolean[] { false, true }) {
+				assertDifferential(relation, "tinyStraight", boundSubject, "tinyBend");
+				assertDifferential(relation, "tinyBend", boundSubject, "tinyStraight");
+			}
+		}
+	}
+
+	/**
+	 * A square with a notch about 1e-162 deep at one corner, and points in the notch. JTS finds a rectangle over the
+	 * notch within the square, though it finds each point disjoint from it. The 32 points make the bound's lookup
+	 * worth certifying rectangles for.
+	 */
+	@Test
+	public void disjointRelationsAgreeForABoundWithATinyNotch() throws Exception {
+		StringBuilder insert = new StringBuilder(PREFIXES + "INSERT DATA {\n").append(feature("notchedSquare",
+				"notchedSquareGeom", WEB_MERCATOR + "POLYGON((0 5e-162,3.5e-163 5e-162,7e-163 1e-162,8e-163 0,"
+						+ "1 0,1 1,0 1,0 5e-162))"));
+		String[] inNotch = new String[32];
+		for (int i = 0; i < inNotch.length; i++) {
+			inNotch[i] = "inNotch" + i;
+			insert.append(feature(inNotch[i], inNotch[i] + "Geom", WEB_MERCATOR + "POINT(0 1e-162)"));
+		}
+		executeSparqlUpdateQuery(insert.append("}").toString());
+		for (String relation : List.of("sfDisjoint", "ehDisjoint")) {
+			for (boolean boundSubject : new boolean[] { false, true }) {
+				assertDifferential(relation, "notchedSquare", boundSubject, inNotch);
+			}
+		}
+	}
+
 	/** An IRI that the repository does not hold has no geometry, so no relation holds with it. */
 	@Test
 	public void boundIriAbsentFromTheRepositoryMatchesNothing() throws Exception {

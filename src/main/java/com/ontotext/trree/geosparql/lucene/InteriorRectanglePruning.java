@@ -75,7 +75,7 @@ final class InteriorRectanglePruning {
 	 */
 	static Query prune(BoundEvaluationEnvelope bound, Query meeting, Query sourceCrs, IndexSearcher searcher) {
 		try {
-			if (!bound.isValidPolygonOfAtMost(MAX_BOUND_POINTS) || !IndexGeometry.hasNormalArea(bound.envelope())) {
+			if (!bound.isProvablePolygonOfAtMost(MAX_BOUND_POINTS) || !IndexGeometry.hasNormalArea(bound.envelope())) {
 				return meeting;
 			}
 			Query eligible = new BooleanQuery.Builder()
