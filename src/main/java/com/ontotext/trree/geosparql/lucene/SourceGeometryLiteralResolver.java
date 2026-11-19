@@ -23,14 +23,14 @@ final class SourceGeometryLiteralResolver {
 			DimensionInfo dimensionInfo, boolean fromLexicalForm) {
 		ResolvedSource resolved = cache.get(identity);
 		if (resolved != null) {
-			if (!resolved.matches(sourceGeometryWkb, dimensionInfo)) {
+			if (!resolved.matches(sourceGeometryWkb, dimensionInfo, fromLexicalForm)) {
 				throw new PluginException(LuceneGeoDocumentSchema.SCHEMA_MISMATCH_MESSAGE);
 			}
 			return resolved.source;
 		}
 		SourceGeometryLiteral source = fromLexicalForm ? parse(identity)
 				: loadAndValidate(identity, sourceGeometryWkb, dimensionInfo);
-		cache.put(identity, new ResolvedSource(source, sourceGeometryWkb, dimensionInfo));
+		cache.put(identity, new ResolvedSource(source, sourceGeometryWkb, dimensionInfo, fromLexicalForm));
 		return source;
 	}
 
@@ -60,20 +60,25 @@ final class SourceGeometryLiteralResolver {
 		private final int coordinateDimension;
 		private final int spatialDimension;
 		private final int topologicalDimension;
+		private final boolean fromLexicalForm;
 
-		private ResolvedSource(SourceGeometryLiteral source, byte[] sourceGeometryWkb, DimensionInfo dimensions) {
+		private ResolvedSource(SourceGeometryLiteral source, byte[] sourceGeometryWkb, DimensionInfo dimensions,
+				boolean fromLexicalForm) {
 			this.source = source;
 			this.sourceGeometryWkb = sourceGeometryWkb;
 			this.coordinateDimension = dimensions.getCoordinate();
 			this.spatialDimension = dimensions.getSpatial();
 			this.topologicalDimension = dimensions.getTopological();
+			this.fromLexicalForm = fromLexicalForm;
 		}
 
-		private boolean matches(byte[] otherSourceGeometryWkb, DimensionInfo otherDimensions) {
+		private boolean matches(byte[] otherSourceGeometryWkb, DimensionInfo otherDimensions,
+				boolean otherFromLexicalForm) {
 			return Arrays.equals(sourceGeometryWkb, otherSourceGeometryWkb)
 					&& coordinateDimension == otherDimensions.getCoordinate()
 					&& spatialDimension == otherDimensions.getSpatial()
-					&& topologicalDimension == otherDimensions.getTopological();
+					&& topologicalDimension == otherDimensions.getTopological()
+					&& fromLexicalForm == otherFromLexicalForm;
 		}
 	}
 }

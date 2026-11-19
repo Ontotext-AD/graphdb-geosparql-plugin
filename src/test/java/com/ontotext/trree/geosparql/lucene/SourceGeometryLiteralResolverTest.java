@@ -52,6 +52,27 @@ public class SourceGeometryLiteralResolverTest {
 		assertTrue(exception.getMessage().contains("force-reindex"));
 	}
 
+	/**
+	 * Records that disagree on whether the source is parsed from its lexical form conflict in either order: the two
+	 * readings of a collection with an empty member can differ.
+	 */
+	@Test
+	public void repeatedIdentityWithADifferentLexicalFormMarkerRequiresForceReindex() {
+		SourceGeometryLiteral source = SourceGeometryLiteral.fromWkt("GEOMETRYCOLLECTION(POINT(1 2),POINT EMPTY)");
+		StoredSourceGeometryIdentity identity = identity(source);
+		byte[] sourceWkb = SourceGeometryWkbCodec.encode(source);
+		DimensionInfo dimensions = source.asGeometryWrapper().getDimensionInfo();
+		for (boolean firstFromLexicalForm : new boolean[] { true, false }) {
+			SourceGeometryLiteralResolver resolver = new SourceGeometryLiteralResolver();
+			resolver.resolve(identity, sourceWkb, dimensions, firstFromLexicalForm);
+
+			PluginException exception = assertThrows(PluginException.class,
+					() -> resolver.resolve(identity, sourceWkb, dimensions, !firstFromLexicalForm));
+
+			assertTrue(exception.getMessage().contains("force-reindex"));
+		}
+	}
+
 	@Test
 	public void clearingAtEntityBoundaryAllowsIdentityToBeReconstructedAgain() {
 		SourceGeometryLiteral first = SourceGeometryLiteral.fromWkt("POINT(1 2)");
