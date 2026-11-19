@@ -321,16 +321,37 @@ final class RelationCandidateTraversal implements CloseableIterator<RelationCand
 		DisjointCandidateLookup lookup = disjointLookup;
 		disjointLookup = null;
 		phase = TraversalPhase.DONE;
-		closeActiveIterator();
-		closeIterator(lookup);
+		closeActiveIteratorAnd(lookup);
 	}
 
 	private void closeActiveIterator() {
-		closeIterator(currentDefiniteCandidates);
-		closeIterator(currentExactCandidates);
+		closeActiveIteratorAnd(null);
+	}
+
+	/**
+	 * Closes the active iterators, then the other holder of a reader if there is one. Every close is attempted, so a
+	 * failing one leaves no reader open, and the first failure is thrown with the later ones suppressed.
+	 */
+	private void closeActiveIteratorAnd(Closeable other) {
+		Closeable[] open = {currentDefiniteCandidates, currentExactCandidates, other};
 		currentDefiniteCandidates = null;
 		currentExactCandidates = null;
 		currentBoundIndexGeometry = null;
+		RuntimeException failure = null;
+		for (Closeable closeable : open) {
+			try {
+				closeIterator(closeable);
+			} catch (RuntimeException e) {
+				if (failure == null) {
+					failure = e;
+				} else {
+					failure.addSuppressed(e);
+				}
+			}
+		}
+		if (failure != null) {
+			throw failure;
+		}
 	}
 
 	private void closeIterator(Closeable iterator) {
