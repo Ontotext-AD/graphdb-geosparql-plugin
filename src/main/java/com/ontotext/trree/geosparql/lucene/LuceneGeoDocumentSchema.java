@@ -356,6 +356,9 @@ final class LuceneGeoDocumentSchema {
 			return crsUris;
 		}
 		IndexSearcher searcher = new IndexSearcher(reader);
+		// Each lookup reads its own reader, so a cached result is never reused; caching one only builds a set of
+		// every matching document, where the search needs the first.
+		searcher.setQueryCache(null);
 		TermsEnum iterator = terms.iterator();
 		for (BytesRef term = iterator.next(); term != null; term = iterator.next()) {
 			String crsUri = term.utf8ToString();
