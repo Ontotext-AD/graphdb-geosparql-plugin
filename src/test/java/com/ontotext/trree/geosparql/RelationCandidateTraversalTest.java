@@ -7,7 +7,9 @@ import org.locationtech.jts.geom.Dimension;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collection;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
@@ -24,6 +26,27 @@ import static org.junit.Assert.assertTrue;
 
 public class RelationCandidateTraversalTest {
 	private static final Logger LOG = LoggerFactory.getLogger(RelationCandidateTraversalTest.class);
+
+	@Test
+	public void equalityRelationsUseEqualityLookupInBothBindingDirectionsAndRequireExactEvaluation() {
+		IndexGeometry bound = geometry("LINESTRING(0 0,2 2)");
+		for (GeoSparqlPropertyRelation relation : List.of(GeoSparqlPropertyRelation.SF_EQUALS,
+				GeoSparqlPropertyRelation.EH_EQUALS, GeoSparqlPropertyRelation.RCC8_EQ)) {
+			for (boolean boundSubject : new boolean[]{false, true}) {
+				TrackingGeoSparqlIndexer indexer = new TrackingGeoSparqlIndexer();
+				indexer.addEnvelopeCandidates(bound, candidate(1L, bound));
+				try (RelationCandidateTraversal traversal = new RelationCandidateTraversal(indexer, relation,
+						List.of(bound), boundSubject, LOG)) {
+					RelationCandidateTraversal.Candidate candidate = traversal.next();
+					assertEquals(RelationCandidateTraversal.MatchCertainty.REQUIRES_EXACT_EVALUATION,
+							candidate.matchCertainty());
+					assertSame(bound.sourceGeometryLiteral(), candidate.boundSourceGeometryLiteral().orElseThrow());
+					assertFalse(traversal.hasNext());
+				}
+				assertEquals(List.of(bound.sourceGeometryLiteral()), indexer.equalityLookupSources);
+			}
+		}
+	}
 
 	@Test
 	public void envelopeDisjointCandidateRequiresPositiveEntityId() {
@@ -61,10 +84,10 @@ public class RelationCandidateTraversalTest {
 		assertTrue(sentinel.boundSourceGeometryLiteral().isEmpty());
 
 		assertFalse(traversal.hasNext());
-		assertEquals(List.of("open:definite", "close:definite",
+		assertEquals(List.of("open:lookup", "open:definite", "close:definite",
 				"open:" + bound.sourceGeometryLiteral().lexicalForm(),
 				"close:" + bound.sourceGeometryLiteral().lexicalForm(),
-				"open:sentinel", "close:sentinel"), indexer.events);
+				"open:sentinel", "close:sentinel", "close:lookup"), indexer.events);
 	}
 
 	@Test
@@ -254,8 +277,31 @@ public class RelationCandidateTraversalTest {
 		traversal.close();
 
 		assertTrue(indexer.lastDefiniteIterator.closed);
-		assertEquals(List.of("open:definite", "close:definite"), indexer.events);
+		assertEquals(List.of("open:lookup", "open:definite", "close:definite", "close:lookup"), indexer.events);
 		assertFalse(traversal.hasNext());
+	}
+
+	/** An early close releases every reader, and reports the first failure with the later ones suppressed. */
+	@Test
+	public void earlyCloseClosesTheLookupWhenClosingTheActiveIteratorFails() {
+		for (Exception lookupCloseFailure : Arrays.asList(null,
+				new IllegalStateException("lookup close failure"), new IOException("lookup close failure"))) {
+			IndexGeometry bound = geometry("POINT(0 0)");
+			TrackingGeoSparqlIndexer indexer = new TrackingGeoSparqlIndexer();
+			indexer.addEnvelopeDisjointCandidates(bound, new EnvelopeDisjointCandidate(1L, 0));
+			indexer.definiteCloseFailure = new IllegalStateException("definite close failure");
+			indexer.lookupCloseFailure = lookupCloseFailure;
+			RelationCandidateTraversal traversal = new RelationCandidateTraversal(indexer,
+					GeoSparqlPropertyRelation.SF_DISJOINT, List.of(bound), LOG);
+			assertTrue(traversal.hasNext());
+
+			IllegalStateException failure = assertThrows(IllegalStateException.class, traversal::close);
+
+			assertSame(indexer.definiteCloseFailure, failure);
+			assertEquals(lookupCloseFailure == null ? List.of() : List.of(lookupCloseFailure),
+					List.of(failure.getSuppressed()));
+			assertEquals(List.of("open:lookup", "open:definite", "close:definite", "close:lookup"), indexer.events);
+		}
 	}
 
 	@Test
@@ -271,6 +317,26 @@ public class RelationCandidateTraversalTest {
 		assertEquals("candidate failure", failure.getMessage());
 		assertTrue(indexer.failingEnvelopeIterator.closed);
 		assertFalse(traversal.hasNext());
+	}
+
+	@Test
+	public void failureInClosingTheLookupIsKeptWithTheCandidateFailure() {
+		for (Exception closeFailure : List.of(new IllegalStateException("close failure"),
+				new IOException("close failure"))) {
+			IndexGeometry bound = geometry("POINT(0 0)");
+			TrackingGeoSparqlIndexer indexer = new TrackingGeoSparqlIndexer();
+			indexer.envelopeFailure = new IllegalStateException("candidate failure");
+			indexer.lookupCloseFailure = closeFailure;
+
+			RelationCandidateTraversal traversal = new RelationCandidateTraversal(indexer,
+					GeoSparqlPropertyRelation.SF_DISJOINT, List.of(bound), LOG);
+
+			IllegalStateException failure = assertThrows(IllegalStateException.class, traversal::hasNext);
+			assertEquals("candidate failure", failure.getMessage());
+			assertEquals(List.of(closeFailure), List.of(failure.getSuppressed()));
+			assertTrue(indexer.failingEnvelopeIterator.closed);
+			assertFalse(traversal.hasNext());
+		}
 	}
 
 	@Test
@@ -378,6 +444,7 @@ public class RelationCandidateTraversalTest {
 		private final Map<SourceGeometryLiteral, List<EnvelopeDisjointCandidate>> envelopeDisjointCandidates =
 				new LinkedHashMap<>();
 		private final List<SourceGeometryLiteral> envelopeLookupSources = new ArrayList<>();
+		private final List<SourceGeometryLiteral> equalityLookupSources = new ArrayList<>();
 		private final List<SourceGeometryLiteral> envelopeDisjointLookupSources = new ArrayList<>();
 		private final List<String> events = new ArrayList<>();
 		private List<CandidateEntity> fullScanCandidates = List.of();
@@ -386,6 +453,8 @@ public class RelationCandidateTraversalTest {
 		private TrackingIterator<CandidateEntity> fullScanIterator;
 		private TrackingIterator<EnvelopeDisjointCandidate> lastDefiniteIterator;
 		private RuntimeException envelopeFailure;
+		private RuntimeException definiteCloseFailure;
+		private Exception lookupCloseFailure;
 		private FailingIterator<CandidateEntity> failingEnvelopeIterator;
 		private int fullScanLookupCount;
 
@@ -399,7 +468,13 @@ public class RelationCandidateTraversalTest {
 		}
 
 		@Override
-		public CloseableIterator<CandidateEntity> getEnvelopeIntersections(IndexGeometry boundSourceIndexGeometry) {
+		public CloseableIterator<CandidateEntity> getEnvelopeEqualityCandidates(IndexGeometry boundSourceIndexGeometry, boolean candidateIsSubject) {
+			equalityLookupSources.add(boundSourceIndexGeometry.sourceGeometryLiteral());
+			return getEnvelopeIntersections(boundSourceIndexGeometry, false);
+		}
+
+		@Override
+		public CloseableIterator<CandidateEntity> getEnvelopeIntersections(IndexGeometry boundSourceIndexGeometry, boolean candidateIsSubject) {
 			SourceGeometryLiteral source = boundSourceIndexGeometry.sourceGeometryLiteral();
 			envelopeLookupSources.add(source);
 			events.add("open:" + source.lexicalForm());
@@ -413,13 +488,56 @@ public class RelationCandidateTraversalTest {
 
 		@Override
 		public CloseableIterator<EnvelopeDisjointCandidate> getEnvelopeDisjointCandidates(
-				IndexGeometry boundSourceIndexGeometry) {
+				IndexGeometry boundSourceIndexGeometry, boolean candidateIsSubject) {
 			envelopeDisjointLookupSources.add(boundSourceIndexGeometry.sourceGeometryLiteral());
 			events.add("open:definite");
 			lastDefiniteIterator = new TrackingIterator<>(envelopeDisjointCandidates.getOrDefault(
 					boundSourceIndexGeometry.sourceGeometryLiteral(), List.of()),
-					() -> events.add("close:definite"));
+					() -> {
+						events.add("close:definite");
+						if (definiteCloseFailure != null) {
+							throw definiteCloseFailure;
+						}
+					});
 			return lastDefiniteIterator;
+		}
+
+		@Override
+		public DisjointCandidateLookup openDisjointCandidateLookup(boolean candidateIsSubject) {
+			events.add("open:lookup");
+			DisjointCandidateLookup lookup = GeoSparqlIndexer.super.openDisjointCandidateLookup(candidateIsSubject);
+			return new DisjointCandidateLookup() {
+				@Override
+				public CloseableIterator<EnvelopeDisjointCandidate> definiteMatches(IndexGeometry bound) {
+					return lookup.definiteMatches(bound);
+				}
+
+				@Override
+				public CloseableIterator<CandidateEntity> uncertainCandidates(IndexGeometry bound) {
+					return lookup.uncertainCandidates(bound);
+				}
+
+				@Override
+				public CloseableIterator<CandidateEntity> transformCleanupCandidates(IndexGeometry bound) {
+					return lookup.transformCleanupCandidates(bound);
+				}
+
+				@Override
+				public CloseableIterator<CandidateEntity> nonSpatialCandidates() {
+					return lookup.nonSpatialCandidates();
+				}
+
+				@Override
+				public void close() throws IOException {
+					events.add("close:lookup");
+					if (lookupCloseFailure instanceof IOException ioFailure) {
+						throw ioFailure;
+					}
+					if (lookupCloseFailure != null) {
+						throw (RuntimeException) lookupCloseFailure;
+					}
+				}
+			};
 		}
 
 		@Override

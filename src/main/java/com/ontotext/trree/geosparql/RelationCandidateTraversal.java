@@ -4,6 +4,7 @@ import com.ontotext.trree.geosparql.jena.IndexGeometry;
 import com.ontotext.trree.geosparql.jena.SourceGeometryLiteral;
 import org.slf4j.Logger;
 
+import java.io.Closeable;
 import java.io.IOException;
 import java.util.Collection;
 import java.util.List;
@@ -21,7 +22,8 @@ import java.util.Optional;
  * and finally evaluates non-spatial empty sentinels.
  *
  * <p>The traversal owns its active Lucene iterator. It closes every phase before opening the next and closes the
- * active iterator when traversal ends early.
+ * active iterator when traversal ends early. Every phase of a partitioned disjoint traversal reads one
+ * {@link DisjointCandidateLookup}, which the traversal closes when it ends.
  */
 final class RelationCandidateTraversal implements CloseableIterator<RelationCandidateTraversal.Candidate> {
 	enum MatchCertainty {
@@ -50,6 +52,8 @@ final class RelationCandidateTraversal implements CloseableIterator<RelationCand
 	private IndexGeometry currentBoundIndexGeometry;
 	private CloseableIterator<EnvelopeDisjointCandidate> currentDefiniteCandidates;
 	private CloseableIterator<CandidateEntity> currentExactCandidates;
+	private DisjointCandidateLookup disjointLookup;
+	private RuntimeException endingFailure;
 	private Candidate next;
 	private boolean closed;
 
@@ -80,6 +84,8 @@ final class RelationCandidateTraversal implements CloseableIterator<RelationCand
 			next = loadNextCandidate();
 			return next != null;
 		} catch (RuntimeException e) {
+			// Every failure in releasing the readers is kept with the failure that ended the traversal.
+			endingFailure = e;
 			close();
 			throw e;
 		}
@@ -98,9 +104,8 @@ final class RelationCandidateTraversal implements CloseableIterator<RelationCand
 	@Override
 	public void close() {
 		closed = true;
-		closeActiveIterator();
+		finishTraversal();
 		next = null;
-		phase = TraversalPhase.DONE;
 	}
 
 	private TraversalPhase initialPhase() {
@@ -109,7 +114,7 @@ final class RelationCandidateTraversal implements CloseableIterator<RelationCand
 			return TraversalPhase.DONE;
 		}
 		return switch (relation.getCandidateLookupPolicy()) {
-			case ENVELOPE_INTERSECTS -> TraversalPhase.ENVELOPE_INTERSECTIONS;
+			case ENVELOPE_INTERSECTS, ENVELOPE_EQUALS -> TraversalPhase.ENVELOPE_INTERSECTIONS;
 			case DISJOINT_PARTITIONED -> initialDisjointPhase();
 		};
 	}
@@ -118,11 +123,13 @@ final class RelationCandidateTraversal implements CloseableIterator<RelationCand
 		/*
 		 * An empty bound source has no envelope to partition. Exact evaluation is also semantically necessary
 		 * because different empty geometry types do not all produce the same disjoint result. Falling back once
-		 * for the complete bound source set also keeps mixed empty/non-empty entities correct.
+		 * for the complete bound source set also keeps mixed empty/non-empty entities correct. A bound source whose
+		 * envelope proves no match, as an area collection's does for RCC8 disconnected, falls back the same way.
 		 */
-		boolean hasEmptyBoundSource = boundIndexGeometries.stream()
-				.anyMatch(indexGeometry -> !indexGeometry.isSpatialCandidate());
-		if (hasEmptyBoundSource) {
+		boolean hasUnpartitionedBoundSource = boundIndexGeometries.stream()
+				.anyMatch(indexGeometry -> !indexGeometry.isSpatialCandidate()
+						|| !relation.envelopeDisjointProvesMatchFor(indexGeometry));
+		if (hasUnpartitionedBoundSource) {
 			return TraversalPhase.FULL_SCAN;
 		}
 		boolean hasEligibleBoundSource = boundIndexGeometries.stream()
@@ -236,8 +243,7 @@ final class RelationCandidateTraversal implements CloseableIterator<RelationCand
 			if (!boundSourceCanParticipateInDisjointPartition(currentBoundIndexGeometry)) {
 				continue;
 			}
-			currentExactCandidates = indexer.getDisjointTransformCleanupCandidates(
-					currentBoundIndexGeometry, !boundSubject);
+			currentExactCandidates = disjointLookup().transformCleanupCandidates(currentBoundIndexGeometry);
 			return true;
 		}
 		return false;
@@ -245,7 +251,7 @@ final class RelationCandidateTraversal implements CloseableIterator<RelationCand
 
 	private Candidate loadNextEmptySentinel() {
 		if (currentExactCandidates == null) {
-			currentExactCandidates = indexer.getNonSpatialCandidates();
+			currentExactCandidates = disjointLookup().nonSpatialCandidates();
 		}
 		if (currentExactCandidates.hasNext()) {
 			/*
@@ -264,8 +270,7 @@ final class RelationCandidateTraversal implements CloseableIterator<RelationCand
 			if (!boundSourceCanParticipateInDisjointPartition(currentBoundIndexGeometry)) {
 				continue;
 			}
-			currentDefiniteCandidates = indexer.getEnvelopeDisjointCandidates(
-					currentBoundIndexGeometry, !boundSubject);
+			currentDefiniteCandidates = disjointLookup().definiteMatches(currentBoundIndexGeometry);
 			return true;
 		}
 		return false;
@@ -281,9 +286,14 @@ final class RelationCandidateTraversal implements CloseableIterator<RelationCand
 					&& !boundSourceCanParticipateInDisjointPartition(currentBoundIndexGeometry)) {
 				continue;
 			}
-			currentExactCandidates = phase == TraversalPhase.UNCERTAIN_CANDIDATES
-					? indexer.getEnvelopeDisjointUncertainCandidates(currentBoundIndexGeometry)
-					: indexer.getEnvelopeIntersections(currentBoundIndexGeometry);
+			if (phase == TraversalPhase.UNCERTAIN_CANDIDATES) {
+				currentExactCandidates = disjointLookup().uncertainCandidates(currentBoundIndexGeometry);
+			} else if (relation.getCandidateLookupPolicy() == CandidateLookupPolicy.ENVELOPE_EQUALS) {
+				currentExactCandidates = indexer.getEnvelopeEqualityCandidates(
+						currentBoundIndexGeometry, !boundSubject);
+			} else {
+				currentExactCandidates = indexer.getEnvelopeIntersections(currentBoundIndexGeometry, !boundSubject);
+			}
 			return true;
 		}
 		return false;
@@ -300,27 +310,65 @@ final class RelationCandidateTraversal implements CloseableIterator<RelationCand
 		boundIndex = 0;
 	}
 
+	private DisjointCandidateLookup disjointLookup() {
+		if (disjointLookup == null) {
+			disjointLookup = indexer.openDisjointCandidateLookup(!boundSubject);
+		}
+		return disjointLookup;
+	}
+
 	private void finishTraversal() {
-		closeActiveIterator();
+		DisjointCandidateLookup lookup = disjointLookup;
+		disjointLookup = null;
 		phase = TraversalPhase.DONE;
+		closeActiveIteratorAnd(lookup);
 	}
 
 	private void closeActiveIterator() {
-		closeIterator(currentDefiniteCandidates);
-		closeIterator(currentExactCandidates);
+		closeActiveIteratorAnd(null);
+	}
+
+	/**
+	 * Closes the active iterators, then the other holder of a reader if there is one. Every close is attempted, so a
+	 * failing one leaves no reader open, and the first failure is thrown with the later ones suppressed.
+	 */
+	private void closeActiveIteratorAnd(Closeable other) {
+		Closeable[] open = {currentDefiniteCandidates, currentExactCandidates, other};
 		currentDefiniteCandidates = null;
 		currentExactCandidates = null;
 		currentBoundIndexGeometry = null;
+		RuntimeException failure = null;
+		for (Closeable closeable : open) {
+			try {
+				closeIterator(closeable, failure);
+			} catch (RuntimeException e) {
+				failure = e;
+			}
+		}
+		if (failure != null) {
+			throw failure;
+		}
 	}
 
-	private void closeIterator(CloseableIterator<?> iterator) {
+	/**
+	 * Closes an iterator. Its failure is suppressed by the failure that ended the traversal or, failing that, by an
+	 * earlier failure to close; without either, a runtime failure is thrown and an I/O failure is logged.
+	 */
+	private void closeIterator(Closeable iterator, RuntimeException closeFailure) {
 		if (iterator == null) {
 			return;
 		}
 		try {
 			iterator.close();
-		} catch (IOException e) {
-			logger.warn("Unable to close GeoSPARQL iterator.", e);
+		} catch (IOException | RuntimeException e) {
+			RuntimeException primary = endingFailure != null ? endingFailure : closeFailure;
+			if (primary != null) {
+				primary.addSuppressed(e);
+			} else if (e instanceof RuntimeException runtimeFailure) {
+				throw runtimeFailure;
+			} else {
+				logger.warn("Unable to close GeoSPARQL iterator.", e);
+			}
 		}
 	}
 

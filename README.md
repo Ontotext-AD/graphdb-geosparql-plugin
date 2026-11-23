@@ -55,6 +55,19 @@ Rebuilding regenerates the GeoSPARQL Lucene index from the current repository da
 index settings. Run a rebuild when GraphDB reports an incompatible GeoSPARQL index, after changing index settings such
 as the prefix tree or precision, or whenever the index needs to be recreated from repository data.
 
+An index is written in the layout of the plugin version that built it. From version 4.0, a plugin version with
+another layout reports the index as incompatible. Until the index is rebuilt it answers no index-backed GeoSPARQL
+query and rejects updates that add or remove geometries; restarting GraphDB does not change that. After upgrading the
+plugin, rebuild the index. After returning to an earlier plugin version, rebuild it with that version. Restoring an
+index that version built instead is safe only together with the repository data it was built from; an older index
+does not reflect later geometry changes. A version before 4.0 that rebuilds or updates an index leaves its layout
+record unchanged, so on returning to 4.0 or later that index is not reported as incompatible: rebuild it after the
+upgrade.
+
+Versions before 4.0 do not check the layout: they open an index of another layout, answer queries from it and write
+updates to it. Before returning to such a version, rebuild the index with it, or restore its index together with the
+matching repository data, before queries and updates resume.
+
 If the plugin is disabled, enabling it performs a full index build. If the plugin is already enabled, run this SPARQL
 update to force a rebuild:
 

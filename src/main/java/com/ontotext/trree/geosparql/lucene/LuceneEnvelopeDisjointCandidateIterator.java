@@ -23,8 +23,8 @@ import java.util.NoSuchElementException;
  * Streams lightweight source-document metadata for envelope-disjoint Lucene matches in one pass.
  *
  * <p>Only the entity id and source topological dimension are loaded. Source WKB and literal metadata remain unread.
- * Results follow Lucene document order and are not sorted. The iterator owns the searcher's reader and closes it on
- * exhaustion, failure, or explicit close.
+ * Results follow Lucene document order and are not sorted. The iterator holds a reference to the searcher's reader
+ * and releases it on exhaustion, failure, or explicit close.
  */
 final class LuceneEnvelopeDisjointCandidateIterator implements CloseableIterator<EnvelopeDisjointCandidate> {
 	private final IndexSearcher searcher;
@@ -94,7 +94,7 @@ final class LuceneEnvelopeDisjointCandidateIterator implements CloseableIterator
 		currentEntityIds = null;
 		currentSourceTopologicalDimensions = null;
 		currentLiveDocs = null;
-		searcher.getIndexReader().close();
+		searcher.getIndexReader().decRef();
 	}
 
 	private EnvelopeDisjointCandidate loadNextCandidate() throws IOException {

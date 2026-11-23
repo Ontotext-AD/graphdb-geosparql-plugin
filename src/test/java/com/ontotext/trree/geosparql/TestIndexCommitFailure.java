@@ -112,13 +112,13 @@ public class TestIndexCommitFailure extends AbstractGeoSparqlPluginTest {
 		}
 
 		@Override
-		public CloseableIterator<CandidateEntity> getEnvelopeIntersections(IndexGeometry boundSourceIndexGeometry) {
+		public CloseableIterator<CandidateEntity> getEnvelopeIntersections(IndexGeometry boundSourceIndexGeometry, boolean candidateIsSubject) {
 			throw new UnsupportedOperationException();
 		}
 
 		@Override
 		public CloseableIterator<EnvelopeDisjointCandidate> getEnvelopeDisjointCandidates(
-				IndexGeometry boundSourceIndexGeometry) {
+				IndexGeometry boundSourceIndexGeometry, boolean candidateIsSubject) {
 			throw new UnsupportedOperationException();
 		}
 
@@ -188,13 +188,13 @@ public class TestIndexCommitFailure extends AbstractGeoSparqlPluginTest {
 		}
 
 		@Override
-		public CloseableIterator<CandidateEntity> getEnvelopeIntersections(IndexGeometry boundSourceIndexGeometry) {
+		public CloseableIterator<CandidateEntity> getEnvelopeIntersections(IndexGeometry boundSourceIndexGeometry, boolean candidateIsSubject) {
 			throw new UnsupportedOperationException();
 		}
 
 		@Override
 		public CloseableIterator<EnvelopeDisjointCandidate> getEnvelopeDisjointCandidates(
-				IndexGeometry boundSourceIndexGeometry) {
+				IndexGeometry boundSourceIndexGeometry, boolean candidateIsSubject) {
 			throw new UnsupportedOperationException();
 		}
 

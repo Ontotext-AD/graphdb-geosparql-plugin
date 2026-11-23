@@ -62,9 +62,9 @@ public class RepositoryGeometrySourceTest {
 
 		List<Long> featureIds = new ArrayList<>();
 		List<Integer> featureGeometryCounts = new ArrayList<>();
-		source.forEachFeatureUsingGeometry(GEOMETRY_RESOURCE, (featureId, geometries) -> {
+		source.forEachFeatureUsingGeometry(GEOMETRY_RESOURCE, featureId -> {
 			featureIds.add(featureId);
-			featureGeometryCounts.add(geometries.size());
+			featureGeometryCounts.add(source.geometriesForFeature(featureId).size());
 		});
 
 		assertEquals(1, first.size());
@@ -170,11 +170,11 @@ public class RepositoryGeometrySourceTest {
 		}
 	}
 
-	private static final class FakePluginConnection implements PluginConnection {
+	static final class FakePluginConnection implements PluginConnection {
 		private final Entities entities;
 		private final Statements statements;
 
-		private FakePluginConnection(Entities entities, Statements statements) {
+		FakePluginConnection(Entities entities, Statements statements) {
 			this.entities = entities;
 			this.statements = statements;
 		}
@@ -230,10 +230,10 @@ public class RepositoryGeometrySourceTest {
 		}
 	}
 
-	private static final class FakeEntities implements Entities {
+	static final class FakeEntities implements Entities {
 		private final Map<Long, Value> values = new HashMap<>();
 
-		private void add(long id, Value value) {
+		void add(long id, Value value) {
 			values.put(id, value);
 		}
 
@@ -293,10 +293,12 @@ public class RepositoryGeometrySourceTest {
 		}
 	}
 
-	private static final class FakeStatements implements Statements {
+	static final class FakeStatements implements Statements {
 		private final List<Triple> triples = new ArrayList<>();
+		/** The subject, predicate and object of every statement pattern asked for, 0 for any. */
+		final List<List<Long>> requests = new ArrayList<>();
 
-		private void add(long subject, long predicate, long object) {
+		void add(long subject, long predicate, long object) {
 			triples.add(new Triple(subject, predicate, object));
 		}
 
@@ -327,6 +329,7 @@ public class RepositoryGeometrySourceTest {
 
 		@Override
 		public StatementIterator get(long subject, long predicate, long object) {
+			requests.add(List.of(subject, predicate, object));
 			return new ListStatementIterator(matchingTriples(subject, predicate, object));
 		}
 

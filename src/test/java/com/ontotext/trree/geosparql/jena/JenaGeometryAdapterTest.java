@@ -16,9 +16,21 @@ import org.junit.Test;
 import org.locationtech.jts.geom.Dimension;
 import org.locationtech.jts.geom.Envelope;
 
+import java.util.List;
+
 import static org.junit.Assert.*;
 
 public class JenaGeometryAdapterTest {
+	/** Four unit squares tiling the square from 39 39 to 41 41, every ring starting at the shared centre. */
+	private static final String TILES_FROM_CENTRE = "GEOMETRYCOLLECTION(POLYGON((40 40,41 40,41 41,40 41,40 40)),"
+				+ "POLYGON((40 40,39 40,39 41,40 41,40 40)),"
+				+ "POLYGON((40 40,39 40,39 39,40 39,40 40)),"
+				+ "POLYGON((40 40,41 40,41 39,40 39,40 40)))";
+	/** The same squares with every ring starting at an outer corner of the larger square. */
+	private static final String TILES_FROM_CORNERS = "GEOMETRYCOLLECTION(POLYGON((41 41,40 41,40 40,41 40,41 41)),"
+				+ "POLYGON((39 41,40 41,40 40,39 40,39 41)),"
+				+ "POLYGON((39 39,40 39,40 40,39 40,39 39)),"
+				+ "POLYGON((41 39,40 39,40 40,41 40,41 39)))";
 	private static final ValueFactory VALUE_FACTORY = SimpleValueFactory.getInstance();
 	private static final String CRS84 = "http://www.opengis.net/def/crs/OGC/1.3/CRS84";
 	private static final String EPSG_4326 = "http://www.opengis.net/def/crs/EPSG/0/4326";
@@ -276,6 +288,66 @@ public class JenaGeometryAdapterTest {
 	}
 
 	@Test
+	public void genericCollectionOfAreaDimensionIsAreaCollection() {
+		assertTrue(isAreaCollection("GEOMETRYCOLLECTION(POINT(1 2),POLYGON EMPTY)"));
+		assertTrue(isAreaCollection("GEOMETRYCOLLECTION(LINESTRING(1 2,3 4),POLYGON EMPTY)"));
+		assertTrue(isAreaCollection("GEOMETRYCOLLECTION(POINT(1 2),GEOMETRYCOLLECTION(MULTIPOLYGON EMPTY))"));
+		assertTrue(isAreaCollection("GEOMETRYCOLLECTION(POINT(1 2),POLYGON((0 0,0 1,1 1,1 0,0 0)))"));
+		assertTrue(isAreaCollection(TILES_FROM_CENTRE));
+
+		assertFalse(isAreaCollection("POLYGON((0 0,0 1,1 1,1 0,0 0))"));
+		assertFalse(isAreaCollection("MULTIPOLYGON(((0 0,0 1,1 1,1 0,0 0)))"));
+		assertFalse(isAreaCollection("GEOMETRYCOLLECTION(POINT(1 2),LINESTRING(1 2,3 4))"));
+		assertFalse(isAreaCollection("POINT(1 2)"));
+	}
+
+	/**
+	 * Dependency limitation: JTS 1.20.0 {@code RelateNG} places an area's boundary by locating one vertex of each
+	 * ring. Four squares tiling a larger square, with every ring starting at the shared centre, therefore show no
+	 * boundary outside a separated polygon, and RCC8 disconnected does not hold, while the same squares with rings
+	 * starting at outer corners are disconnected from it. Once JTS locates a vertex on the boundary of the union, both
+	 * orderings are disconnected and this test fails; area collections that hold a polygon can then take the
+	 * envelope proof of the disjoint partition again.
+	 */
+	@Test
+	public void collectionDisconnectionDependsOnWhereItsRingsStart() throws Exception {
+		SourceGeometryLiteral separated = SourceGeometryLiteral.fromWkt("POLYGON((20 20,20 30,30 30,30 20,20 20))");
+		String rcc8dc = GeoConstants.GEOF_RCC8_DC.stringValue();
+
+		assertFalse(JenaFunctionEvaluator.evaluateTopological(rcc8dc,
+				SourceGeometryLiteral.fromWkt(TILES_FROM_CENTRE), separated));
+		assertTrue(JenaFunctionEvaluator.evaluateTopological(rcc8dc,
+				SourceGeometryLiteral.fromWkt(TILES_FROM_CORNERS), separated));
+	}
+
+	/**
+	 * Dependency limitation: JTS 1.20.0 {@code RelateNG} can fail to relate a polygon with an empty interior ring,
+	 * which Jena reads from {@code ()} and JTS finds valid, to a geometry whose envelope meets its own. Exact evaluation
+	 * relates a generic collection with {@code RelateNG}. It relates a collection holding such a polygon to points, but
+	 * fails on the triangle below in either operand order, so the collection is neither disjoint from nor intersecting
+	 * the triangle, while the same collection without the ring is disjoint from it. Indexed disjoint lookup can find
+	 * such a pair disjoint by the cover boxes of a large source, so the property relation and its filter function can
+	 * differ for it. Once {@code RelateNG} relates the polygon as it does without the ring, the collection is disjoint
+	 * from the triangle, this test fails, and the two agree.
+	 */
+	@Test
+	public void collectionHoldingAPolygonWithAnEmptyRingIsNeitherDisjointFromNorIntersectingATriangle() {
+		SourceGeometryLiteral triangle = SourceGeometryLiteral.fromWkt("POLYGON((0 0,10 0,10 10,0 0))");
+		SourceGeometryLiteral withRing =
+				SourceGeometryLiteral.fromWkt("GEOMETRYCOLLECTION(POLYGON((1 8,2 8,1 9,1 8),()))");
+		SourceGeometryLiteral withoutRing =
+				SourceGeometryLiteral.fromWkt("GEOMETRYCOLLECTION(POLYGON((1 8,2 8,1 9,1 8)))");
+
+		assertFalse(GeoSparqlPropertyRelation.SF_DISJOINT.evaluate(List.of(withRing), List.of(triangle)));
+		assertFalse(GeoSparqlPropertyRelation.SF_INTERSECTS.evaluate(List.of(withRing), List.of(triangle)));
+		assertTrue(GeoSparqlPropertyRelation.SF_DISJOINT.evaluate(List.of(withoutRing), List.of(triangle)));
+	}
+
+	private static boolean isAreaCollection(String wkt) {
+		return IndexGeometry.fromSourceGeometryLiteral(SourceGeometryLiteral.fromWkt(wkt)).isAreaCollection();
+	}
+
+	@Test
 	public void projectedSingleMemberCollectionUsesLocalIndexEnvelope() {
 		IndexGeometry envelope = IndexGeometry.fromSourceGeometryLiteral(SourceGeometryLiteral.fromWkt(
 				"<" + EPSG_32634 + "> GEOMETRYCOLLECTION(POINT(799997.80 4589779.63))"));
@@ -484,6 +556,18 @@ public class JenaGeometryAdapterTest {
 
 		assertTrue(exception.getMessage().contains("Unsupported CRS")
 				|| exception.getMessage().contains("Invalid GeoSPARQL geometry literal"));
+	}
+
+	/** A source that is used again after its geometry was rejected rejects it again. */
+	@Test
+	public void rejectedGeometryIsRejectedOnEveryUseOfItsSource() {
+		for (String wkt : List.of("POINT(200 200)", "<http://example.com/crs/unknown> POINT(1 2)",
+				"POINT(not a coordinate)")) {
+			SourceGeometryLiteral source = SourceGeometryLiteral.fromWkt(wkt);
+			for (int use = 0; use < 3; use++) {
+				assertThrows(wkt, JenaGeoSparqlException.class, source::asGeometryWrapper);
+			}
+		}
 	}
 
 	@Test

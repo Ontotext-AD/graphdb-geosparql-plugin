@@ -9,6 +9,16 @@ public final class IndexGeometryFixtures {
 	private IndexGeometryFixtures() {
 	}
 
+	/**
+	 * Whether the geometry, as a bound, is a CRS84 polygon that fills its envelope, which lookup by CRS84 index
+	 * envelopes uses to show a source inside the bound.
+	 */
+	public static boolean fillsCrs84Envelope(IndexGeometry geometry) {
+		return IndexGeometry.INDEX_CRS.equals(geometry.sourceGeometryLiteral().effectiveCrsUri())
+				&& geometry.evaluationEnvelope(IndexGeometry.INDEX_CRS, false)
+						.map(BoundEvaluationEnvelope::fillsEnvelope).orElse(false);
+	}
+
 	public static IndexGeometry withIndexEnvelope(SourceGeometryLiteral source, Envelope indexEnvelope) {
 		return withIndexEnvelope(source, indexEnvelope, CandidateBoundsKind.TRANSFORMED, null);
 	}

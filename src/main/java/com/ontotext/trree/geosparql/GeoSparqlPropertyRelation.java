@@ -1,5 +1,6 @@
 package com.ontotext.trree.geosparql;
 
+import com.ontotext.trree.geosparql.jena.IndexGeometry;
 import com.ontotext.trree.geosparql.jena.SourceGeometryLiteral;
 import com.ontotext.trree.geosparql.jena.JenaGeoSparqlException;
 import com.ontotext.trree.geosparql.jena.JenaFunctionEvaluator;
@@ -14,14 +15,17 @@ import static com.ontotext.trree.geosparql.vocabulary.GeoConstants.*;
 /**
  * GeoSPARQL property relations exposed by GraphDB.
  *
- * <p>Non-disjoint relations use CRS84 index-envelope intersection for candidate lookup in both binding directions.
- * Disjoint relations partition source documents into envelope-proven matches and uncertain candidates. Mixed-CRS
- * pairs whose cleanup occurs in another CRS are retained for disjoint exact evaluation because CRS84 envelopes cannot
- * safely classify them. Jena exact evaluation always preserves subject/object argument order.
+ * <p>Candidate lookup compares envelopes in the CRS where Jena evaluates a pair, where that CRS is known before the
+ * candidates are read, and CRS84 index envelopes otherwise. Equality requires equal envelopes where the pair is
+ * looked up in its evaluation CRS and both geometries are {@link IndexGeometry#isProvable provable}, and retains
+ * envelope-intersection lookup otherwise. Disjoint relations partition
+ * source documents into envelope-proven matches and uncertain candidates. Mixed-CRS pairs that CRS84 envelopes
+ * cannot safely classify, because their cleanup occurs in another CRS, are retained for disjoint exact evaluation.
+ * Jena exact evaluation always preserves subject/object argument order.
  */
 public enum GeoSparqlPropertyRelation {
 	// Simple Features
-	SF_EQUALS(GEO_SF_EQUALS, GEOF_SF_EQUALS),
+	SF_EQUALS(GEO_SF_EQUALS, GEOF_SF_EQUALS, CandidateLookupPolicy.ENVELOPE_EQUALS),
 	SF_DISJOINT(GEO_SF_DISJOINT, GEOF_SF_DISJOINT, CandidateLookupPolicy.DISJOINT_PARTITIONED),
 	SF_INTERSECTS(GEO_SF_INTERSECTS, GEOF_SF_INTERSECTS),
 	SF_TOUCHES(GEO_SF_TOUCHES, GEOF_SF_TOUCHES),
@@ -31,7 +35,7 @@ public enum GeoSparqlPropertyRelation {
 	SF_CROSSES(GEO_SF_CROSSES, GEOF_SF_CROSSES),
 
 	// Egenhofer
-	EH_EQUALS(GEO_EH_EQUALS, GEOF_EH_EQUALS),
+	EH_EQUALS(GEO_EH_EQUALS, GEOF_EH_EQUALS, CandidateLookupPolicy.ENVELOPE_EQUALS),
 	EH_DISJOINT(GEO_EH_DISJOINT, GEOF_EH_DISJOINT, CandidateLookupPolicy.DISJOINT_PARTITIONED),
 	EH_MEET(GEO_EH_MEET, GEOF_EH_MEET),
 	EH_OVERLAP(GEO_EH_OVERLAP, GEOF_EH_OVERLAP),
@@ -41,7 +45,7 @@ public enum GeoSparqlPropertyRelation {
 	EH_CONTAINS(GEO_EH_CONTAINS, GEOF_EH_CONTAINS),
 
 	// RCC8
-	RCC8_EQ(GEO_RCC8_EQ, GEOF_RCC8_EQ),
+	RCC8_EQ(GEO_RCC8_EQ, GEOF_RCC8_EQ, CandidateLookupPolicy.ENVELOPE_EQUALS),
 	RCC8_DC(GEO_RCC8_DC, GEOF_RCC8_DC, CandidateLookupPolicy.DISJOINT_PARTITIONED),
 	RCC8_EC(GEO_RCC8_EC, GEOF_RCC8_EC),
 	RCC8_PO(GEO_RCC8_PO, GEOF_RCC8_PO),
@@ -77,7 +81,8 @@ public enum GeoSparqlPropertyRelation {
 	 * Returns whether two separated, non-empty index envelopes prove this relation for the supplied source dimensions.
 	 *
 	 * <p>Simple Features and Egenhofer disjoint have no dimensional precondition. RCC8 relations apply only to
-	 * area/area pairs, so envelope separation is a definite RCC8 disconnected match only for two area sources.
+	 * area/area pairs, so envelope separation is a definite RCC8 disconnected match only for two area sources. The
+	 * partition takes no area collection on either side, so exact evaluation relates the pairs it would.
 	 */
 	boolean envelopeDisjointIsDefiniteMatch(int candidateTopologicalDimension,
 			int boundTopologicalDimension) {
@@ -98,6 +103,17 @@ public enum GeoSparqlPropertyRelation {
 	boolean boundSourceCanParticipateInDisjointPartition(int boundTopologicalDimension) {
 		return candidateLookupPolicy == CandidateLookupPolicy.DISJOINT_PARTITIONED
 				&& (this != RCC8_DC || boundTopologicalDimension == Dimension.A);
+	}
+
+	/**
+	 * Returns whether separated envelopes can prove this relation for a bound source.
+	 *
+	 * <p>They prove RCC8 disconnected only for areas whose relation exact evaluation decides as the envelopes do,
+	 * which an area collection is not. Every candidate of an area collection bound source therefore needs exact
+	 * evaluation.
+	 */
+	boolean envelopeDisjointProvesMatchFor(IndexGeometry boundSource) {
+		return this != RCC8_DC || !boundSource.isAreaCollection();
 	}
 
 	public boolean evaluate(SourceGeometryLiteral argument1, SourceGeometryLiteral argument2) {

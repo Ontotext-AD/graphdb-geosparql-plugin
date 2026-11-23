@@ -2,8 +2,10 @@ package com.ontotext.trree.geosparql.lucene;
 
 import com.ontotext.trree.geosparql.GeoSparqlPropertyRelation;
 import com.ontotext.trree.geosparql.TestIndexGeometries;
+import com.ontotext.trree.geosparql.jena.IndexGeometryFixtures;
 import com.ontotext.trree.geosparql.jena.IndexGeometry;
 import org.apache.lucene.document.Document;
+import org.apache.lucene.document.DoublePoint;
 import org.apache.lucene.index.DirectoryReader;
 import org.apache.lucene.index.IndexWriter;
 import org.apache.lucene.index.IndexWriterConfig;
@@ -19,6 +21,7 @@ import org.locationtech.jts.geom.Envelope;
 import org.locationtech.spatial4j.context.SpatialContext;
 import org.junit.Test;
 
+import java.io.IOException;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
@@ -56,11 +59,65 @@ public class LuceneEnvelopeContainmentTest {
 			try (DirectoryReader reader = DirectoryReader.open(directory)) {
 				IndexSearcher searcher = new IndexSearcher(reader);
 				assertEquals(Set.of(1L, 2L, 3L, 4L), collectEntityIds(searcher,
-						LuceneGeoDocumentSchema.envelopeWithinQuery(new Envelope(-180, 180, -90, 90))));
+						LuceneGeoDocumentSchema.envelopeIntersectsQuery(new Envelope(-180, 180, -90, 90))));
 				for (int documentId = 0; documentId < reader.maxDoc(); documentId++) {
 					Document stored = reader.document(documentId);
 					assertFalse(stored.getFields().stream().anyMatch(field ->
-							field.name().startsWith("geoEnvelope")));
+							field.name().equals(LuceneGeoDocumentSchema.FIELD_SOURCE_ENVELOPE)
+									|| field.name().equals(LuceneGeoDocumentSchema.FIELD_INDEX_ENVELOPE)));
+				}
+			}
+		}
+	}
+
+	/**
+	 * Within keeps closed boundaries and treats signed zeros as equal, and crossing matches every other envelope that
+	 * meets the bound, touching it at a corner included: within, crossing and apart partition the envelopes, unbounded
+	 * ones included.
+	 */
+	@Test
+	public void containedEnvelopeQueriesIncludeClosedBoundariesAndEqualSignedZeros() throws Exception {
+		List<Envelope> envelopes = List.of(
+				new Envelope(0, 1, 0, 1), new Envelope(0, 0, 0, 0),
+				new Envelope(-0.0, -0.0, 0, 0), new Envelope(0, 0, -0.0, -0.0),
+				new Envelope(-0.0, -0.0, -0.0, -0.0),
+				new Envelope(Math.nextDown(0.0), 0, 0, 0),
+				new Envelope(0, Math.nextUp(1.0), 0, 1),
+				new Envelope(0, 1, Math.nextDown(0.0), 1),
+				new Envelope(0, 1, 0, Math.nextUp(1.0)),
+				new Envelope(-1, 2, -1, 2),
+				new Envelope(1, 2, 1, 2), new Envelope(2, 3, 0, 1), new Envelope(-3, Math.nextDown(0.0), 0, 1),
+				IndexGeometry.unboundedEnvelope());
+		try (Directory directory = new ByteBuffersDirectory();
+				IndexWriter writer = new IndexWriter(directory, new IndexWriterConfig())) {
+			for (Envelope envelope : envelopes) {
+				Document document = new Document();
+				document.add(new DoublePoint(LuceneGeoDocumentSchema.FIELD_SOURCE_ENVELOPE, envelope.getMinX(),
+						envelope.getMaxX(), envelope.getMinY(), envelope.getMaxY()));
+				writer.addDocument(document);
+			}
+			writer.addDocument(new Document());
+			writer.commit();
+			try (DirectoryReader reader = DirectoryReader.open(directory)) {
+				IndexSearcher searcher = new IndexSearcher(reader);
+				for (Envelope bound : List.of(new Envelope(0, 1, 0, 1),
+						new Envelope(-0.0, -0.0, -0.0, -0.0), new Envelope(-1, 2, -1, 2))) {
+					Set<Integer> expected = new HashSet<>();
+					for (int i = 0; i < envelopes.size(); i++) {
+						if (bound.covers(envelopes.get(i))) {
+							expected.add(i);
+						}
+					}
+					Set<Integer> crossing = new HashSet<>();
+					for (int i = 0; i < envelopes.size(); i++) {
+						if (!expected.contains(i) && bound.intersects(envelopes.get(i))) {
+							crossing.add(i);
+						}
+					}
+					assertEquals(bound.toString(), expected,
+							matches(searcher, LuceneGeoDocumentSchema.sourceEnvelopeWithinQuery(bound)));
+					assertEquals(bound.toString(), crossing,
+							matches(searcher, LuceneGeoDocumentSchema.sourceEnvelopeCrossingQuery(bound)));
 				}
 			}
 		}
@@ -79,17 +136,34 @@ public class LuceneEnvelopeContainmentTest {
 				+ "POLYGON((799990 4589770,799990 4589790,800010 4589790,"
 				+ "800010 4589770,799990 4589770))");
 		IndexGeometry invalidPolygon = geometry("POLYGON((0 0,10 10,0 10,10 0,0 0))");
+		IndexGeometry selfOverlapping = geometry(
+				"POLYGON((0 0,10 0,10 10,0 10,0 0,10 0,10 10,0 10,0 0))");
+		// JTS finds that this polygon fills its envelope once products of its coordinate differences underflow.
+		double unit = Math.scalb(1.0, -540);
+		IndexGeometry underflowing = geometry("POLYGON((" + 9 * unit + " " + 13 * unit + "," + unit + " "
+				+ 10 * unit + ",0 " + 6 * unit + "," + 3 * unit + " " + 4 * unit + "," + 8 * unit + " " + 7 * unit
+				+ "," + 11 * unit + " " + 5 * unit + "," + 9 * unit + " " + 13 * unit + "))");
 		IndexGeometry empty = geometry("POLYGON EMPTY");
 
-		assertTrue(rectangle.isEnvelopeCoveringRectangle());
-		assertFalse(boundWithHole.isEnvelopeCoveringRectangle());
-		assertFalse(rotated.isEnvelopeCoveringRectangle());
-		assertFalse(collection.isEnvelopeCoveringRectangle());
-		assertFalse(projectedRectangle.isEnvelopeCoveringRectangle());
-		assertFalse(invalidPolygon.isEnvelopeCoveringRectangle());
-		assertFalse(empty.isEnvelopeCoveringRectangle());
+		assertTrue(IndexGeometryFixtures.fillsCrs84Envelope(rectangle));
+		assertFalse(IndexGeometryFixtures.fillsCrs84Envelope(boundWithHole));
+		assertFalse(IndexGeometryFixtures.fillsCrs84Envelope(rotated));
+		assertFalse(IndexGeometryFixtures.fillsCrs84Envelope(collection));
+		assertFalse(IndexGeometryFixtures.fillsCrs84Envelope(projectedRectangle));
+		assertFalse(IndexGeometryFixtures.fillsCrs84Envelope(invalidPolygon));
+		assertFalse(IndexGeometryFixtures.fillsCrs84Envelope(selfOverlapping));
+		assertFalse(IndexGeometryFixtures.fillsCrs84Envelope(underflowing));
+		assertFalse(IndexGeometryFixtures.fillsCrs84Envelope(empty));
 		assertTrue(GeoSparqlPropertyRelation.SF_DISJOINT.evaluate(
 				pointInHole.sourceGeometryLiteral(), boundWithHole.sourceGeometryLiteral()));
+	}
+
+	private static Set<Integer> matches(IndexSearcher searcher, Query query) throws IOException {
+		Set<Integer> documents = new HashSet<>();
+		for (ScoreDoc hit : searcher.search(query, searcher.getIndexReader().maxDoc()).scoreDocs) {
+			documents.add(hit.doc);
+		}
+		return documents;
 	}
 
 	private static void writeCandidate(IndexWriter writer, long entityId, IndexGeometry geometry)

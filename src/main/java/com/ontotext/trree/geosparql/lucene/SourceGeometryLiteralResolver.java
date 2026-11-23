@@ -15,22 +15,35 @@ import java.util.Map;
 final class SourceGeometryLiteralResolver {
 	private final Map<StoredSourceGeometryIdentity, ResolvedSource> cache = new HashMap<>();
 
+	/**
+	 * @param fromLexicalForm whether the WKB cannot keep every ordinate of the source, so the source is parsed from
+	 *        its stored lexical form instead
+	 */
 	SourceGeometryLiteral resolve(StoredSourceGeometryIdentity identity, byte[] sourceGeometryWkb,
-			DimensionInfo dimensionInfo) {
+			DimensionInfo dimensionInfo, boolean fromLexicalForm) {
 		ResolvedSource resolved = cache.get(identity);
 		if (resolved != null) {
-			if (!resolved.matches(sourceGeometryWkb, dimensionInfo)) {
+			if (!resolved.matches(sourceGeometryWkb, dimensionInfo, fromLexicalForm)) {
 				throw new PluginException(LuceneGeoDocumentSchema.SCHEMA_MISMATCH_MESSAGE);
 			}
 			return resolved.source;
 		}
-		SourceGeometryLiteral source = loadAndValidate(identity, sourceGeometryWkb, dimensionInfo);
-		cache.put(identity, new ResolvedSource(source, sourceGeometryWkb, dimensionInfo));
+		SourceGeometryLiteral source = fromLexicalForm ? parse(identity)
+				: loadAndValidate(identity, sourceGeometryWkb, dimensionInfo);
+		cache.put(identity, new ResolvedSource(source, sourceGeometryWkb, dimensionInfo, fromLexicalForm));
 		return source;
 	}
 
 	void clear() {
 		cache.clear();
+	}
+
+	private static SourceGeometryLiteral parse(StoredSourceGeometryIdentity identity) {
+		SimpleValueFactory values = SimpleValueFactory.getInstance();
+		SourceGeometryLiteral source = SourceGeometryLiteral.fromLiteral(values.createLiteral(identity.lexicalForm(),
+				values.createIRI(identity.datatype())));
+		source.asGeometryWrapper();
+		return source;
 	}
 
 	private static SourceGeometryLiteral loadAndValidate(StoredSourceGeometryIdentity identity,
@@ -47,20 +60,25 @@ final class SourceGeometryLiteralResolver {
 		private final int coordinateDimension;
 		private final int spatialDimension;
 		private final int topologicalDimension;
+		private final boolean fromLexicalForm;
 
-		private ResolvedSource(SourceGeometryLiteral source, byte[] sourceGeometryWkb, DimensionInfo dimensions) {
+		private ResolvedSource(SourceGeometryLiteral source, byte[] sourceGeometryWkb, DimensionInfo dimensions,
+				boolean fromLexicalForm) {
 			this.source = source;
 			this.sourceGeometryWkb = sourceGeometryWkb;
 			this.coordinateDimension = dimensions.getCoordinate();
 			this.spatialDimension = dimensions.getSpatial();
 			this.topologicalDimension = dimensions.getTopological();
+			this.fromLexicalForm = fromLexicalForm;
 		}
 
-		private boolean matches(byte[] otherSourceGeometryWkb, DimensionInfo otherDimensions) {
+		private boolean matches(byte[] otherSourceGeometryWkb, DimensionInfo otherDimensions,
+				boolean otherFromLexicalForm) {
 			return Arrays.equals(sourceGeometryWkb, otherSourceGeometryWkb)
 					&& coordinateDimension == otherDimensions.getCoordinate()
 					&& spatialDimension == otherDimensions.getSpatial()
-					&& topologicalDimension == otherDimensions.getTopological();
+					&& topologicalDimension == otherDimensions.getTopological()
+					&& fromLexicalForm == otherFromLexicalForm;
 		}
 	}
 }

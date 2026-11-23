@@ -2,6 +2,7 @@ package com.ontotext.trree.geosparql;
 
 import com.ontotext.test.TemporaryLocalFolder;
 import com.ontotext.trree.geosparql.util.GeoSparqlUtils;
+import com.ontotext.trree.geosparql.vocabulary.GeoConstants;
 import com.ontotext.trree.geosparql.lucene.LuceneGeoIndexer;
 import com.ontotext.trree.geosparql.jena.IndexGeometry;
 import com.ontotext.trree.geosparql.jena.SourceGeometryLiteral;
@@ -9,6 +10,7 @@ import com.ontotext.trree.sdk.PluginConnection;
 import com.ontotext.trree.sdk.PluginException;
 import org.apache.lucene.index.DirectoryReader;
 import org.apache.lucene.store.FSDirectory;
+import org.eclipse.rdf4j.model.impl.SimpleValueFactory;
 import org.junit.Rule;
 import org.junit.Test;
 import org.slf4j.LoggerFactory;
@@ -17,6 +19,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.lang.reflect.Proxy;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Function;
@@ -303,6 +306,57 @@ public class GeoSparqlUpdateListenerTest {
 		listener.transactionCompleted(connection);
 
 		assertEquals(0, indexedCount.get());
+	}
+
+	/** A feature that uses several changed geometries is loaded and indexed once, from all of them. */
+	@Test
+	public void featureWithSeveralChangedGeometriesIsIndexedOnce() throws Exception {
+		GeoSparqlPlugin plugin = enabledPlugin(tmpFolder.newFolder("feature-indexed-once").toPath());
+		plugin.asWKT = 1L;
+		plugin.asGML = 2L;
+		plugin.hasDefaultGeometry = 3L;
+		List<Long> indexed = new ArrayList<>();
+		plugin.indexer = new LuceneGeoIndexer(plugin) {
+			@Override
+			public void begin() {}
+
+			@Override
+			public void commit() {}
+
+			@Override
+			public void complete() {}
+
+			@Override
+			public void indexGeometryList(long entityId, Function<Long, String> uriMapper,
+										  List<IndexGeometry> geometries) {
+				indexed.add(entityId);
+			}
+		};
+		long feature = 10L;
+		long firstGeometry = 20L;
+		long secondGeometry = 21L;
+		RepositoryGeometrySourceTest.FakeEntities entities = new RepositoryGeometrySourceTest.FakeEntities();
+		RepositoryGeometrySourceTest.FakeStatements statements = new RepositoryGeometrySourceTest.FakeStatements();
+		for (long id : new long[] { feature, firstGeometry, secondGeometry }) {
+			entities.add(id, SimpleValueFactory.getInstance().createIRI("http://example.com/" + id));
+		}
+		entities.add(30L, SimpleValueFactory.getInstance().createLiteral("POINT(1 1)", GeoConstants.GEO_WKT_LITERAL));
+		entities.add(31L, SimpleValueFactory.getInstance().createLiteral("POINT(2 2)", GeoConstants.GEO_WKT_LITERAL));
+		statements.add(firstGeometry, 1L, 30L);
+		statements.add(secondGeometry, 1L, 31L);
+		statements.add(feature, 3L, firstGeometry);
+		statements.add(feature, 3L, secondGeometry);
+		PluginConnection connection = new RepositoryGeometrySourceTest.FakePluginConnection(entities, statements);
+		GeoSparqlUpdateListener listener = new GeoSparqlUpdateListener(plugin, 1L, 2L, 3L);
+
+		listener.transactionStarted(connection);
+		listener.statementAdded(firstGeometry, 1L, 30L, 0L, true, connection);
+		listener.statementAdded(secondGeometry, 1L, 31L, 0L, true, connection);
+		listener.transactionCommit(connection);
+		listener.transactionCompleted(connection);
+
+		assertEquals(List.of(feature, firstGeometry, secondGeometry), indexed.stream().sorted().toList());
+		assertEquals(1, statements.requests.stream().filter(List.of(feature, 3L, 0L)::equals).count());
 	}
 
 	private GeoSparqlPlugin enabledPlugin(Path dataDir) {

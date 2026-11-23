@@ -8,7 +8,6 @@ import org.junit.Test;
 import org.locationtech.jts.geom.Dimension;
 
 import java.util.List;
-import java.util.Set;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
@@ -23,10 +22,6 @@ public class GeoSparqlPropertyRelationTest {
 	private static final int[] NON_EMPTY_TOPOLOGICAL_DIMENSIONS = {
 			Dimension.P, Dimension.L, Dimension.A
 	};
-	private static final Set<GeoSparqlPropertyRelation> PARTITIONED_DISJOINT_RELATIONS = Set.of(
-			GeoSparqlPropertyRelation.SF_DISJOINT,
-			GeoSparqlPropertyRelation.EH_DISJOINT,
-			GeoSparqlPropertyRelation.RCC8_DC);
 
 	@Before
 	public void initializeAdapter() {
@@ -34,19 +29,21 @@ public class GeoSparqlPropertyRelationTest {
 	}
 
 	@Test
-	public void disjointRelationsUsePartitionedLookupAndAllOthersUseEnvelopeIntersection() {
+	public void relationsSelectTheirConservativeCandidatePolicy() {
 		for (GeoSparqlPropertyRelation relation : GeoSparqlPropertyRelation.values()) {
-			CandidateLookupPolicy expected = PARTITIONED_DISJOINT_RELATIONS.contains(relation)
-					? CandidateLookupPolicy.DISJOINT_PARTITIONED
-					: CandidateLookupPolicy.ENVELOPE_INTERSECTS;
+			CandidateLookupPolicy expected = switch (relation) {
+				case SF_EQUALS, EH_EQUALS, RCC8_EQ -> CandidateLookupPolicy.ENVELOPE_EQUALS;
+				case SF_DISJOINT, EH_DISJOINT, RCC8_DC -> CandidateLookupPolicy.DISJOINT_PARTITIONED;
+				default -> CandidateLookupPolicy.ENVELOPE_INTERSECTS;
+			};
 			assertEquals(relation + " candidate policy", expected, relation.getCandidateLookupPolicy());
 		}
 	}
 
 	@Test
-	public void envelopeIntersectionPolicyHasNoDisjointPartitionCapability() {
+	public void nonDisjointPoliciesHaveNoDisjointPartitionCapability() {
 		for (GeoSparqlPropertyRelation relation : GeoSparqlPropertyRelation.values()) {
-			if (relation.getCandidateLookupPolicy() != CandidateLookupPolicy.ENVELOPE_INTERSECTS) {
+			if (relation.getCandidateLookupPolicy() == CandidateLookupPolicy.DISJOINT_PARTITIONED) {
 				continue;
 			}
 			for (int candidateDimension : NON_EMPTY_TOPOLOGICAL_DIMENSIONS) {
